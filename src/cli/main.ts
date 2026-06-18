@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, type ApprovalMode } from "../config/config.js";
-import { DeepSeekProvider } from "../providers/deepseek.js";
+import { createProvider } from "../providers/factory.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { runOneShot, runRepl, systemMessage, type Session } from "./repl.js";
 import {
@@ -54,7 +54,7 @@ async function buildSession(
   config: ReturnType<typeof loadConfig>,
   resume?: string | boolean,
 ): Promise<Session> {
-  const provider = new DeepSeekProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl });
+  const provider = createProvider(config);
   const registry = defaultRegistry();
   const mcp = await initMcp(config, registry);
 

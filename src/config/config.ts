@@ -35,16 +35,33 @@ function req(name: string, value: string | undefined): string {
   return value;
 }
 
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+  deepseek: "deepseek-chat",
+  ollama: "llama3.1",
+  "openai-compatible": "gpt-4o-mini",
+  anthropic: "claude-3-5-sonnet",
+};
+
 export function loadConfig(overrides: Partial<Config> = {}): Config {
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";
   const workspaceRoot = overrides.workspaceRoot ?? process.cwd();
   const file = loadFileConfig(workspaceRoot);
+
+  const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
+  // Generic DEEPCODER_* env with DEEPSEEK_* kept as backwards-compatible aliases.
+  const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? process.env.DEEPSEEK_API_KEY;
+  // Ollama runs locally and ignores the key, so it isn't required there.
+  const apiKey = provider === "ollama" ? apiKeyRaw ?? "" : req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
+  const baseUrl = process.env.DEEPCODER_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? "";
+  const model =
+    process.env.DEEPCODER_MODEL ?? process.env.DEEPSEEK_MODEL ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-chat";
+
   return {
-    provider: "deepseek",
-    apiKey: req("DEEPSEEK_API_KEY", process.env.DEEPSEEK_API_KEY),
-    baseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
-    model: process.env.DEEPSEEK_MODEL || "deepseek-chat",
-    reasonerModel: process.env.DEEPSEEK_REASONER_MODEL,
+    provider,
+    apiKey,
+    baseUrl,
+    model,
+    reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? process.env.DEEPSEEK_REASONER_MODEL,
     maxTurns: Number(process.env.DEEPCODER_MAX_TURNS || 20),
     approvalMode: approval,
     contextBudgetTokens: Number(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS || 64000),

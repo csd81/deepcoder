@@ -60,6 +60,26 @@ Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonl
 `/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/mcp [reload]`,
 `/save`, `/status`, `/diff`.
 
+## Providers
+
+DeepSeek is the default, but any OpenAI-compatible backend works behind the same
+boundary — the agent loop, tools, and permissions are provider-agnostic. Select
+with `DEEPCODER_PROVIDER`:
+
+| Provider | Notes |
+|---|---|
+| `deepseek` (default) | uses `DEEPSEEK_*` or the generic `DEEPCODER_*` env |
+| `openai-compatible` | any OpenAI-style `/v1` endpoint; **requires `DEEPCODER_BASE_URL`** |
+| `ollama` | local models; no API key needed; defaults to `http://localhost:11434/v1` |
+| `anthropic` | not supported yet (different wire format) — use a gateway via `openai-compatible` |
+
+Generic env (`DEEPCODER_API_KEY/BASE_URL/MODEL`) takes precedence over the
+`DEEPSEEK_*` aliases. Example — point at local Ollama:
+
+```bash
+DEEPCODER_PROVIDER=ollama DEEPCODER_MODEL=llama3.1 npm run dev
+```
+
 ## Safety model
 
 The agent never mutates files or runs shell commands without passing the
@@ -152,7 +172,7 @@ Discovered tools appear as `mcp__<server>__<tool>`; `/mcp` lists them and
 src/
   cli/          entry point, REPL, slash commands
   agent/        agent loop + system prompt
-  providers/    vendor-neutral ModelProvider + DeepSeek adapter
+  providers/    vendor-neutral ModelProvider, OpenAI-compatible adapter + factory
   tools/        Tool -> build() -> ToolInvocation -> execute(), + registry
   permissions/  command classifier, policy, approval prompt
   context/      project instructions, token budget, compaction, repo map

@@ -32,8 +32,8 @@ Three prerequisites the original draft assumed:
 
 **Acceptance (4A):** read-only MCP tool discoverable + callable via the normal loop; no MCP tool bypasses `checkPermission`; execute-mode MCP denied; bad server doesn't crash; `npm run test:phase` green.
 
-## Phase 4B — Additional providers (deferred)
-Generalize DeepSeek impl → `src/providers/openaiCompatible.ts`; `DeepSeekProvider` becomes a preset. `src/providers/factory.ts` selects by `DEEPCODER_PROVIDER` (deepseek default | openai-compatible | ollama | anthropic-later). Generic `DEEPCODER_*` env with `DEEPSEEK_*` aliases. Adapters map to `ChatResponse`/`ModelEvent`; reuse `mapProviderError`. Adversarial: malformed args, duplicate stream indexes, unknown tool name, no key in errors, provider switch doesn't change permissions.
+## Phase 4B — Additional providers (COMPLETE)
+Generalized DeepSeek impl → `src/providers/openaiCompatible.ts` (`OpenAICompatibleProvider`); `DeepSeekProvider` is now a thin preset. `src/providers/factory.ts` selects by `DEEPCODER_PROVIDER` (deepseek default | openai-compatible | ollama | anthropic→clear "not supported"). Generic `DEEPCODER_*` env with `DEEPSEEK_*` aliases; ollama needs no key. Stream tool-call accumulation extracted to a pure, tested `createToolCallAccumulator` (handles split args + duplicate indexes). `mapProviderError` generalized and never leaks the key. 123 tests (55 unit + 68 adversarial); typecheck clean; live readonly DeepSeek smoke test verified. **Paused before 4C.**
 
 ## Phase 4C — Optional git checkpointing (deferred)
 `DEEPCODER_GIT_CHECKPOINTS=off|manual|auto` (default off; never commits). Add `writeTracker` to `ToolContext`/session (edit/write record it). `src/session/checkpoints.ts` snapshots only agent-touched files (content + sha + metadata) under `.deepcoder/checkpoints/<id>/`; never sensitive paths. `/checkpoint`, `/checkpoints`, `/rollback <id>`; rollback refuses user-modified files without re-confirm. Adversarial: skips sensitive files; touches only agent-owned files; refuses user-modified; no secrets in metadata.
