@@ -113,6 +113,27 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "mcp": {
+      if (!session.mcp) {
+        console.log(chalk.dim("No MCP servers configured (.deepcoder/config.json → mcpServers)."));
+        return { consumed: true };
+      }
+      if (arg === "reload") {
+        console.log(chalk.dim("Reconnecting MCP servers…"));
+        await session.mcp.connectAll();
+        for (const tool of await session.mcp.tools()) session.registry.register(tool);
+      }
+      for (const s of session.mcp.status()) {
+        const state = s.connected ? chalk.green("connected") : chalk.red(s.error ?? "disconnected");
+        console.log(`${s.name} [${s.mode}] ${state}`);
+        for (const t of s.tools) {
+          const note = s.mode === "execute" ? chalk.dim(" (execute — denied in this version)") : "";
+          console.log(`  ${t}${note}`);
+        }
+      }
+      return { consumed: true };
+    }
+
     case "status": {
       const git = new Git(config.workspaceRoot);
       console.log((await git.isRepo()) ? await git.status() : chalk.dim("Not a git repository."));
@@ -138,6 +159,7 @@ export async function handleSlashCommand(
           "/context         show context-token usage",
           "/compact         compact conversation history now",
           "/plan <task>     produce a plan with the reasoner model (no tools run)",
+          "/mcp [reload]    list configured MCP servers and tools",
           "/save            save the session now",
           "/status          git status",
           "/diff            git diff",

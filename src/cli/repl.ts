@@ -11,6 +11,7 @@ import { loadInstructions } from "../context/projectInstructions.js";
 import { promptForApproval } from "../permissions/prompt.js";
 import { handleSlashCommand } from "./slashCommands.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
+import type { McpManager } from "../mcp/registry.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -22,6 +23,8 @@ export interface Session {
   mode: ApprovalMode;
   todos: Todo[];
   readTracker: Set<string>;
+  /** Connected MCP servers (Phase 4A); undefined if none configured. */
+  mcp?: McpManager;
 }
 
 export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
@@ -65,6 +68,7 @@ async function runTask(session: Session): Promise<void> {
     maxTurns: session.config.maxTurns,
     contextBudgetTokens: session.config.contextBudgetTokens,
     compactAt: session.config.compactAt,
+    mcpExecuteEnabled: session.config.mcpExecuteEnabled,
     approve: (inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview),
     onPersist: () => session.store.save(snapshot(session)),
     onAssistantTextDelta: (chunk) => {
@@ -103,7 +107,11 @@ async function runTask(session: Session): Promise<void> {
 export async function runOneShot(session: Session, prompt: string): Promise<void> {
   session.messages.push({ role: "user", content: prompt });
   await session.store.save(snapshot(session));
-  await runTask(session);
+  try {
+    await runTask(session);
+  } finally {
+    await session.mcp?.closeAll();
+  }
 }
 
 /** Interactive REPL. */
@@ -140,5 +148,6 @@ export async function runRepl(session: Session): Promise<void> {
     }
   } finally {
     rl.close();
+    await session.mcp?.closeAll();
   }
 }

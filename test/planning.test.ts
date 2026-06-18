@@ -33,6 +33,8 @@ async function makeSession(provider: ModelProvider): Promise<Session> {
     contextBudgetTokens: 64000,
     compactAt: 0.8,
     workspaceRoot: root,
+    mcpServers: {},
+    mcpExecuteEnabled: false,
   };
   return {
     config,

@@ -12,6 +12,9 @@ import {
   listSessions,
   latestSessionId,
 } from "../session/sessionStore.js";
+import { McpManager } from "../mcp/registry.js";
+import type { ToolRegistry } from "../tools/registry.js";
+import type { Config } from "../config/config.js";
 
 const program = new Command();
 
@@ -53,6 +56,7 @@ async function buildSession(
 ): Promise<Session> {
   const provider = new DeepSeekProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl });
   const registry = defaultRegistry();
+  const mcp = await initMcp(config, registry);
 
   if (resume) {
     const id =
@@ -76,6 +80,7 @@ async function buildSession(
       mode: saved.mode,
       todos: saved.todos,
       readTracker: new Set(saved.readTracker),
+      mcp,
     };
   }
 
@@ -88,7 +93,20 @@ async function buildSession(
     mode: config.approvalMode,
     todos: [],
     readTracker: new Set<string>(),
+    mcp,
   };
+}
+
+/** Connect configured MCP servers and register their tools. Returns undefined
+ *  when none are configured; never throws (bad servers warn and are skipped). */
+async function initMcp(config: Config, registry: ToolRegistry): Promise<McpManager | undefined> {
+  if (!config.mcpServers || Object.keys(config.mcpServers).length === 0) return undefined;
+  const manager = new McpManager(config.mcpServers);
+  await manager.connectAll();
+  for (const tool of await manager.tools()) registry.register(tool);
+  const bad = manager.status().filter((s) => s.error && s.error !== "disabled");
+  for (const s of bad) console.error(chalk.yellow(`MCP server "${s.name}" unavailable: ${s.error}`));
+  return manager;
 }
 
 program.parseAsync(process.argv).catch((err: unknown) => {

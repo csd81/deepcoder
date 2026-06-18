@@ -26,7 +26,7 @@ See `plans/phase2-plan.md`.
 - [x] Better diffs (git-style `@@` hunks)
 - [x] Session persistence and `--resume` / `--list-sessions`
 
-## Phase 3 — Hardening, context & scale (in progress)
+## Phase 3 — Hardening, context & scale
 
 See `plans/phase3-plan.md`.
 
@@ -35,12 +35,14 @@ See `plans/phase3-plan.md`.
 - [x] Repo map / file scanner + context tools (`repo_map`, `find_symbols`, `list_recent_context`)
 - [x] `deepseek-reasoner` planning mode (`/plan`, `--planning-model`)
 
-## Phase 4 — Extensibility
+## Phase 4 — Extensibility with trust boundaries (in progress)
 
-- MCP client support (external tools/resources)
-- Additional providers (OpenAI, Anthropic, local via Ollama) as adapters
-- Subagents / parallel task delegation
-- Optional git checkpoint/auto-commit workflow
+See `plans/phase4-plan.md`.
+
+- [x] **4A** — MCP client (read-only), `.deepcoder/config.json`, `/mcp`; MCP tools/output untrusted, execute-mode MCP denied for now
+- [ ] **4B** — additional providers (OpenAI-compatible / Ollama / Anthropic) via a provider factory
+- [ ] **4C** — optional git checkpointing (`/checkpoint`, `/rollback`; never auto-commits)
+- [ ] **4D** — subagents (design-gated; not started until 4A–4C are stable)
 
 ## Non-goals (for now)
 

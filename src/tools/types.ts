@@ -64,6 +64,8 @@ export interface ToolInvocation {
    * classify it (rm/sudo/network/etc). Undefined for non-shell tools.
    */
   command?: string;
+  /** Origin of the tool. MCP tools get extra scrutiny from the policy. */
+  source?: "native" | "mcp";
   /** Workspace-relative paths this invocation would change (mutating tools). */
   affectedPaths?: string[];
   /** Compute a human-facing preview (e.g. a diff) without executing. */
@@ -75,7 +77,14 @@ export interface Tool<P extends z.ZodTypeAny = z.ZodTypeAny> {
   name: string;
   description: string;
   kind: ToolKind;
-  schema: P;
+  /** Native tools describe params with zod. Omitted for raw-schema tools (MCP). */
+  schema?: P;
+  /**
+   * Pre-built JSON Schema for tools whose params aren't expressed in zod (e.g.
+   * MCP tools, whose servers supply their own JSON Schema). Takes precedence
+   * over `schema` when producing the model-facing tool definition.
+   */
+  rawSchema?: Record<string, unknown>;
   /** Validate raw model args and produce a ready-to-run invocation. */
   build(rawArgs: unknown): ToolInvocation;
 }

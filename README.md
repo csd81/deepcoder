@@ -57,8 +57,8 @@ npm run dev -- --resume <id>
 ```
 
 Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonly]`,
-`/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/save`,
-`/status`, `/diff`.
+`/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/mcp [reload]`,
+`/save`, `/status`, `/diff`.
 
 ## Safety model
 
@@ -114,6 +114,38 @@ Other guardrails:
   `deepseek-reasoner` with **tools disabled**, recording the plan in history to
   guide later implementation.
 
+## MCP servers (external tools)
+
+Deepcoder can connect to [Model Context Protocol](https://modelcontextprotocol.io)
+servers and expose their tools to the agent. Configure them in
+`.deepcoder/config.json` at the workspace root:
+
+```json
+{
+  "mcpServers": {
+    "docs": {
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"],
+      "enabled": true,
+      "mode": "readonly"
+    }
+  }
+}
+```
+
+Discovered tools appear as `mcp__<server>__<tool>`; `/mcp` lists them and
+`/mcp reload` reconnects.
+
+**Trust model — MCP is treated as untrusted by default:**
+- A server's tools are usable only if you mark it `"mode": "readonly"`. That is
+  *your* assertion that the server is safe to auto-run — Deepcoder can't verify
+  what the server does, it only enforces the label.
+- `"mode": "execute"` tools are **discovered but denied** in this version (a
+  later phase will gate them behind explicit approval).
+- MCP tool descriptions and outputs are untrusted text: output is size-capped
+  and truncated, and nothing a server returns can change the approval mode,
+  system prompt, or permission policy — it's just a tool result like any other.
+
 ## Architecture
 
 ```
@@ -124,9 +156,10 @@ src/
   tools/        Tool -> build() -> ToolInvocation -> execute(), + registry
   permissions/  command classifier, policy, approval prompt
   context/      project instructions, token budget, compaction, repo map
+  mcp/          MCP client, schema adapter, tool registry (read-only)
   session/      session persistence + resume
-  workspace/    path confinement, git helpers
-  config/       env + config loading
+  workspace/    path confinement, git helpers, sensitive-path guard
+  config/       env + .deepcoder/config.json loading
 ```
 
 The tool layer follows the qwen-code / gemini-cli shape: a declarative `Tool`

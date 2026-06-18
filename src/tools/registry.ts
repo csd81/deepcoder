@@ -31,9 +31,10 @@ export class ToolRegistry {
     return [...this.tools.values()].map((t) => ({
       name: t.name,
       description: t.description,
-      // Default target is JSON-Schema draft-07, which the DeepSeek/OpenAI tools
-      // API expects (e.g. numeric `exclusiveMinimum`, not the OpenAPI boolean).
-      parameters: zodToJsonSchema(t.schema, { $refStrategy: "none" }) as Record<string, unknown>,
+      // Raw-schema tools (MCP) supply their own JSON Schema; native tools convert
+      // from zod. Default target is draft-07, which the DeepSeek/OpenAI tools API
+      // expects (e.g. numeric `exclusiveMinimum`, not the OpenAPI boolean).
+      parameters: t.rawSchema ?? (zodToJsonSchema(t.schema!, { $refStrategy: "none" }) as Record<string, unknown>),
     }));
   }
 }

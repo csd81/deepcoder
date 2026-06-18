@@ -24,6 +24,8 @@ export interface AgentDeps {
   /** Token budget + trigger fraction for history compaction. */
   contextBudgetTokens: number;
   compactAt: number;
+  /** Whether execute-kind MCP tools may run (off in Phase 4A). */
+  mcpExecuteEnabled?: boolean;
   /** Streaming text hook (fired per chunk when the provider supports streaming). */
   onAssistantTextDelta?(chunk: string): void;
   /** Final assistant text (fired once per turn; fallback when not streaming). */
@@ -101,7 +103,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         throw err;
       }
 
-      const decision = checkPermission(invocation, mode);
+      const decision = checkPermission(invocation, mode, { mcpExecuteEnabled: deps.mcpExecuteEnabled });
       if (decision === "deny") {
         deps.onToolCall?.(call.name, invocation.describe());
         pushToolResult(

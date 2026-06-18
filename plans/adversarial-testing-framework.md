@@ -248,3 +248,9 @@ hostile fake providers in `test/helpers/providers.ts` and fixtures under
 `test:phase` (gate), `test:live`. Finding F1 fixed via `src/workspace/sensitive.ts`,
 wired into `read_file` and the command classifier. **83 tests pass** (53 unit + 30
 adversarial); typecheck clean; live readonly smoke test verified.
+
+**Phase 4A update:** added `test/adversarial/mcp.test.ts` — execute-mode MCP tools
+denied in every approval mode, read-only MCP allowed, schema adapter strips
+provider-rejected shapes, a failing MCP server is recorded (not a crash), and
+hostile MCP output stays inert (cannot change policy). Gate now: 53 unit + 38
+adversarial = 91 tests.
