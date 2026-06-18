@@ -17,6 +17,7 @@ export const MCP_OUTPUT_LIMIT = 16 * 1024;
  */
 export class McpClient {
   private client: Client | null = null;
+  private transport: StdioClientTransport | null = null;
 
   constructor(
     readonly name: string,
@@ -33,8 +34,16 @@ export class McpClient {
       args: this.config.args ?? [],
     });
     const client = new Client({ name: "deepcoder", version: "0.1.0" }, { capabilities: {} });
-    await withTimeout(client.connect(transport), timeoutMs, `connect to MCP server "${this.name}"`);
+    // Track both BEFORE connecting so a timeout/failure can still tear down the
+    // spawned child process (close() would otherwise see nulls and orphan it).
+    this.transport = transport;
     this.client = client;
+    try {
+      await withTimeout(client.connect(transport), timeoutMs, `connect to MCP server "${this.name}"`);
+    } catch (err) {
+      await this.close();
+      throw err;
+    }
   }
 
   async listTools(): Promise<McpToolInfo[]> {
@@ -68,13 +77,22 @@ export class McpClient {
     } catch {
       /* ignore */
     }
+    try {
+      await this.transport?.close();
+    } catch {
+      /* ignore */
+    }
     this.client = null;
+    this.transport = null;
   }
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timed out trying to ${what}`)), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out trying to ${what}`)), ms);
+  });
+  // clearTimeout in finally so a successful call never leaves a pending timer
+  // keeping the Node event loop alive (one-shot mode) or accumulating timers.
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }

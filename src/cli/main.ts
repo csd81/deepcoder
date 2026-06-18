@@ -103,7 +103,7 @@ async function initMcp(config: Config, registry: ToolRegistry): Promise<McpManag
   if (!config.mcpServers || Object.keys(config.mcpServers).length === 0) return undefined;
   const manager = new McpManager(config.mcpServers);
   await manager.connectAll();
-  for (const tool of await manager.tools()) registry.register(tool);
+  await manager.registerInto(registry);
   const bad = manager.status().filter((s) => s.error && s.error !== "disabled");
   for (const s of bad) console.error(chalk.yellow(`MCP server "${s.name}" unavailable: ${s.error}`));
   return manager;

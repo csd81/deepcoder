@@ -50,3 +50,11 @@ Future constraints: restricted tools by default; no `run_bash`/mutating unless g
 - [ ] (deferred) 4B providers  - [ ] (deferred) 4C checkpoints  - [ ] 4D design-only
 
 93 tests pass (55 unit + 38 adversarial); typecheck clean; live readonly smoke test verified. **Paused for review per plan before 4B/4C.**
+
+### 4A review fixes (post-review hardening)
+- **F1** orphaned child on connect timeout — track client+transport before connect; close both in catch.
+- **F2** leaked timeout timers — `withTimeout` clears the timer in `finally`.
+- **F3** stale tools after `/mcp reload` — `ToolRegistry.unregisterByPrefix` + `McpManager.registerInto` refresh atomically.
+- **F4** unsanitized tool names — `sanitizeNamePart`/`mcpToolName` enforce the provider alphabet, cap to 64, de-collide.
+- **F5** unvalidated config — zod-validate each `mcpServers` entry; skip bad ones with a clear warning, keep the rest.
+- Hardening tests added (`test/adversarial/mcp-hardening.test.ts`). Gate: 101 tests (55 unit + 46 adversarial).

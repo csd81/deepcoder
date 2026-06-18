@@ -121,7 +121,7 @@ export async function handleSlashCommand(
       if (arg === "reload") {
         console.log(chalk.dim("Reconnecting MCP servers…"));
         await session.mcp.connectAll();
-        for (const tool of await session.mcp.tools()) session.registry.register(tool);
+        await session.mcp.registerInto(session.registry); // drops stale MCP tools first
       }
       for (const s of session.mcp.status()) {
         const state = s.connected ? chalk.green("connected") : chalk.red(s.error ?? "disconnected");

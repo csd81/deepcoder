@@ -26,6 +26,13 @@ export class ToolRegistry {
     return [...this.tools.keys()];
   }
 
+  /** Remove every tool whose name starts with `prefix` (used to refresh MCP tools). */
+  unregisterByPrefix(prefix: string): void {
+    for (const name of this.tools.keys()) {
+      if (name.startsWith(prefix)) this.tools.delete(name);
+    }
+  }
+
   /** JSON-Schema tool definitions, as sent to the model each turn. */
   schemas(): ToolSchema[] {
     return [...this.tools.values()].map((t) => ({

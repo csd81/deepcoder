@@ -1,7 +1,25 @@
 import type { Tool, ToolInvocation } from "../tools/types.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import { McpClient } from "./client.js";
 import { adaptMcpInputSchema } from "./schemaAdapter.js";
 import type { McpServerConfig } from "../config/fileConfig.js";
+
+export const MCP_TOOL_PREFIX = "mcp__";
+
+/**
+ * Sanitise a server/tool name fragment into the provider tool-name alphabet
+ * (`[A-Za-z0-9_-]`). Invalid runs collapse to `_`.
+ */
+export function sanitizeNamePart(s: string): string {
+  const cleaned = s.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || "x";
+}
+
+/** Build a namespaced, length-capped, provider-valid tool name. */
+export function mcpToolName(server: string, tool: string): string {
+  const name = `${MCP_TOOL_PREFIX}${sanitizeNamePart(server)}__${sanitizeNamePart(tool)}`;
+  return name.length > 64 ? name.slice(0, 64) : name;
+}
 
 export interface McpServerStatus {
   name: string;
@@ -52,8 +70,10 @@ export class McpManager {
   /** Build wrapped Deepcoder tools for every discovered MCP tool. */
   async tools(): Promise<Tool[]> {
     const out: Tool[] = [];
+    const used = new Set<string>();
     for (const client of this.clients) {
       const status = this.statuses.find((s) => s.name === client.name)!;
+      status.tools = [];
       let discovered;
       try {
         discovered = await client.listTools();
@@ -62,12 +82,31 @@ export class McpManager {
         continue;
       }
       for (const info of discovered) {
-        const toolName = `mcp__${client.name}__${info.name}`;
+        // Sanitise + de-collide so server/tool names can't produce a
+        // provider-invalid or duplicate model tool name.
+        let toolName = mcpToolName(client.name, info.name);
+        if (used.has(toolName)) {
+          let i = 2;
+          const base = toolName.slice(0, 60);
+          while (used.has(`${base}_${i}`)) i++;
+          toolName = `${base}_${i}`;
+        }
+        used.add(toolName);
         status.tools.push(toolName);
         out.push(wrapMcpTool(client, info.name, toolName, info.description, info.inputSchema));
       }
     }
     return out;
+  }
+
+  /**
+   * Atomically refresh the MCP tools in a registry: drop all previously
+   * registered MCP tools, then register the currently discovered set. Prevents
+   * `/mcp reload` from leaving stale wrappers pointing at a closed client.
+   */
+  async registerInto(registry: ToolRegistry): Promise<void> {
+    registry.unregisterByPrefix(MCP_TOOL_PREFIX);
+    for (const tool of await this.tools()) registry.register(tool);
   }
 
   status(): McpServerStatus[] {

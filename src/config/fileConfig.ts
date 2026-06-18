@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 
 export type McpMode = "readonly" | "execute";
 
@@ -16,10 +17,18 @@ export interface FileConfig {
   mcpServers?: Record<string, McpServerConfig>;
 }
 
+const mcpServerSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()).optional(),
+  enabled: z.boolean().optional(),
+  mode: z.enum(["readonly", "execute"]).optional(),
+});
+
 /**
- * Load `.deepcoder/config.json` from the workspace root. Missing or malformed
- * files are tolerated (return {}) so a bad config never blocks startup — a parse
- * error is reported to stderr but not fatal.
+ * Load `.deepcoder/config.json` from the workspace root. Missing files are
+ * silently tolerated; a malformed file or invalid entries warn to stderr and
+ * are skipped (a bad config never blocks startup). Each MCP server is validated
+ * independently so one bad entry doesn't discard the others.
  */
 export function loadFileConfig(workspaceRoot: string): FileConfig {
   const file = path.join(workspaceRoot, ".deepcoder", "config.json");
@@ -29,11 +38,31 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
   } catch {
     return {};
   }
+
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as FileConfig;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    parsed = JSON.parse(raw);
   } catch (err) {
-    process.stderr.write(`Warning: ignoring malformed .deepcoder/config.json (${(err as Error).message})\n`);
+    warn(`malformed JSON (${(err as Error).message})`);
     return {};
   }
+  if (!parsed || typeof parsed !== "object") {
+    warn("top-level value is not an object");
+    return {};
+  }
+
+  const servers = (parsed as { mcpServers?: unknown }).mcpServers;
+  const mcpServers: Record<string, McpServerConfig> = {};
+  if (servers && typeof servers === "object") {
+    for (const [name, value] of Object.entries(servers as Record<string, unknown>)) {
+      const result = mcpServerSchema.safeParse(value);
+      if (result.success) mcpServers[name] = result.data;
+      else warn(`ignoring mcpServers["${name}"]: ${result.error.issues.map((i) => i.message).join("; ")}`);
+    }
+  }
+  return { mcpServers };
+}
+
+function warn(msg: string): void {
+  process.stderr.write(`Warning: .deepcoder/config.json — ${msg}\n`);
 }
