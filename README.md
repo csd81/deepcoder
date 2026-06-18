@@ -5,15 +5,17 @@ agent loop that reads, searches, edits, and runs commands in your project to
 complete a task — with a permission layer in front of everything that can
 change your machine.
 
-First (and currently only) provider: **DeepSeek**, via its OpenAI-compatible
-API. The provider sits behind a vendor-neutral `ModelProvider` boundary so other
-backends can be added without touching the agent loop.
+Default provider: **DeepSeek** (OpenAI-compatible). Any OpenAI-compatible backend
+(including local **Ollama**) works behind a vendor-neutral `ModelProvider`
+boundary — see [Providers](#providers). External tools can be added via
+[MCP servers](#mcp-servers-external-tools).
 
 ## Status
 
-Phase 3 in progress: streaming, sessions/resume, todos, project instructions,
-context compaction, a repo map, and a reasoner planning mode are in. Single
-provider (DeepSeek). See `plans/` for the per-phase plans and `ROADMAP.md` for
+Through Phase 4B: streaming, sessions/resume, todos, project instructions,
+context compaction, a repo map, reasoner planning, **read-only MCP**, and a
+**multi-provider factory** (DeepSeek / OpenAI-compatible / Ollama) are in. See
+`plans/` for the per-phase plans and `ROADMAP.md` for
 what's next.
 
 ## Setup
@@ -188,8 +190,10 @@ can `describe()` itself, `preview()` its effect, and `execute()`.
 
 ## Limitations
 
-- DeepSeek only (provider boundary is vendor-neutral; more can be added).
-- No MCP or subagents yet.
+- Providers: DeepSeek / OpenAI-compatible / Ollama. Anthropic isn't supported yet
+  (use an OpenAI-compatible gateway).
+- MCP is read-only (execute-mode MCP tools are discovered but denied). No
+  subagents yet.
 - The command classifier is a heuristic, **not a sandbox** — review actions in
   `ask` mode when working in a sensitive directory.
 - Repo-map symbol extraction is regex-based (TS/JS), so it's approximate.
