@@ -6,6 +6,9 @@ import type { ApprovalMode } from "../config/config.js";
 
 export interface PersistedSession {
   id: string;
+  /** Provider + baseUrl are persisted so resume can detect a backend change. */
+  provider?: string;
+  baseUrl?: string;
   model: string;
   mode: ApprovalMode;
   messages: AgentMessage[];
@@ -17,6 +20,8 @@ export interface PersistedSession {
 
 /** Live snapshot the REPL hands to the store on each save. */
 export interface SessionSnapshot {
+  provider: string;
+  baseUrl: string;
   model: string;
   mode: ApprovalMode;
   messages: AgentMessage[];
@@ -51,6 +56,8 @@ export class SessionStore {
   async save(snapshot: SessionSnapshot): Promise<void> {
     const data: PersistedSession = {
       id: this.id,
+      provider: snapshot.provider,
+      baseUrl: snapshot.baseUrl,
       model: snapshot.model,
       mode: snapshot.mode,
       messages: snapshot.messages,

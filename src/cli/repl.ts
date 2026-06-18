@@ -37,6 +37,8 @@ export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage 
 
 function snapshot(session: Session): SessionSnapshot {
   return {
+    provider: session.config.provider,
+    baseUrl: session.config.baseUrl,
     model: session.config.model,
     mode: session.mode,
     messages: session.messages,

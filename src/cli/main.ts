@@ -63,7 +63,18 @@ async function buildSession(
       typeof resume === "string" ? resume : await latestSessionId(config.workspaceRoot);
     if (!id) throw new Error("No saved session to resume.");
     const saved = await loadSession(config.workspaceRoot, id);
-    const cfg = { ...config, model: saved.model };
+    // Only restore the saved model if it belongs to the SAME provider — otherwise
+    // we'd send e.g. an Ollama model name to DeepSeek. On a provider change, keep
+    // the current provider's model and warn.
+    const sameProvider = !saved.provider || saved.provider === config.provider;
+    const cfg = sameProvider ? { ...config, model: saved.model } : config;
+    if (!sameProvider) {
+      console.log(
+        chalk.yellow(
+          `Session was saved with provider "${saved.provider}"; resuming under "${config.provider}" and keeping model "${config.model}" (saved model "${saved.model}" not restored).`,
+        ),
+      );
+    }
     console.log(chalk.dim(`Resuming session ${id} (${saved.messages.length} messages).`));
     // Rebuild the system prompt from CURRENT project instructions rather than
     // trusting the (possibly stale) saved one, then keep the rest of history.

@@ -42,26 +42,36 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   anthropic: "claude-3-5-sonnet",
 };
 
+const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
+
 export function loadConfig(overrides: Partial<Config> = {}): Config {
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";
   const workspaceRoot = overrides.workspaceRoot ?? process.cwd();
   const file = loadFileConfig(workspaceRoot);
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
-  // Generic DEEPCODER_* env with DEEPSEEK_* kept as backwards-compatible aliases.
-  const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? process.env.DEEPSEEK_API_KEY;
+  // Validate the provider BEFORE requiring a key, so a typo'd provider reports
+  // "unknown provider" rather than a misleading "missing API key".
+  if (!KNOWN_PROVIDERS.has(provider)) {
+    throw new Error(`Unknown provider "${provider}". Use deepseek | openai-compatible | ollama.`);
+  }
+
+  // DEEPSEEK_* are aliases ONLY for the deepseek provider — they must not bleed
+  // into ollama/openai-compatible (which would silently target DeepSeek).
+  const alias = <T>(v: T): T | undefined => (provider === "deepseek" ? v : undefined);
+  const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? alias(process.env.DEEPSEEK_API_KEY);
   // Ollama runs locally and ignores the key, so it isn't required there.
   const apiKey = provider === "ollama" ? apiKeyRaw ?? "" : req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
-  const baseUrl = process.env.DEEPCODER_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? "";
+  const baseUrl = process.env.DEEPCODER_BASE_URL ?? alias(process.env.DEEPSEEK_BASE_URL) ?? "";
   const model =
-    process.env.DEEPCODER_MODEL ?? process.env.DEEPSEEK_MODEL ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-chat";
+    process.env.DEEPCODER_MODEL ?? alias(process.env.DEEPSEEK_MODEL) ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-chat";
 
   return {
     provider,
     apiKey,
     baseUrl,
     model,
-    reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? process.env.DEEPSEEK_REASONER_MODEL,
+    reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? alias(process.env.DEEPSEEK_REASONER_MODEL),
     maxTurns: Number(process.env.DEEPCODER_MAX_TURNS || 20),
     approvalMode: approval,
     contextBudgetTokens: Number(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS || 64000),
