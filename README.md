@@ -60,8 +60,8 @@ npm run dev -- --resume <id>
 
 Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonly]`,
 `/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/mcp [reload]`,
-`/review <scope>`, `/checkpoint`, `/checkpoints`, `/rollback <id>`, `/save`,
-`/status`, `/diff`.
+`/review <scope>`, `/research <question>`, `/checkpoint`, `/checkpoints`,
+`/rollback <id>`, `/save`, `/status`, `/diff`.
 
 ## Providers
 
@@ -169,14 +169,16 @@ Discovered tools appear as `mcp__<server>__<tool>`; `/mcp` lists them and
   and truncated, and nothing a server returns can change the approval mode,
   system prompt, or permission policy — it's just a tool result like any other.
 
-## Subagents (read-only review)
+## Subagents (read-only)
 
-`/review <scope>` runs a **read-only** reviewer subagent over the given files or
-topic and reports findings (bugs, regressions, missing tests):
+Two **read-only** subagents you invoke explicitly:
+
+- `/review <scope>` — reviewer: reports findings (bugs, regressions, missing tests).
+- `/research <question>` — researcher: explains how a feature/subsystem works, with citations.
 
 ```
 /review src/tools/grep.ts
-/review "the permission classifier"
+/research "where are permissions enforced?"
 ```
 
 It's safe by construction: the subagent runs through the same agent loop but with
@@ -187,8 +189,8 @@ you and saved to separate session metadata for audit, but it is **never added to
 main agent's conversation** — so a prompt-injected review (a malicious file telling
 the reviewer to "ignore policy") cannot poison the parent's future context. You make
 any changes yourself. Set `DEEPCODER_SUBAGENT_MODEL` to use a cheaper model for
-reviews (defaults to the main model). It's user-invoked only — the model can't spawn
-subagents on its own.
+subagents (defaults to the main model). They're user-invoked only — the model can't
+spawn subagents on its own.
 
 ## Checkpoints (local undo)
 

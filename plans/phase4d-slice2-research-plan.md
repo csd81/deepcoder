@@ -1,5 +1,11 @@
 # Deepcoder Phase 4D Slice 2 — Read-Only Research Subagent
 
+> **Status: implemented.** `researcher` profile + `/research <question>` shipped as a
+> narrow copy of the `/review` path: read-only by construction (restricted registry)
+> and policy (`readonly` mode), profile-specific `outputGuidance`, output quarantined
+> into `session.reviews` (never model-visible). Covered by
+> `test/adversarial/research-subagent.test.ts`.
+
 ## Context
 
 Phase 4D slice 1 shipped a read-only `reviewer` subagent exposed through `/review <scope>`. The next useful slice is a read-only `researcher` profile exposed through `/research <question>`, for broad codebase orientation and project-context synthesis.

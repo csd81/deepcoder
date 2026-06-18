@@ -7,8 +7,8 @@ import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { runSubagent } from "../subagents/runner.js";
-import { reviewer } from "../subagents/profiles.js";
-import type { SubagentResult, SubagentTrace } from "../subagents/types.js";
+import { reviewer, researcher } from "../subagents/profiles.js";
+import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
 
@@ -172,31 +172,21 @@ export async function handleSlashCommand(
         console.log(chalk.dim("usage: /review <scope>  — run a read-only reviewer subagent over the given files/topic"));
         return { consumed: true };
       }
-      const task = `Review this scope for bugs, regressions, and missing tests: ${arg}`;
-      const controller = new AbortController();
-      const onSigint = () => controller.abort();
-      process.once("SIGINT", onSigint);
-      console.log(chalk.dim("Running reviewer subagent (read-only)…"));
-      try {
-        const { result, trace } = await runSubagent(reviewer, task, {
-          workspaceRoot: config.workspaceRoot,
-          provider: session.provider,
-          parentModel: config.model,
-          subagentModel: config.subagentModel,
-          contextBudgetTokens: config.contextBudgetTokens,
-          compactAt: config.compactAt,
-          signal: controller.signal,
-        });
-        renderSubagentResult(result, trace);
-        // Record into SEPARATE session metadata — never into model-visible history.
-        // Subagent output is untrusted (derived from file content that could be
-        // prompt-injected); persisting it as assistant text would let it poison the
-        // parent's future context. Audit/durable, but not sent to the model.
-        session.reviews.push({ createdAt: new Date().toISOString(), result, trace });
-        await save();
-      } finally {
-        process.removeListener("SIGINT", onSigint);
+      await runSubagentCommand(session, save, reviewer, `Review this scope for bugs, regressions, and missing tests: ${arg}`);
+      return { consumed: true };
+    }
+
+    case "research": {
+      if (!arg) {
+        console.log(chalk.dim("usage: /research <question>  — run a read-only researcher subagent to explain the codebase"));
+        return { consumed: true };
       }
+      await runSubagentCommand(
+        session,
+        save,
+        researcher,
+        `Answer this question about the codebase using only read-only inspection; cite file:line evidence where possible: ${arg}`,
+      );
       return { consumed: true };
     }
 
@@ -248,6 +238,7 @@ export async function handleSlashCommand(
           "/plan <task>     produce a plan with the reasoner model (no tools run)",
           "/mcp [reload]    list configured MCP servers and tools",
           "/review <scope>  run a read-only reviewer subagent over files/topic",
+          "/research <q>    run a read-only researcher subagent to explain the codebase",
           "/checkpoint [l]  snapshot agent edits as an undo point (if enabled)",
           "/checkpoints     list checkpoints",
           "/rollback <id>   undo agent edits to a checkpoint ([--force] for conflicts)",
@@ -271,8 +262,43 @@ const SEVERITY_COLOR: Record<string, (s: string) => string> = {
   low: chalk.dim,
 };
 
+/**
+ * Shared driver for read-only subagent slash commands (/review, /research):
+ * fresh abort signal + SIGINT, run, render, and persist ONLY to the quarantined
+ * session.reviews metadata (never into model-visible history).
+ */
+async function runSubagentCommand(
+  session: Session,
+  save: () => Promise<void>,
+  profile: SubagentProfile,
+  task: string,
+): Promise<void> {
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.once("SIGINT", onSigint);
+  console.log(chalk.dim(`Running ${profile.name} subagent (read-only)…`));
+  try {
+    const { result, trace } = await runSubagent(profile, task, {
+      workspaceRoot: session.config.workspaceRoot,
+      provider: session.provider,
+      parentModel: session.config.model,
+      subagentModel: session.config.subagentModel,
+      contextBudgetTokens: session.config.contextBudgetTokens,
+      compactAt: session.config.compactAt,
+      signal: controller.signal,
+    });
+    renderSubagentResult(result, trace);
+    // Untrusted, model-authored output → quarantined metadata only, never assistant history.
+    session.reviews.push({ createdAt: new Date().toISOString(), result, trace });
+    await save();
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+  }
+}
+
 function renderSubagentResult(result: SubagentResult, trace: SubagentTrace): void {
-  console.log("\n" + chalk.bold(`reviewer> `) + result.summary);
+  const summary = result.summary || chalk.dim("(no answer produced)");
+  console.log("\n" + chalk.bold(`${result.profile}> `) + summary);
   for (const f of result.findings) {
     const color = SEVERITY_COLOR[f.severity] ?? chalk.white;
     const loc = f.file ? ` ${f.file}${f.line ? `:${f.line}` : ""}` : "";
@@ -281,6 +307,6 @@ function renderSubagentResult(result: SubagentResult, trace: SubagentTrace): voi
   }
   for (const s of result.suggestedNextSteps) console.log(chalk.dim(`  → ${s}`));
   if (result.errors.length) console.log(chalk.yellow(`  (${result.errors.join("; ")})`));
-  console.log(chalk.dim(`  · reviewer · ${trace.toolsCalled.length} tool calls · ${trace.turns} turns · ${trace.model}`));
-  console.log(chalk.dim("  (advisory — make any changes yourself; the reviewer cannot edit or run anything)"));
+  console.log(chalk.dim(`  · ${result.profile} · ${trace.toolsCalled.length} tool calls · ${trace.turns} turns · ${trace.model}`));
+  console.log(chalk.dim("  (advisory — make any changes yourself; this subagent cannot edit or run anything)"));
 }

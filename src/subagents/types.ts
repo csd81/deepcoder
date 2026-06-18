@@ -5,6 +5,8 @@ export interface SubagentProfile {
   allowedTools: string[];
   maxTurns: number;
   contextBudgetTokens: number;
+  /** Profile-specific output instructions appended to the boundary prompt. */
+  outputGuidance?: string;
 }
 
 export type Severity = "critical" | "high" | "medium" | "low";
