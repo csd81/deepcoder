@@ -53,6 +53,19 @@ See `plans/phase5-verification-workflows-plan.md`.
 - [ ] explicit `/triage --run <id>` integration for stored check output (follow-up); LLM/triage-subagent failure summarizer (5B uses a deterministic one)
 - [ ] **solve telemetry shipped** (`--telemetry` JSON sink + `evals/swebench/report.py`: per-attempt patch hash, repeated/empty-patch, failure-signature change, check-vs-hidden-resolved). Open follow-ups: per-instance API/token cost (needs a `usage` field on `ChatResponse` through every provider adapter); an **in-container** SWE solve loop (host verify env can't pin per-instance deps/Python — old flask fails to import on a modern interpreter)
 
+## Phase 6 — Benchmarking & solve-quality (in progress)
+
+- [~] **6 in-container SWE-bench solve** (branch `phase6-incontainer`): run `--solve` inside the
+  official instance container (pinned env), authored public-test map, baseline-diff oracle,
+  telemetry → `report.py`. 3-instance live smoke: check 3/3, resolved 0/3, 1 empty patch.
+- [x] **6B local bugfix benchmark** (`evals/local-bench/`, `plans/phase6b-local-bench-plan.md`):
+  fast, no-Docker, Node/TS runner with a **real red→green oracle** + deterministic patch-quality
+  gate. **solved = tests_passed && quality_passed** (a green-but-bad patch is not solved). 3 starter
+  cases; `--selftest` / `--fake-solve fixed|noop` give a full no-model acceptance path. Documents a
+  tiered iteration loop (Tier 0 unit → Tier 5 SWE smoke).
+- [ ] follow-ups: expand to 10 cases; wire the read-only `reviewer` subagent as an LLM quality gate;
+  consider a non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding).
+
 ## Non-goals (for now)
 
 - IDE/GUI integration — this is a terminal-first tool

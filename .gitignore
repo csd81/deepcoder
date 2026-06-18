@@ -5,4 +5,12 @@ dist/
 .env.local
 .deepcoder/
 evals/last-run.json
+evals/local-bench/runs/
+# Phase 6 in-container eval artifacts (never committed)
+evals/swebench/.cache/
+evals/swebench/deepcoder-bundle.tgz
+# Python test cruft (e.g. from running a case's check locally)
+__pycache__/
+*.pyc
+.pytest_cache/
 .DS_Store
