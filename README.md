@@ -182,10 +182,13 @@ topic and reports findings (bugs, regressions, missing tests):
 It's safe by construction: the subagent runs through the same agent loop but with
 a registry restricted to read-only/context tools **and** in `readonly` mode, so it
 **cannot** edit files, run commands, change config, or touch checkpoints — any such
-attempt is denied. Its output is **advisory**: the parent only stores a compact
-summary and never acts on it automatically; you make any changes yourself. Set
-`DEEPCODER_SUBAGENT_MODEL` to use a cheaper model for reviews (defaults to the main
-model). It's user-invoked only — the model can't spawn subagents on its own.
+attempt is denied. Its output is **advisory and isolated**: the review is shown to
+you and saved to separate session metadata for audit, but it is **never added to the
+main agent's conversation** — so a prompt-injected review (a malicious file telling
+the reviewer to "ignore policy") cannot poison the parent's future context. You make
+any changes yourself. Set `DEEPCODER_SUBAGENT_MODEL` to use a cheaper model for
+reviews (defaults to the main model). It's user-invoked only — the model can't spawn
+subagents on its own.
 
 ## Checkpoints (local undo)
 

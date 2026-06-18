@@ -34,6 +34,17 @@ export interface SubagentTrace {
   model: string;
 }
 
+/**
+ * A persisted record of a subagent run. Stored in SEPARATE session metadata for
+ * audit/durability — deliberately NOT added to the model-visible message history,
+ * so untrusted subagent output can never poison the parent's future context.
+ */
+export interface SubagentRunRecord {
+  createdAt: string;
+  result: SubagentResult;
+  trace: SubagentTrace;
+}
+
 export interface RunSubagentOptions {
   workspaceRoot: string;
   /** Parent provider — the subagent reuses it (read-only). */

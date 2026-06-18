@@ -4,6 +4,7 @@ import type { AgentMessage } from "../providers/types.js";
 import type { Todo } from "../tools/types.js";
 import type { ApprovalMode } from "../config/config.js";
 import type { CheckpointFile } from "./checkpoints.js";
+import type { SubagentRunRecord } from "../subagents/types.js";
 
 export interface PersistedSession {
   id: string;
@@ -19,6 +20,8 @@ export interface PersistedSession {
   writeTracker?: string[];
   /** Not-yet-finalized checkpoint pre-images (manual mode survives a restart). */
   pendingCheckpoint?: CheckpointFile[];
+  /** Subagent run records — audit metadata, NOT part of model context. */
+  reviews?: SubagentRunRecord[];
   createdAt: string;
   updatedAt: string;
 }
@@ -34,6 +37,7 @@ export interface SessionSnapshot {
   readTracker: Set<string>;
   writeTracker: Set<string>;
   pendingCheckpoint: CheckpointFile[];
+  reviews: SubagentRunRecord[];
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -72,6 +76,7 @@ export class SessionStore {
       readTracker: [...snapshot.readTracker],
       writeTracker: [...(snapshot.writeTracker ?? [])],
       pendingCheckpoint: snapshot.pendingCheckpoint ?? [],
+      reviews: snapshot.reviews ?? [],
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };

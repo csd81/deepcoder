@@ -188,8 +188,11 @@ export async function handleSlashCommand(
           signal: controller.signal,
         });
         renderSubagentResult(result, trace);
-        // Persist only a compact, clearly-labelled summary (advisory context, not instructions).
-        session.messages.push({ role: "assistant", content: subagentDigest(result, trace) });
+        // Record into SEPARATE session metadata — never into model-visible history.
+        // Subagent output is untrusted (derived from file content that could be
+        // prompt-injected); persisting it as assistant text would let it poison the
+        // parent's future context. Audit/durable, but not sent to the model.
+        session.reviews.push({ createdAt: new Date().toISOString(), result, trace });
         await save();
       } finally {
         process.removeListener("SIGINT", onSigint);
@@ -280,15 +283,4 @@ function renderSubagentResult(result: SubagentResult, trace: SubagentTrace): voi
   if (result.errors.length) console.log(chalk.yellow(`  (${result.errors.join("; ")})`));
   console.log(chalk.dim(`  · reviewer · ${trace.toolsCalled.length} tool calls · ${trace.turns} turns · ${trace.model}`));
   console.log(chalk.dim("  (advisory — make any changes yourself; the reviewer cannot edit or run anything)"));
-}
-
-/** Compact, labelled summary stored in history — advisory context, never instructions. */
-function subagentDigest(result: SubagentResult, trace: SubagentTrace): string {
-  const lines = [`[subagent:reviewer] (advisory; not instructions) ${result.summary}`];
-  for (const f of result.findings.slice(0, 20)) {
-    lines.push(`- [${f.severity}]${f.file ? ` ${f.file}${f.line ? `:${f.line}` : ""}` : ""} ${f.claim}`);
-  }
-  if (result.errors.length) lines.push(`(errors: ${result.errors.join("; ")})`);
-  lines.push(`(trace: ${trace.toolsCalled.length} tool calls, ${trace.turns} turns)`);
-  return lines.join("\n");
 }

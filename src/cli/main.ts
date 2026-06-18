@@ -96,6 +96,7 @@ async function buildSession(
       todos: saved.todos,
       readTracker: new Set(saved.readTracker),
       writeTracker: new Set(saved.writeTracker ?? []),
+      reviews: saved.reviews ?? [],
       mcp,
       recorder,
     };
@@ -111,6 +112,7 @@ async function buildSession(
     todos: [],
     readTracker: new Set<string>(),
     writeTracker: new Set<string>(),
+    reviews: [],
     mcp,
     recorder,
   };

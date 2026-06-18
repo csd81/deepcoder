@@ -45,6 +45,8 @@ async function makeSession(provider: ModelProvider): Promise<Session> {
     mode: "ask",
     todos: [],
     readTracker: new Set(),
+    writeTracker: new Set(),
+    reviews: [],
   };
 }
 

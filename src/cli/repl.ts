@@ -13,6 +13,7 @@ import { handleSlashCommand } from "./slashCommands.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
+import type { SubagentRunRecord } from "../subagents/types.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -30,6 +31,8 @@ export interface Session {
   mcp?: McpManager;
   /** Pre-image recorder for checkpoints; undefined when checkpoints are off. */
   recorder?: CheckpointRecorder;
+  /** Subagent run records — persisted for audit, NEVER sent to the model. */
+  reviews: SubagentRunRecord[];
 }
 
 export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
@@ -51,6 +54,7 @@ function snapshot(session: Session): SessionSnapshot {
     readTracker: session.readTracker,
     writeTracker: session.writeTracker,
     pendingCheckpoint: session.recorder?.serialize() ?? [],
+    reviews: session.reviews,
   };
 }
 

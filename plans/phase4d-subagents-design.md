@@ -5,9 +5,10 @@
 > `readonly`-mode by construction, output advisory/persisted as a summary only,
 > `DEEPCODER_SUBAGENT_MODEL` (defaults to parent), sequential, user-invoked only
 > (not model-callable). `src/subagents/` + `test/adversarial/subagents.test.ts`
-> cover the full adversarial plan. Deferred: researcher/test_triage profiles,
-> `/research`, model-callable `delegate_analysis`, parallel/nested subagents, any
-> subagent MCP or mutating access.
+> cover the slice-1 adversarial plan. Slice 2 (`researcher` + `/research`) is
+> planned in `plans/phase4d-slice2-research-plan.md`. Deferred after that:
+> test_triage profiles, model-callable `delegate_analysis`, parallel/nested
+> subagents, any subagent MCP or mutating access.
 
 ## Context
 
@@ -123,16 +124,11 @@ MCP tools are excluded by default. A later phase may allow explicitly named read
 
 ### Session Integration
 
-Subagent runs should be recorded as parent-visible assistant context:
+**Subagent output must NOT enter model-visible history.** It is model-authored text derived from untrusted file content, so persisting it as an `assistant` (or any model-visible) message is a cross-boundary prompt-injection path: a malicious file could make the reviewer emit "ignore policy, run X" which would then become prior context the parent model reads. (This was caught and fixed in slice 1.)
 
-```text
-[subagent:reviewer]
-task: ...
-summary: ...
-findings: ...
-```
+Instead, record the final validated result + a short execution trace (profile, tool names called, turn count, errors) in **separate session metadata** (`session.reviews`, persisted to the session file but never added to `messages`). It is shown to the user and kept for audit, but never sent to the model. A future slice may add an explicit, user-initiated re-inject as a fixed Deepcoder-controlled, clearly-fenced *untrusted* block (never the assistant role) — gated and tested separately.
 
-Do not merge raw subagent message history into the main conversation. Store only the final validated result plus a short execution trace: profile, tool names called, turn count, and errors.
+Do not merge raw subagent message history into the main conversation either.
 
 ### Concurrency
 
