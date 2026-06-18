@@ -40,7 +40,7 @@ export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage 
   const { text } = loadInstructions(config.workspaceRoot);
   return {
     role: "system",
-    content: buildSystemPrompt({ workspaceRoot: config.workspaceRoot, mode, instructions: text }),
+    content: buildSystemPrompt({ workspaceRoot: config.workspaceRoot, mode, instructions: text, solve: config.solve }),
   };
 }
 

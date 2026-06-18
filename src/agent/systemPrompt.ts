@@ -4,6 +4,8 @@ export function buildSystemPrompt(opts: {
   workspaceRoot: string;
   mode: ApprovalMode;
   instructions?: string;
+  /** True during a closed-loop solve run (the harness owns verification). */
+  solve?: boolean;
 }): string {
   const base = [
     "You are deepcoder, an agentic coding assistant operating in a developer's terminal.",
@@ -22,10 +24,21 @@ export function buildSystemPrompt(opts: {
     "",
     `Workspace root: ${opts.workspaceRoot}`,
     `Approval mode: ${opts.mode} (read-only tools always run; mutating/executing tools follow this mode).`,
-  ].join("\n");
+  ];
+
+  if (opts.solve) {
+    base.push(
+      "",
+      "Solve mode: a verification check runs AUTOMATICALLY after each of your turns.",
+      "- Do NOT run the project's tests or that verification check yourself (no pytest/npm test/etc.). The harness owns verification.",
+      "- Just make the smallest edit that should fix the issue and end your turn; you'll be given the check result and can revise.",
+    );
+  }
+
+  const text = base.join("\n");
 
   if (opts.instructions?.trim()) {
-    return base + "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
+    return text + "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
   }
-  return base;
+  return text;
 }
