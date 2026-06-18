@@ -109,19 +109,40 @@ no **new** failures appear. The public test target per instance comes from an au
 map (`solve-tests.flask.json`), never the hidden `FAIL_TO_PASS`. The provider key is
 passed only as a docker-exec env var, never into a command string, config, image, or log.
 
-### Honest result — 1 instance, in-container, live (`deepseek-chat`)
+### Honest result — in-container, live (`deepseek-chat`)
+
+**1-instance milestone** (validates the infra end-to-end: live API in-container →
+telemetry → patch extraction → official scoring → report):
 
 | Instance | check_solved | hidden resolved | attempts |
 |---|---|---|---|
-| `pallets__flask-4045` | **yes** | **no** | 1 |
+| `pallets__flask-4045` | yes | no | 1 |
 
-This **validates the infrastructure** end-to-end (live API in-container → telemetry →
-patch extraction → official scoring) **and documents the oracle limitation**: the public
-baseline-diff check only guards against regressions, it is not a fix oracle. Here the model
-wrote `assert "." not in name` instead of `raise ValueError`, which introduces no public-suite
-regression (check passes in 1 attempt) but does not satisfy the hidden test (it expects a
-raised error, and `assert` is stripped under `python -O`). The `check_solved` vs `resolved`
-gap is the intended, honest signal — not a pipeline failure.
+**3-instance smoke** (`flask-4045, 4992, 5063`):
+
+| Metric | Result |
+|---|---|
+| check passed (loop oracle) | **3/3** |
+| resolved (hidden tests) | **0/3** |
+| empty final patch | **1/3** (`flask-5063`) |
+| attempts-to-solve | 1, 1, 1 |
+
+The infrastructure is solid (3/3 ran clean, 1 attempt each), but the run **documents the
+oracle's limits honestly**:
+
+- The public **baseline-diff check only guards regressions; it is not a fix oracle** — it
+  passes 3/3 yet resolves 0/3.
+- `flask-4045` wrote `assert "." not in name` instead of `raise ValueError`: no public-suite
+  regression (check passes) but the hidden test expects a raised error (and `assert` is
+  stripped under `python -O`) → unresolved.
+- `flask-4992`/`flask-5063` have a **green public suite at base**, so "no new failures" is
+  satisfied trivially — `flask-5063` "passed" with an **empty patch** (the agent made no edit).
+  The `emp` column in `report.py` flags exactly this.
+
+Takeaway: a regression guard is necessary but not sufficient. A meaningful fix loop needs a
+stronger signal — at minimum require a **non-empty patch**, and ideally a target test that
+goes red→green for the fix (which, for SWE-bench, is the hidden `FAIL_TO_PASS` we deliberately
+don't couple to). The `check_solved` vs `resolved` gap is the intended, honest output here.
 
 ## Honest result so far
 
