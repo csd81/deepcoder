@@ -28,7 +28,11 @@ export async function scanFiles(root: string): Promise<string[]> {
 
 async function tryRipgrep(root: string): Promise<string[] | null> {
   try {
-    const { stdout } = await execFileAsync("rg", ["--files"], { cwd: root, maxBuffer: 16 * 1024 * 1024 });
+    // rg honours .gitignore but does NOT skip node_modules/dist/etc. on its own,
+    // so pass explicit excludes — this keeps rg and the Node-walk fallback
+    // consistent even in a directory with no .gitignore.
+    const globs = [...IGNORE_DIRS].flatMap((d) => ["-g", `!**/${d}/**`, "-g", `!${d}/**`]);
+    const { stdout } = await execFileAsync("rg", ["--files", ...globs], { cwd: root, maxBuffer: 16 * 1024 * 1024 });
     return stdout.split("\n").map((l) => l.trim()).filter(Boolean);
   } catch {
     return null;
