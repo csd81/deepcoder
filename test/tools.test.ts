@@ -10,7 +10,7 @@ import { InvalidArgumentsError, type ToolContext } from "../src/tools/types.js";
 
 async function makeCtx(): Promise<{ ctx: ToolContext; root: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "deepcoder-"));
-  return { root, ctx: { workspaceRoot: root, signal: new AbortController().signal, readTracker: new Set() } };
+  return { root, ctx: { workspaceRoot: root, signal: new AbortController().signal, readTracker: new Set(), todos: [] } };
 }
 
 test("edit_file rejects identical old/new at build time", () => {

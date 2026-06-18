@@ -4,7 +4,14 @@ import chalk from "chalk";
 import { loadConfig, type ApprovalMode } from "../config/config.js";
 import { DeepSeekProvider } from "../providers/deepseek.js";
 import { defaultRegistry } from "../tools/registry.js";
-import { runOneShot, runRepl, type Session } from "./repl.js";
+import { runOneShot, runRepl, systemMessage, type Session } from "./repl.js";
+import {
+  SessionStore,
+  newSessionId,
+  loadSession,
+  listSessions,
+  latestSessionId,
+} from "../session/sessionStore.js";
 
 const program = new Command();
 
@@ -13,21 +20,62 @@ program
   .description("A small, model-agnostic agentic coding CLI (DeepSeek).")
   .argument("[prompt...]", "task to run once and exit; omit for interactive mode")
   .option("--mode <mode>", "approval mode: ask | auto | readonly")
-  .action(async (promptParts: string[], opts: { mode?: string }) => {
-    const overrides = opts.mode ? { approvalMode: opts.mode as ApprovalMode } : {};
-    const config = loadConfig(overrides);
+  .option("--resume [id]", "resume a saved session (most recent if id omitted)")
+  .option("--list-sessions", "list saved sessions and exit")
+  .action(async (promptParts: string[], opts: { mode?: string; resume?: string | boolean; listSessions?: boolean }) => {
+    const baseConfig = loadConfig(opts.mode ? { approvalMode: opts.mode as ApprovalMode } : {});
 
-    const session: Session = {
-      config,
-      provider: new DeepSeekProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl }),
-      registry: defaultRegistry(),
-      readTracker: new Set<string>(),
-    };
+    if (opts.listSessions) {
+      const all = await listSessions(baseConfig.workspaceRoot);
+      if (all.length === 0) console.log(chalk.dim("No saved sessions."));
+      else for (const s of all) console.log(`${s.id}  ${chalk.dim(`${s.messageCount} msgs · ${s.updatedAt}`)}`);
+      return;
+    }
+
+    const session = await buildSession(baseConfig, opts.resume);
 
     const prompt = promptParts.join(" ").trim();
     if (prompt) await runOneShot(session, prompt);
     else await runRepl(session);
   });
+
+async function buildSession(
+  config: ReturnType<typeof loadConfig>,
+  resume?: string | boolean,
+): Promise<Session> {
+  const provider = new DeepSeekProvider({ apiKey: config.apiKey, baseUrl: config.baseUrl });
+  const registry = defaultRegistry();
+
+  if (resume) {
+    const id =
+      typeof resume === "string" ? resume : await latestSessionId(config.workspaceRoot);
+    if (!id) throw new Error("No saved session to resume.");
+    const saved = await loadSession(config.workspaceRoot, id);
+    const cfg = { ...config, model: saved.model };
+    console.log(chalk.dim(`Resuming session ${id} (${saved.messages.length} messages).`));
+    return {
+      config: cfg,
+      provider,
+      registry,
+      store: new SessionStore(config.workspaceRoot, id, saved.createdAt),
+      messages: saved.messages,
+      mode: saved.mode,
+      todos: saved.todos,
+      readTracker: new Set(saved.readTracker),
+    };
+  }
+
+  return {
+    config,
+    provider,
+    registry,
+    store: new SessionStore(config.workspaceRoot, newSessionId()),
+    messages: [systemMessage(config, config.approvalMode)],
+    mode: config.approvalMode,
+    todos: [],
+    readTracker: new Set<string>(),
+  };
+}
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(chalk.red((err as Error).message ?? String(err)));

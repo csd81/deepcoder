@@ -1,103 +1,136 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import chalk from "chalk";
-import type { Config } from "../config/config.js";
+import type { ApprovalMode, Config } from "../config/config.js";
 import type { ModelProvider, AgentMessage } from "../providers/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
-import type { ToolContext, ToolInvocation, ToolPreview, ToolResult } from "../tools/types.js";
+import type { ToolContext, ToolInvocation, ToolPreview, ToolResult, Todo } from "../tools/types.js";
 import { runAgentLoop, type AgentDeps } from "../agent/agentLoop.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
+import { loadInstructions } from "../context/projectInstructions.js";
 import { promptForApproval } from "../permissions/prompt.js";
-import { handleSlashCommand, type ReplState } from "./slashCommands.js";
+import { handleSlashCommand } from "./slashCommands.js";
+import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 
+/** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
   config: Config;
   provider: ModelProvider;
   registry: ToolRegistry;
-  /** Absolute paths read this session — shared so edits require a prior read. */
+  store: SessionStore;
+  messages: AgentMessage[];
+  mode: ApprovalMode;
+  todos: Todo[];
   readTracker: Set<string>;
 }
 
-function makeContext(config: Config, signal: AbortSignal, readTracker: Set<string>): ToolContext {
-  return { workspaceRoot: config.workspaceRoot, signal, readTracker };
+export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
+  const { text } = loadInstructions(config.workspaceRoot);
+  return {
+    role: "system",
+    content: buildSystemPrompt({ workspaceRoot: config.workspaceRoot, mode, instructions: text }),
+  };
 }
 
-function hooks(): Pick<AgentDeps, "onAssistantText" | "onToolCall" | "onToolResult" | "onNotice" | "approve"> {
+function snapshot(session: Session): SessionSnapshot {
   return {
+    model: session.config.model,
+    mode: session.mode,
+    messages: session.messages,
+    todos: session.todos,
+    readTracker: session.readTracker,
+  };
+}
+
+async function runTask(session: Session): Promise<void> {
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.once("SIGINT", onSigint);
+
+  const ctx: ToolContext = {
+    workspaceRoot: session.config.workspaceRoot,
+    signal: controller.signal,
+    readTracker: session.readTracker,
+    todos: session.todos,
+  };
+
+  let streaming = false;
+  const deps: AgentDeps = {
+    provider: session.provider,
+    registry: session.registry,
+    ctx,
+    model: session.config.model,
+    mode: session.mode,
+    maxTurns: session.config.maxTurns,
+    approve: (inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview),
+    onPersist: () => session.store.save(snapshot(session)),
+    onAssistantTextDelta: (chunk) => {
+      if (!streaming) {
+        stdout.write("\n" + chalk.bold("assistant> "));
+        streaming = true;
+      }
+      stdout.write(chunk);
+    },
     onAssistantText: (text) => {
-      if (text.trim()) stdout.write("\n" + text.trim() + "\n");
+      if (text.trim()) stdout.write("\n" + chalk.bold("assistant> ") + text.trim() + "\n");
     },
     onToolCall: (name, describe) => {
-      stdout.write(chalk.dim(`\n● ${name}: ${describe}\n`));
+      if (streaming) {
+        stdout.write("\n");
+        streaming = false;
+      }
+      stdout.write(chalk.dim(`tool ${name}: ${describe}\n`));
     },
     onToolResult: (_name, result: ToolResult) => {
       const text = result.output.length > 800 ? result.output.slice(0, 800) + "\n…(truncated)" : result.output;
       stdout.write((result.isError ? chalk.red(text) : chalk.dim(text)) + "\n");
     },
     onNotice: (m) => stdout.write(chalk.yellow(`\n${m}\n`)),
-    approve: (invocation: ToolInvocation, preview?: ToolPreview) => promptForApproval(invocation, preview),
   };
-}
-
-async function runTask(session: Session, state: ReplState): Promise<void> {
-  const controller = new AbortController();
-  const onSigint = () => controller.abort();
-  process.once("SIGINT", onSigint);
-  // readTracker persists for the lifetime of the session, not just one task.
-  const ctx = makeContext(session.config, controller.signal, session.readTracker);
 
   try {
-    await runAgentLoop(state.messages, {
-      provider: session.provider,
-      registry: session.registry,
-      ctx,
-      model: session.config.model,
-      mode: state.mode,
-      maxTurns: session.config.maxTurns,
-      ...hooks(),
-    });
+    await runAgentLoop(session.messages, deps);
+    if (streaming) stdout.write("\n");
   } finally {
     process.removeListener("SIGINT", onSigint);
   }
 }
 
-function initialMessages(config: Config, mode: ReplState["mode"]): AgentMessage[] {
-  return [{ role: "system", content: buildSystemPrompt({ workspaceRoot: config.workspaceRoot, mode }) }];
-}
-
 /** Non-interactive: run a single task and exit. */
 export async function runOneShot(session: Session, prompt: string): Promise<void> {
-  const state: ReplState = { mode: session.config.approvalMode, messages: initialMessages(session.config, session.config.approvalMode) };
-  state.messages.push({ role: "user", content: prompt });
-  await runTask(session, state);
+  session.messages.push({ role: "user", content: prompt });
+  await session.store.save(snapshot(session));
+  await runTask(session);
 }
 
 /** Interactive REPL. */
 export async function runRepl(session: Session): Promise<void> {
-  const state: ReplState = { mode: session.config.approvalMode, messages: initialMessages(session.config, session.config.approvalMode) };
   stdout.write(
     chalk.bold("deepcoder") +
-      chalk.dim(` — ${session.config.model} | mode: ${state.mode} | ${session.config.workspaceRoot}\n`) +
+      chalk.dim(
+        ` — ${session.config.model} | mode: ${session.mode} | session: ${session.store.id}\n${session.config.workspaceRoot}\n`,
+      ) +
       chalk.dim("Type a task, or /help for commands.\n"),
   );
 
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
     while (true) {
-      const input = (await rl.question(chalk.cyan("\n› "))).trim();
+      const input = (await rl.question(chalk.cyan("\ndeepcoder> "))).trim();
       if (!input) continue;
 
-      const slash = await handleSlashCommand(input, session.config, state);
+      const slash = await handleSlashCommand(input, session, () => session.store.save(snapshot(session)));
       if (slash.exit) break;
       if (slash.consumed) {
         // Keep the system prompt in sync if the mode changed.
-        state.messages[0] = { role: "system", content: buildSystemPrompt({ workspaceRoot: session.config.workspaceRoot, mode: state.mode }) };
+        session.messages[0] = systemMessage(session.config, session.mode);
         continue;
       }
 
-      state.messages.push({ role: "user", content: input });
+      session.messages.push({ role: "user", content: input });
+      await session.store.save(snapshot(session));
       try {
-        await runTask(session, state);
+        await runTask(session);
       } catch (err) {
         stdout.write(chalk.red(`\nError: ${(err as Error).message ?? err}\n`));
       }

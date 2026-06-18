@@ -7,7 +7,14 @@ import { z } from "zod";
  * validated invocation *before* anything runs.
  */
 
-export type ToolKind = "read-only" | "mutate" | "execute";
+export type ToolKind = "read-only" | "session" | "mutate" | "execute";
+
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export interface Todo {
+  id: string;
+  content: string;
+  status: TodoStatus;
+}
 
 export interface ToolResult {
   /** Text fed back to the model. */
@@ -27,6 +34,12 @@ export interface ToolContext {
    * to have been read before they overwrite it.
    */
   readTracker: Set<string>;
+  /**
+   * Live todo list for the session. `session`-kind tools mutate this array in
+   * place; the agent loop reads it to inject context and the session store
+   * persists it.
+   */
+  todos: Todo[];
 }
 
 /** What a tool will do, computed before execution for approval prompts. */

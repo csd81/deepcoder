@@ -11,7 +11,9 @@ export type ApprovalDecision = "allow" | "ask" | "deny";
  * through before the agent loop runs it.
  */
 export function checkPermission(invocation: ToolInvocation, mode: ApprovalMode): ApprovalDecision {
-  if (invocation.kind === "read-only") return "allow";
+  // Read-only and session-state tools never touch the filesystem/shell, so
+  // they are always allowed regardless of mode.
+  if (invocation.kind === "read-only" || invocation.kind === "session") return "allow";
 
   if (mode === "readonly") return "deny";
 

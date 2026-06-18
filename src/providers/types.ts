@@ -43,7 +43,19 @@ export interface ChatResponse {
   toolCalls: ToolCall[];
 }
 
+/**
+ * Normalized streaming events. Tool-call fragment accumulation is the adapter's
+ * job — consumers only ever see fully-formed `tool_call_complete` events.
+ */
+export type ModelEvent =
+  | { type: "assistant_text_delta"; text: string }
+  | { type: "tool_call_complete"; toolCall: ToolCall }
+  | { type: "done"; finishReason?: string }
+  | { type: "error"; message: string };
+
 export interface ModelProvider {
-  /** One non-streaming round-trip. Streaming can be added later behind the same boundary. */
+  /** One non-streaming round-trip. Always available. */
   chat(input: ChatRequest): Promise<ChatResponse>;
+  /** Optional streaming round-trip; the loop prefers this when present. */
+  streamChat?(input: ChatRequest): AsyncIterable<ModelEvent>;
 }

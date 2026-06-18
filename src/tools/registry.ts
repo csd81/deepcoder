@@ -8,6 +8,7 @@ import { globTool } from "./glob.js";
 import { editFileTool } from "./editFile.js";
 import { writeFileTool } from "./writeFile.js";
 import { runBashTool } from "./runBash.js";
+import { todoWriteTool } from "./todoWrite.js";
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
@@ -29,7 +30,9 @@ export class ToolRegistry {
     return [...this.tools.values()].map((t) => ({
       name: t.name,
       description: t.description,
-      parameters: zodToJsonSchema(t.schema, { target: "openApi3" }) as Record<string, unknown>,
+      // Default target is JSON-Schema draft-07, which the DeepSeek/OpenAI tools
+      // API expects (e.g. numeric `exclusiveMinimum`, not the OpenAPI boolean).
+      parameters: zodToJsonSchema(t.schema, { $refStrategy: "none" }) as Record<string, unknown>,
     }));
   }
 }
@@ -45,6 +48,7 @@ export function defaultRegistry(): ToolRegistry {
     editFileTool,
     writeFileTool,
     runBashTool,
+    todoWriteTool,
   ]) {
     r.register(t);
   }

@@ -14,15 +14,17 @@ Safe, single-provider agent loop. See `plans/phase1-plan.md`.
 - [x] Git status/diff helpers
 - [x] Agent loop (max-turns, abort, repeated-invalid-args guard)
 - [x] CLI / REPL + slash commands
-- [ ] Tests (unit + fake-provider integration)
+- [x] Tests (unit + fake-provider integration; 21 passing)
 
-## Phase 2 — Correctness & ergonomics
+## Phase 2 — Correctness & ergonomics (in progress)
 
-- Streaming responses (token + tool-call streaming) behind the same provider boundary
-- `todo_write` tool for multi-step task tracking
-- Project instructions: auto-load `AGENTS.md` / `CLAUDE.md` into the system prompt
-- Better diffs (real `git diff`-style hunks) and richer terminal rendering (Ink)
-- Session persistence and `--resume`
+See `plans/phase2-plan.md`.
+
+- [ ] Streaming responses behind the same provider boundary (`streamChat`)
+- [ ] `session` tool kind + `todo_write` tool for multi-step task tracking
+- [ ] Project instructions: auto-load `.deepcoder/instructions.md` / `AGENTS.md` / `CLAUDE.md`
+- [ ] Better diffs (git-style `@@` hunks)
+- [ ] Session persistence and `--resume` / `--list-sessions`
 
 ## Phase 3 — Context & scale
 

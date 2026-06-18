@@ -18,7 +18,7 @@ class FakeProvider implements ModelProvider {
 }
 
 async function ctxFor(root: string): Promise<ToolContext> {
-  return { workspaceRoot: root, signal: new AbortController().signal, readTracker: new Set() };
+  return { workspaceRoot: root, signal: new AbortController().signal, readTracker: new Set(), todos: [] };
 }
 
 function deps(provider: ModelProvider, ctx: ToolContext, over: Partial<AgentDeps> = {}): AgentDeps {

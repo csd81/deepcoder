@@ -1,7 +1,11 @@
 import type { ApprovalMode } from "../config/config.js";
 
-export function buildSystemPrompt(opts: { workspaceRoot: string; mode: ApprovalMode }): string {
-  return [
+export function buildSystemPrompt(opts: {
+  workspaceRoot: string;
+  mode: ApprovalMode;
+  instructions?: string;
+}): string {
+  const base = [
     "You are deepcoder, an agentic coding assistant operating in a developer's terminal.",
     "",
     "You complete tasks by calling tools. Work in small, verifiable steps:",
@@ -19,4 +23,9 @@ export function buildSystemPrompt(opts: { workspaceRoot: string; mode: ApprovalM
     `Workspace root: ${opts.workspaceRoot}`,
     `Approval mode: ${opts.mode} (read-only tools always run; mutating/executing tools follow this mode).`,
   ].join("\n");
+
+  if (opts.instructions?.trim()) {
+    return base + "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
+  }
+  return base;
 }

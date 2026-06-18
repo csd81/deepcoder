@@ -1,12 +1,9 @@
 import chalk from "chalk";
-import type { ApprovalMode, Config } from "../config/config.js";
-import type { AgentMessage } from "../providers/types.js";
+import type { ApprovalMode } from "../config/config.js";
 import { Git } from "../workspace/git.js";
-
-export interface ReplState {
-  messages: AgentMessage[];
-  mode: ApprovalMode;
-}
+import { loadInstructions } from "../context/projectInstructions.js";
+import { renderTodos } from "../tools/todoWrite.js";
+import type { Session } from "./repl.js";
 
 export interface SlashOutcome {
   consumed: boolean;
@@ -21,13 +18,14 @@ const MODES: ApprovalMode[] = ["ask", "auto", "readonly"];
  */
 export async function handleSlashCommand(
   input: string,
-  config: Config,
-  state: ReplState,
+  session: Session,
+  save: () => Promise<void>,
 ): Promise<SlashOutcome> {
   if (!input.startsWith("/")) return { consumed: false };
 
   const [cmd, ...rest] = input.slice(1).split(/\s+/);
   const arg = rest.join(" ").trim();
+  const { config } = session;
 
   switch (cmd) {
     case "exit":
@@ -35,35 +33,46 @@ export async function handleSlashCommand(
       return { consumed: true, exit: true };
 
     case "clear":
-      // Keep the system prompt (index 0), drop the rest of the history.
-      state.messages.length = 1;
-      console.log(chalk.dim("Conversation cleared."));
+      session.messages.length = 1; // keep the system prompt
+      session.todos.length = 0;
+      console.log(chalk.dim("Conversation and todos cleared."));
       return { consumed: true };
 
     case "mode":
       if (MODES.includes(arg as ApprovalMode)) {
-        state.mode = arg as ApprovalMode;
-        console.log(chalk.dim(`Approval mode: ${state.mode}`));
+        session.mode = arg as ApprovalMode;
+        console.log(chalk.dim(`Approval mode: ${session.mode}`));
       } else {
-        console.log(chalk.dim(`Current mode: ${state.mode}. Use one of: ${MODES.join(", ")}`));
+        console.log(chalk.dim(`Current mode: ${session.mode}. Use one of: ${MODES.join(", ")}`));
       }
+      return { consumed: true };
+
+    case "todos":
+      console.log(renderTodos(session.todos));
+      return { consumed: true };
+
+    case "instructions": {
+      const { source, text } = loadInstructions(config.workspaceRoot);
+      if (source) console.log(chalk.dim(`(${source})\n`) + text);
+      else console.log(chalk.dim("No project instructions found (.deepcoder/instructions.md, AGENTS.md, CLAUDE.md)."));
+      return { consumed: true };
+    }
+
+    case "save":
+      await save();
+      console.log(chalk.dim(`Saved session ${session.store.id}`));
       return { consumed: true };
 
     case "status": {
       const git = new Git(config.workspaceRoot);
-      if (await git.isRepo()) console.log(await git.status());
-      else console.log(chalk.dim("Not a git repository."));
+      console.log((await git.isRepo()) ? await git.status() : chalk.dim("Not a git repository."));
       return { consumed: true };
     }
 
     case "diff": {
       const git = new Git(config.workspaceRoot);
-      if (await git.isRepo()) {
-        const d = await git.diff();
-        console.log(d || chalk.dim("No unstaged changes."));
-      } else {
-        console.log(chalk.dim("Not a git repository."));
-      }
+      if (await git.isRepo()) console.log((await git.diff()) || chalk.dim("No unstaged changes."));
+      else console.log(chalk.dim("Not a git repository."));
       return { consumed: true };
     }
 
@@ -72,8 +81,11 @@ export async function handleSlashCommand(
         [
           "/help            show this help",
           "/exit            quit",
-          "/clear           clear conversation (keep system prompt)",
+          "/clear           clear conversation + todos (keep system prompt)",
           "/mode [m]        show or set approval mode (ask | auto | readonly)",
+          "/todos           show the current todo list",
+          "/instructions    show loaded project instructions",
+          "/save            save the session now",
           "/status          git status",
           "/diff            git diff",
         ].join("\n"),

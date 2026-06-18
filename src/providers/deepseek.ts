@@ -7,6 +7,7 @@ import type {
   AgentMessage,
   ChatRequest,
   ChatResponse,
+  ModelEvent,
   ModelProvider,
   ToolCall,
 } from "./types.js";
@@ -56,6 +57,60 @@ export class DeepSeekProvider implements ModelProvider {
     });
 
     return { text: choice?.content ?? "", toolCalls };
+  }
+
+  async *streamChat(input: ChatRequest): AsyncIterable<ModelEvent> {
+    let stream;
+    try {
+      stream = await this.client.chat.completions.create(
+        {
+          model: input.model,
+          temperature: input.temperature ?? 0,
+          messages: input.messages.map(toWireMessage),
+          tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
+          tool_choice: input.tools.length ? "auto" : undefined,
+          stream: true,
+        },
+        { signal: input.signal },
+      );
+    } catch (err) {
+      yield { type: "error", message: mapProviderError(err, input.model).message };
+      return;
+    }
+
+    // Accumulate tool-call fragments by index; OpenAI streams name once and
+    // arguments as a series of string deltas.
+    const acc = new Map<number, { id: string; name: string; args: string }>();
+    let finishReason: string | undefined;
+
+    try {
+      for await (const chunk of stream) {
+        const choice = chunk.choices[0];
+        if (!choice) continue;
+        const delta = choice.delta;
+
+        if (delta?.content) {
+          yield { type: "assistant_text_delta", text: delta.content };
+        }
+        for (const tc of delta?.tool_calls ?? []) {
+          const cur = acc.get(tc.index) ?? { id: "", name: "", args: "" };
+          if (tc.id) cur.id = tc.id;
+          if (tc.function?.name) cur.name = tc.function.name;
+          if (tc.function?.arguments) cur.args += tc.function.arguments;
+          acc.set(tc.index, cur);
+        }
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+      }
+    } catch (err) {
+      yield { type: "error", message: mapProviderError(err, input.model).message };
+      return;
+    }
+
+    for (const tc of [...acc.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)) {
+      if (!tc.name) continue;
+      yield { type: "tool_call_complete", toolCall: { id: tc.id, name: tc.name, arguments: safeParseArgs(tc.args) } };
+    }
+    yield { type: "done", finishReason };
   }
 }
 
