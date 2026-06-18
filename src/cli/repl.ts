@@ -52,6 +52,7 @@ async function runTask(session: Session): Promise<void> {
     signal: controller.signal,
     readTracker: session.readTracker,
     todos: session.todos,
+    history: session.messages,
   };
 
   let streaming = false;

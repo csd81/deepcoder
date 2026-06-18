@@ -16,21 +16,24 @@ Safe, single-provider agent loop. See `plans/phase1-plan.md`.
 - [x] CLI / REPL + slash commands
 - [x] Tests (unit + fake-provider integration; 21 passing)
 
-## Phase 2 — Correctness & ergonomics (in progress)
+## Phase 2 — Correctness & ergonomics
 
 See `plans/phase2-plan.md`.
 
-- [ ] Streaming responses behind the same provider boundary (`streamChat`)
-- [ ] `session` tool kind + `todo_write` tool for multi-step task tracking
-- [ ] Project instructions: auto-load `.deepcoder/instructions.md` / `AGENTS.md` / `CLAUDE.md`
-- [ ] Better diffs (git-style `@@` hunks)
-- [ ] Session persistence and `--resume` / `--list-sessions`
+- [x] Streaming responses behind the same provider boundary (`streamChat`)
+- [x] `session` tool kind + `todo_write` tool for multi-step task tracking
+- [x] Project instructions: auto-load `.deepcoder/instructions.md` / `AGENTS.md` / `CLAUDE.md`
+- [x] Better diffs (git-style `@@` hunks)
+- [x] Session persistence and `--resume` / `--list-sessions`
 
-## Phase 3 — Context & scale
+## Phase 3 — Hardening, context & scale (in progress)
 
-- Context-window management / history compaction
-- Repo map / file scanner for large codebases
-- `deepseek-reasoner` planning mode for hard tasks
+See `plans/phase3-plan.md`.
+
+- [x] Hardening: segmenting command classifier, atomic session saves, fresh-on-resume system prompt, realpath write confinement
+- [x] Token-aware history compaction (`/compact`, `/context`)
+- [x] Repo map / file scanner + context tools (`repo_map`, `find_symbols`, `list_recent_context`)
+- [x] `deepseek-reasoner` planning mode (`/plan`, `--planning-model`)
 
 ## Phase 4 — Extensibility
 

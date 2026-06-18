@@ -40,6 +40,12 @@ export interface ToolContext {
    * persists it.
    */
   todos: Todo[];
+  /**
+   * Live reference to the conversation history, for read-only context tools
+   * (e.g. surfacing compaction summaries). Optional so non-CLI callers and
+   * tests can omit it.
+   */
+  history?: { role: string; content: string }[];
 }
 
 /** What a tool will do, computed before execution for approval prompts. */

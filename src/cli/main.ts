@@ -22,8 +22,16 @@ program
   .option("--mode <mode>", "approval mode: ask | auto | readonly")
   .option("--resume [id]", "resume a saved session (most recent if id omitted)")
   .option("--list-sessions", "list saved sessions and exit")
-  .action(async (promptParts: string[], opts: { mode?: string; resume?: string | boolean; listSessions?: boolean }) => {
-    const baseConfig = loadConfig(opts.mode ? { approvalMode: opts.mode as ApprovalMode } : {});
+  .option("--planning-model <model>", "model used by /plan (default: deepseek-reasoner)")
+  .action(
+    async (
+      promptParts: string[],
+      opts: { mode?: string; resume?: string | boolean; listSessions?: boolean; planningModel?: string },
+    ) => {
+    const baseConfig = loadConfig({
+      ...(opts.mode ? { approvalMode: opts.mode as ApprovalMode } : {}),
+      ...(opts.planningModel ? { reasonerModel: opts.planningModel } : {}),
+    });
 
     if (opts.listSessions) {
       const all = await listSessions(baseConfig.workspaceRoot);

@@ -9,6 +9,7 @@ import { editFileTool } from "./editFile.js";
 import { writeFileTool } from "./writeFile.js";
 import { runBashTool } from "./runBash.js";
 import { todoWriteTool } from "./todoWrite.js";
+import { repoMapTool, findSymbolsTool, listRecentContextTool } from "./contextTools.js";
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
@@ -49,6 +50,9 @@ export function defaultRegistry(): ToolRegistry {
     writeFileTool,
     runBashTool,
     todoWriteTool,
+    repoMapTool,
+    findSymbolsTool,
+    listRecentContextTool,
   ]) {
     r.register(t);
   }

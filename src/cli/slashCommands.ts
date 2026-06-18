@@ -5,6 +5,7 @@ import { loadInstructions } from "../context/projectInstructions.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
+import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
 
 export interface SlashOutcome {
@@ -89,6 +90,29 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "plan": {
+      if (!arg) {
+        console.log(chalk.dim("usage: /plan <what to plan> — produces a plan only, runs no tools."));
+        return { consumed: true };
+      }
+      const planningModel = config.reasonerModel || "deepseek-reasoner";
+      // Planning context: system prompt + any compaction summaries + the request.
+      // Tool-call history is intentionally omitted (reasoner runs plan-only, no tools).
+      const planMessages: AgentMessage[] = [
+        session.messages[0]!,
+        ...session.messages.filter((m) => m.role === "system" && m.content.startsWith("[compacted-summary]")),
+        { role: "user", content: `Produce a concrete, step-by-step plan (do NOT execute anything): ${arg}` },
+      ];
+      console.log(chalk.dim(`Planning with ${planningModel}…`));
+      const res = await session.provider.chat({ messages: planMessages, tools: [], model: planningModel });
+      console.log("\n" + res.text + "\n");
+      // Record the plan in real history so it can guide later implementation.
+      session.messages.push({ role: "user", content: `/plan ${arg}` });
+      session.messages.push({ role: "assistant", content: res.text });
+      await save();
+      return { consumed: true };
+    }
+
     case "status": {
       const git = new Git(config.workspaceRoot);
       console.log((await git.isRepo()) ? await git.status() : chalk.dim("Not a git repository."));
@@ -113,6 +137,7 @@ export async function handleSlashCommand(
           "/instructions    show loaded project instructions",
           "/context         show context-token usage",
           "/compact         compact conversation history now",
+          "/plan <task>     produce a plan with the reasoner model (no tools run)",
           "/save            save the session now",
           "/status          git status",
           "/diff            git diff",
