@@ -6,3 +6,9 @@ dist/
 .deepcoder/
 evals/last-run.json
 .DS_Store
+
+# Phase 6 in-container eval: pinned Node cache + assembled bundle (never committed)
+evals/swebench/.cache/
+evals/swebench/deepcoder-bundle.tgz
+# swebench writes build logs here
+logs/
