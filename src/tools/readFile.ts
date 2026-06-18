@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
 import { resolveInWorkspace } from "../workspace/paths.js";
+import { isSensitivePath } from "../workspace/sensitive.js";
 
 const schema = z.object({
   path: z.string().describe("Path to the file, relative to the workspace root."),
@@ -24,6 +25,12 @@ export const readFileTool: Tool = {
       kind: "read-only",
       describe: () => `Read ${args.path}`,
       async execute(ctx) {
+        if (isSensitivePath(args.path)) {
+          return {
+            output: `Reading ${args.path} is blocked: it may contain secrets (e.g. API keys). It was not read.`,
+            isError: true,
+          };
+        }
         const abs = resolveInWorkspace(ctx.workspaceRoot, args.path);
         const content = await fs.readFile(abs, "utf8");
         ctx.readTracker.add(abs);

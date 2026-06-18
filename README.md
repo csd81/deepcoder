@@ -95,6 +95,10 @@ Other guardrails:
   in-workspace operands; everything else asks.
 - **Realpath write confinement** — mutating tools resolve symlinks at write time
   so bytes can't land outside the workspace.
+- **Secret-file guard** — `read_file` refuses, and `run_bash` will not auto-run,
+  reads of likely-secret paths (`.env`, `.env.*`, `.deepcoder/`, keys/PEMs). This
+  is default-secure; model text claiming "pre-approval" cannot override it,
+  because the permission policy is code, not prompt.
 
 ## Context management (large/long sessions)
 
@@ -137,9 +141,23 @@ can `describe()` itself, `preview()` its effect, and `execute()`.
   `ask` mode when working in a sensitive directory.
 - Repo-map symbol extraction is regex-based (TS/JS), so it's approximate.
 
-## Development
+## Development & testing
 
 ```bash
 npm run typecheck
-npm test          # node --test
+npm test              # all tests, fast default
 ```
+
+Test tiers (all run with **fake providers** — no API key needed):
+
+| Command | What it runs |
+|---|---|
+| `npm run test:unit` | normal behavior tests (`test/*.test.ts`) |
+| `npm run test:adversarial` | hostile-input tests (`test/adversarial/**`) — permission bypasses, path escapes, state corruption, malformed streams, prompt injection, schema regressions |
+| `npm run test:phase` | **the release gate**: typecheck + unit + adversarial |
+| `npm run test:live` | optional live DeepSeek smoke test, **readonly**, requires `.env` |
+
+**Phase rule:** a phase is not complete until `npm run test:phase` is green and any
+new capability ships with both normal and adversarial coverage. Fixtures and
+snapshots must never contain real secrets; the live key is only for `test:live`.
+See `plans/adversarial-testing-framework.md`.

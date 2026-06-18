@@ -1,5 +1,13 @@
 # Adversarial Testing Framework
 
+> **Status: implemented.** Phases 1–3 were already shipped when this framework
+> landed, so its coverage was added retroactively over the existing code, and the
+> command-policy / secret-read findings it lists were fixed (`run_bash`/`read_file`
+> no longer expose `.env`). It is now the required gate for every future phase.
+> Layout note: scripts use path-scoped globs (`test/*.test.ts` vs
+> `test/adversarial/**`) rather than `--test-skip-pattern`. The "Immediate Phase 3
+> Requirement" section is kept for history — those items are done.
+
 Deepcoder needs adversarial tests that run automatically at every phase gate.
 Normal unit tests prove expected behavior. Adversarial tests try to break the
 safety model, corrupt state, bypass permissions, or trick the agent into unsafe
@@ -228,3 +236,15 @@ cover the current command-policy bypass findings:
 - git side-effect commands
 
 This hardening should be the first Phase 3 implementation step.
+
+---
+
+## Implementation result
+
+Added `test/adversarial/` (command-policy, path-confinement, session-store,
+streaming-provider, prompt-injection, tool-schema, phase3-context) with shared
+hostile fake providers in `test/helpers/providers.ts` and fixtures under
+`test/adversarial/fixtures/`. Scripts: `test:unit`, `test:adversarial`,
+`test:phase` (gate), `test:live`. Finding F1 fixed via `src/workspace/sensitive.ts`,
+wired into `read_file` and the command classifier. **83 tests pass** (53 unit + 30
+adversarial); typecheck clean; live readonly smoke test verified.

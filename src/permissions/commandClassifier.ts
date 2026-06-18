@@ -1,4 +1,5 @@
 import type { ApprovalDecision } from "./policy.js";
+import { isSensitivePath } from "../workspace/sensitive.js";
 
 /**
  * Classify a raw bash command into a default permission decision.
@@ -29,7 +30,7 @@ export function classifyCommand(command: string): ApprovalDecision {
   // 1. Hard denials — substitution, fork bombs, pipe-to-shell, dangerous tokens.
   if (/\$\(|`|<\(/.test(cmd)) return "deny"; // command/process substitution
   if (/:\s*\(\s*\)\s*\{/.test(cmd)) return "deny"; // fork bomb
-  if (/\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/.test(cmd)) return "deny";
+  if (/\|\s*(sh|bash|zsh|dash)\b/.test(cmd)) return "deny"; // pipe anything into a shell
   if (/>>?\s*\/(?!dev\/null\b)/.test(cmd)) return "deny"; // redirect to an absolute path
   const tokens = cmd.split(/\s+/);
   if (tokens.some((t) => DANGEROUS_TOKENS.includes(t))) return "deny";
@@ -62,13 +63,14 @@ function isReadOnlySegment(segment: string): boolean {
   }
   if (!safeCmd) return false;
 
-  // Operands must not reach outside the workspace.
+  // Operands must not reach outside the workspace or touch secret files.
   const args = head === "git" ? operands.slice(1) : operands;
   for (const a of args) {
     if (a.startsWith("-")) continue; // flags are fine
     if (a === "/dev/null") continue;
     if (a.startsWith("/")) return false; // absolute path
     if (a.split("/").includes("..")) return false; // parent escape
+    if (isSensitivePath(a)) return false; // .env and other secrets → not auto-allowed
   }
   return true;
 }
