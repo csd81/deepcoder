@@ -69,6 +69,13 @@ Default to Tier 0–1 for daily work; only escalate to SWE-bench (Tier 3+) after
 improves. Narrow a single test with `npm test -- test/solve.test.ts`, then the full
 `npm run test:phase` before committing.
 
+## Cases (10, increasing complexity)
+`wrong-operator`, `off-by-one`, `runtime-validation-dotted-name` (assert-vs-ValueError),
+`multi-file-helper` (fix the helper, not the caller), `exception-type` (specific exception),
+`state-mutation` (don't mutate the caller's input), `async-await` (missing `await`),
+`cli-exit-code` (non-zero exit on misuse), `public-check-trap` (a broad-`except` fix passes the
+test but is flagged → not solved), `merge-intervals` (sort + touching-interval merge).
+
 ## Later
-Expand to the full 10-case set; wire the read-only `reviewer` subagent (`src/subagents/runner.ts`)
-as an LLM quality gate alongside the deterministic flags.
+Wire the read-only `reviewer` subagent (`src/subagents/runner.ts`) as an LLM quality gate
+alongside the deterministic flags.

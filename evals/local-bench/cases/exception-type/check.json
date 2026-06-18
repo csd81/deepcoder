@@ -1,0 +1,9 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 120000,
+  "solveAttempts": 3,
+  "forbiddenPatterns": ["raise Exception"],
+  "requiredPatterns": ["raise KeyError"],
+  "allowedPaths": ["lookup.py"]
+}
