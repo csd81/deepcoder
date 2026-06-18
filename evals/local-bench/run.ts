@@ -48,7 +48,7 @@ const opt = (f: string) => {
 };
 
 type Check = CaseManifest["check"];
-interface CheckRun { code: number | null; out: string; timedOut: boolean }
+interface CheckRun { code: number | null; timedOut: boolean }
 
 function runCheck(ws: string, check: Check): CheckRun {
   const r = spawnSync("/bin/bash", ["-c", check.command], {
@@ -59,7 +59,7 @@ function runCheck(ws: string, check: Check): CheckRun {
     maxBuffer: 16 * 1024 * 1024,
   });
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || r.signal === "SIGKILL";
-  return { code: r.status, out: (r.stdout ?? "") + (r.stderr ?? ""), timedOut };
+  return { code: r.status, timedOut };
 }
 
 function git(ws: string, args: string[]) {
@@ -245,7 +245,14 @@ async function main() {
   else if (many) ids = many.split(",").map((s) => s.trim()).filter(Boolean);
   else if (lang) ids = ids.filter((id) => id.startsWith(`${lang}-`));
   const maxc = opt("--max-cases");
-  if (maxc) ids = ids.slice(0, parseInt(maxc, 10));
+  if (maxc) {
+    const n = parseInt(maxc, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      console.error(`--max-cases must be a positive integer, got "${maxc}"`);
+      process.exit(2);
+    }
+    ids = ids.slice(0, n);
+  }
 
   const cases: CaseManifest[] = [];
   for (const id of ids) cases.push(await loadCase(path.join(CASES_ROOT, id)));
