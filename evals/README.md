@@ -34,6 +34,16 @@ DEEPCODER_PROVIDER=deepseek DEEPCODER_API_KEY=sk-... npm run eval
 
 Results are written to `evals/last-run.json` (gitignored).
 
+## Results
+
+| Model | Score | Runs |
+|---|---|---|
+| `deepseek-chat` (default) | **8/8 (100%)** | 3/3 runs identical (~7s/task) |
+
+Reproduce: `npm run build && DEEPSEEK_API_KEY=… npm run eval`. Expect ~100% here —
+these are small, well-described single-file bugs; see the caveats below before
+reading anything into it.
+
 ## Honesty notes
 
 - **Custom eval, not SWE-bench-lite.** Don't report it as SWE-bench. It's easier

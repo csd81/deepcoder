@@ -327,4 +327,6 @@ DEEPCODER_PROVIDER=… DEEPCODER_API_KEY=… npm run eval   # scored run (needs 
 ```
 
 It's a **custom** suite (not SWE-bench): 8 self-contained JS bugs the agent must
-fix until a hidden test passes. Treat it as a capability smoke-test, not a ranking.
+fix until a hidden test passes. Current result: **8/8 (100%)** on `deepseek-chat`
+(3/3 identical runs). Treat it as a capability smoke-test, not a ranking — these
+are small, well-described bugs, so a high score is expected.
