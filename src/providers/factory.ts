@@ -6,6 +6,7 @@ import type { Config } from "../config/config.js";
 
 export const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1";
 export const QWEN_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+export const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 
 /**
  * Build a provider from config. All providers map onto the same
@@ -37,6 +38,14 @@ export function createProvider(config: Config): ModelProvider {
         label: "Qwen",
       });
 
+    case "gemini":
+      // Google Gemini via its OpenAI-compatibility endpoint.
+      return new OpenAICompatibleProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl || GEMINI_DEFAULT_BASE_URL,
+        label: "Gemini",
+      });
+
     case "openai-compatible":
       if (!config.baseUrl) {
         throw new Error(
@@ -58,6 +67,6 @@ export function createProvider(config: Config): ModelProvider {
       });
 
     default:
-      throw new Error(`Unknown provider "${config.provider}". Use deepseek | openai-compatible | ollama | qwen | anthropic.`);
+      throw new Error(`Unknown provider "${config.provider}". Use deepseek | openai-compatible | ollama | qwen | gemini | anthropic.`);
   }
 }

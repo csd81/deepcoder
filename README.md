@@ -76,6 +76,7 @@ with `DEEPCODER_PROVIDER`:
 | `openai-compatible` | any OpenAI-style `/v1` endpoint; **requires `DEEPCODER_BASE_URL`** |
 | `ollama` | local models; no API key needed; defaults to `http://localhost:11434/v1` |
 | `qwen` | Alibaba Qwen via the DashScope OpenAI-compatible endpoint (default `qwen2.5-coder-32b-instruct`) |
+| `gemini` | Google Gemini via its OpenAI-compatibility endpoint (default `gemini-2.0-flash`) |
 | `anthropic` | **native** Claude adapter (Messages API); default `claude-3-5-sonnet-latest`, override with `DEEPCODER_MODEL` |
 
 Generic env (`DEEPCODER_API_KEY/BASE_URL/MODEL`) takes precedence over the
@@ -271,7 +272,7 @@ can `describe()` itself, `preview()` its effect, and `execute()`.
 
 ## Limitations
 
-- Providers: DeepSeek / OpenAI-compatible / Ollama / Qwen / Anthropic (native).
+- Providers: DeepSeek / OpenAI-compatible / Ollama / Qwen / Gemini / Anthropic (native).
 - MCP is read-only (execute-mode MCP tools are discovered but denied). No
   subagents yet.
 - The command classifier is a heuristic, **not a sandbox** — review actions in

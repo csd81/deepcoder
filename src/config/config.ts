@@ -54,6 +54,7 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   ollama: "llama3.1",
   "openai-compatible": "gpt-4o-mini",
   qwen: "qwen2.5-coder-32b-instruct",
+  gemini: "gemini-2.0-flash",
   anthropic: "claude-3-5-sonnet-latest",
 };
 

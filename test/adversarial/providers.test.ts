@@ -27,6 +27,7 @@ test("factory builds a provider for each supported backend", () => {
   assert.ok(createProvider(cfg({ provider: "ollama", apiKey: "" })) instanceof OpenAICompatibleProvider); // no key needed
   assert.ok(createProvider(cfg({ provider: "openai-compatible", baseUrl: "https://x.example/v1" })) instanceof OpenAICompatibleProvider);
   assert.ok(createProvider(cfg({ provider: "qwen" })) instanceof OpenAICompatibleProvider); // DashScope preset
+  assert.ok(createProvider(cfg({ provider: "gemini" })) instanceof OpenAICompatibleProvider); // OpenAI-compat endpoint
   assert.ok(createProvider(cfg({ provider: "anthropic" })) instanceof AnthropicProvider); // native adapter
 });
 
