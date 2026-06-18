@@ -21,6 +21,29 @@ evals/swebench/run-smoke.sh django__django-12345,psf__requests-1234   # pick you
 Requires: Docker daemon, a provider key in `.env` (works with any provider), and
 disk/network for images (several GB even for a few instances).
 
+### Model variants
+
+The generator honors these env vars, so you can compare strategies on the same
+instances:
+
+```bash
+# baseline: one-shot with the editing model
+DEEPCODER_MODEL=deepseek-chat evals/swebench/run-smoke.sh
+
+# reasoner one-shot (the editing model IS the reasoner)
+DEEPCODER_MODEL=deepseek-reasoner evals/swebench/run-smoke.sh
+
+# plan-first: reasoner writes the plan, chat does the edits
+DEEPCODER_MODEL=deepseek-chat \
+DEEPCODER_REASONER_MODEL=deepseek-reasoner \
+DEEPCODER_PLAN_FIRST=1 \
+DEEPCODER_EVAL_NAME=deepcoder-reasoner-plan+chat \
+  evals/swebench/run-smoke.sh
+```
+
+`DEEPCODER_PLAN_FIRST=1` adds a reasoner planning pass before the agent edits
+(also available interactively / one-shot as `deepcoder --plan-first <task>`).
+
 ## Honest result so far
 
 A **3-instance smoke** (`pallets/flask`) with deepcoder + `deepseek-chat`,

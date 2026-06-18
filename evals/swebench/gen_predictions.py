@@ -45,8 +45,14 @@ def generate(instance, workdir):
     )
     if not os.path.exists(CLI):
         sys.exit(f"build deepcoder first: {CLI} missing (npm run build)")
+    cmd = ["node", CLI, "--mode", "auto"]
+    # Opt-in: plan with the reasoner model first, then edit (DEEPCODER_PLAN_FIRST=1
+    # and DEEPCODER_REASONER_MODEL=deepseek-reasoner in the environment).
+    if os.environ.get("DEEPCODER_PLAN_FIRST", "").lower() in ("1", "true", "yes"):
+        cmd.append("--plan-first")
+    cmd.append(prompt)
     subprocess.run(
-        ["node", CLI, "--mode", "auto", prompt],
+        cmd,
         cwd=clone,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

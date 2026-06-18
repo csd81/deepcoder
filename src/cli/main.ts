@@ -27,14 +27,22 @@ program
   .option("--resume [id]", "resume a saved session (most recent if id omitted)")
   .option("--list-sessions", "list saved sessions and exit")
   .option("--planning-model <model>", "model used by /plan (default: deepseek-reasoner)")
+  .option("--plan-first", "for a one-shot run: plan with the reasoner model first, then edit")
   .action(
     async (
       promptParts: string[],
-      opts: { mode?: string; resume?: string | boolean; listSessions?: boolean; planningModel?: string },
+      opts: {
+        mode?: string;
+        resume?: string | boolean;
+        listSessions?: boolean;
+        planningModel?: string;
+        planFirst?: boolean;
+      },
     ) => {
     const baseConfig = loadConfig({
       ...(opts.mode ? { approvalMode: opts.mode as ApprovalMode } : {}),
       ...(opts.planningModel ? { reasonerModel: opts.planningModel } : {}),
+      ...(opts.planFirst ? { planFirst: true } : {}),
     });
 
     if (opts.listSessions) {

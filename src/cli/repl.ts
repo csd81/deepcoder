@@ -133,12 +133,47 @@ async function runTask(session: Session): Promise<void> {
 
 /** Non-interactive: run a single task and exit. */
 export async function runOneShot(session: Session, prompt: string): Promise<void> {
+  if (session.config.planFirst) await planFirstPass(session, prompt);
   session.messages.push({ role: "user", content: prompt });
   await session.store.save(snapshot(session));
   try {
     await runTask(session);
   } finally {
     await session.mcp?.closeAll();
+  }
+}
+
+/**
+ * Plan-first pre-pass: ask the reasoner model for a step-by-step plan (no tools,
+ * no edits) and record it in history so the editing model can follow it. A plan
+ * failure is non-fatal — we fall back to running the task without a plan.
+ */
+async function planFirstPass(session: Session, prompt: string): Promise<void> {
+  const planningModel = session.config.reasonerModel || "deepseek-reasoner";
+  stdout.write(chalk.dim(`Planning with ${planningModel}…\n`));
+  try {
+    const res = await session.provider.chat({
+      messages: [
+        session.messages[0]!, // current system prompt
+        {
+          role: "user",
+          content:
+            "Produce a concrete, step-by-step plan to accomplish the task below. " +
+            "Do NOT execute anything or write code — just the plan (files to inspect, the change to make, how to verify):\n\n" +
+            prompt,
+        },
+      ],
+      tools: [],
+      model: planningModel,
+    });
+    const plan = res.text.trim();
+    if (!plan) return;
+    stdout.write("\n" + chalk.dim(plan) + "\n");
+    // Record the plan as prior context so the editing model can follow it.
+    session.messages.push({ role: "assistant", content: `Plan for the task:\n${plan}` });
+    await session.store.save(snapshot(session));
+  } catch (err) {
+    stdout.write(chalk.yellow(`\nPlanning step failed (${(err as Error).message}); proceeding without a plan.\n`));
   }
 }
 

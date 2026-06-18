@@ -10,6 +10,12 @@ export interface Config {
   baseUrl: string;
   model: string;
   reasonerModel?: string;
+  /**
+   * When true, a one-shot run first asks the reasoner model for a step-by-step
+   * plan (no tools), prepends it as context, then runs the normal agent loop.
+   * Lets a stronger reasoning model guide a cheaper editing model.
+   */
+  planFirst?: boolean;
   /** Model used by read-only review subagents; defaults to `model` when unset. */
   subagentModel?: string;
   maxTurns: number;
@@ -88,6 +94,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     baseUrl,
     model,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? alias(process.env.DEEPSEEK_REASONER_MODEL),
+    planFirst: ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()),
     subagentModel: process.env.DEEPCODER_SUBAGENT_MODEL,
     maxTurns: numEnv(process.env.DEEPCODER_MAX_TURNS, 20),
     approvalMode: approval,
