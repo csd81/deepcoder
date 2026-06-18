@@ -7,6 +7,7 @@ import path from "node:path";
  */
 const SENSITIVE_PATTERNS: RegExp[] = [
   /(^|\/)\.env($|\.|\/)/, // .env, .env.local, .env.production, ...
+  /(^|\/)\.envrc$/, // direnv (often exports secrets)
   /(^|\/)\.deepcoder(\/|$)/, // session store, instructions cache
   /(^|\/)\.git(\/|$)/, // raw git internals
   /(^|\/)(id_rsa|id_ed25519|id_dsa)(\.pub)?$/,
@@ -32,6 +33,7 @@ export const SENSITIVE_GLOB_EXCLUDES: string[] = [
   "!**/.env.*",
   "!.env",
   "!.env.*",
+  "!**/.envrc",
   "!**/.deepcoder/**",
   "!.deepcoder/**",
   "!**/.git/**",

@@ -31,7 +31,9 @@ export class Git {
   }
 
   async diff(paths?: string[]): Promise<string> {
-    return (await this.run(["diff", ...(paths ?? [])])).trim();
+    // `--` ensures any paths are treated as pathspecs, not git options.
+    const args = paths?.length ? ["diff", "--", ...paths] : ["diff"];
+    return (await this.run(args)).trim();
   }
 
   /** One-line summary of how dirty the tree is. */

@@ -17,6 +17,18 @@ export function resolveInWorkspace(workspaceRoot: string, p: string): string {
   return resolved;
 }
 
+/**
+ * Validate a store id (session / checkpoint / check-run) before it's used to
+ * build a filesystem path. Rejects `..`, slashes, and anything outside a safe
+ * charset, so a crafted `--resume ../../x` can't read/write outside the store.
+ */
+export function assertSafeId(id: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(id) || id.includes("..")) {
+    throw new Error(`Invalid id "${id}".`);
+  }
+  return id;
+}
+
 export function displayPath(workspaceRoot: string, abs: string): string {
   const rel = path.relative(workspaceRoot, abs);
   return rel === "" ? "." : rel;

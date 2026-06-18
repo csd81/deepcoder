@@ -33,6 +33,13 @@ export interface Config {
   mcpExecuteEnabled: boolean;
 }
 
+/** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
+function numEnv(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function req(name: string, value: string | undefined): string {
   if (!value) {
     throw new Error(
@@ -80,10 +87,10 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     model,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? alias(process.env.DEEPSEEK_REASONER_MODEL),
     subagentModel: process.env.DEEPCODER_SUBAGENT_MODEL,
-    maxTurns: Number(process.env.DEEPCODER_MAX_TURNS || 20),
+    maxTurns: numEnv(process.env.DEEPCODER_MAX_TURNS, 20),
     approvalMode: approval,
-    contextBudgetTokens: Number(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS || 64000),
-    compactAt: Number(process.env.DEEPCODER_COMPACT_AT || 0.8),
+    contextBudgetTokens: numEnv(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS, 64000),
+    compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, 0.8),
     checkpoints: ((process.env.DEEPCODER_CHECKPOINTS as CheckpointMode) || "off"),
     workspaceRoot,
     mcpServers: file.mcpServers ?? {},

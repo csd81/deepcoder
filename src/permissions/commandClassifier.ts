@@ -27,27 +27,37 @@ export function classifyCommand(command: string): ApprovalDecision {
   const cmd = command.trim();
   if (!cmd) return "ask";
 
-  // 1. Hard denials — substitution, fork bombs, pipe-to-shell, dangerous tokens.
+  // 1. Hard denials — substitution, fork bombs, pipe-to-shell.
   if (/\$\(|`|<\(/.test(cmd)) return "deny"; // command/process substitution
   if (/:\s*\(\s*\)\s*\{/.test(cmd)) return "deny"; // fork bomb
   if (/\|\s*(sh|bash|zsh|dash)\b/.test(cmd)) return "deny"; // pipe anything into a shell
   if (/>>?\s*\/(?!dev\/null\b)/.test(cmd)) return "deny"; // redirect to an absolute path
-  const tokens = cmd.split(/\s+/);
-  if (tokens.some((t) => DANGEROUS_TOKENS.includes(t))) return "deny";
 
   // 2. Redirects and backgrounding are never auto-allowed (side effects / escape).
-  //    Treat as `ask` so the user sees them, unless already denied above.
   const hasRedirect = />/.test(cmd) || /(^|\s)<(?!\()/.test(cmd);
   const hasBackground = /&(?!&)/.test(cmd);
 
   // 3. Split into segments on sequence/pipe/background operators.
   const segments = cmd.split(/\s*(?:&&|\|\||;|\||&|\n)\s*/).map((s) => s.trim()).filter(Boolean);
 
+  // A dangerous command is denied when it's the *leading* token of any segment
+  // (its basename, so `/bin/rm` and `sudo` are caught) — but a dangerous word as
+  // an OPERAND (e.g. `grep rm file`) is not, avoiding false-positive denials.
+  if (segments.some(isDangerousSegment)) return "deny";
+
   const allSafe = segments.every(isReadOnlySegment);
   if (allSafe && !hasRedirect && !hasBackground) return "allow";
 
   // 4. Everything else we don't trust enough to auto-run.
   return "ask";
+}
+
+/** True if a segment's leading command (by basename) is a dangerous token. */
+function isDangerousSegment(segment: string): boolean {
+  const head = segment.split(/\s+/).filter(Boolean)[0];
+  if (!head) return false;
+  const base = head.replace(/^.*\//, ""); // strip a path like /bin/rm or ./rm
+  return DANGEROUS_TOKENS.includes(base);
 }
 
 function isReadOnlySegment(segment: string): boolean {

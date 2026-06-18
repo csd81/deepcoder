@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
 import { displayPath } from "../workspace/paths.js";
+import { isSensitivePath } from "../workspace/sensitive.js";
 
 const schema = z.object({
   pattern: z
@@ -12,6 +13,7 @@ const schema = z.object({
 });
 
 const IGNORE = new Set(["node_modules", ".git", "dist", ".deepcoder"]);
+const MAX_MATCHES = 1000;
 
 export const globTool: Tool = {
   name: "glob",
@@ -26,22 +28,35 @@ export const globTool: Tool = {
       async execute(ctx) {
         const re = globToRegExp(args.pattern);
         const matches: string[] = [];
-        await walk(ctx.workspaceRoot, ctx.workspaceRoot, re, matches);
+        await walk(ctx.workspaceRoot, ctx.workspaceRoot, re, matches, ctx.signal);
         matches.sort();
-        return { output: matches.length ? matches.join("\n") : "(no matches)" };
+        const capped = matches.length > MAX_MATCHES;
+        const shown = capped ? matches.slice(0, MAX_MATCHES) : matches;
+        return {
+          output: shown.length
+            ? shown.join("\n") + (capped ? `\n… (${matches.length - MAX_MATCHES} more)` : "")
+            : "(no matches)",
+        };
       },
     };
 
-    async function walk(root: string, dir: string, re: RegExp, out: string[]): Promise<void> {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
+    async function walk(root: string, dir: string, re: RegExp, out: string[], signal: AbortSignal): Promise<void> {
+      if (signal.aborted || out.length > MAX_MATCHES) return;
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return; // unreadable dir (permissions, race) — skip rather than abort the whole search
+      }
       for (const e of entries) {
         if (IGNORE.has(e.name)) continue;
         const abs = path.join(dir, e.name);
+        const rel = displayPath(root, abs);
+        if (isSensitivePath(rel)) continue; // never surface secret paths
         if (e.isDirectory()) {
-          await walk(root, abs, re, out);
-        } else {
-          const rel = displayPath(root, abs);
-          if (re.test(rel)) out.push(rel);
+          await walk(root, abs, re, out, signal);
+        } else if (re.test(rel)) {
+          out.push(rel);
         }
       }
     }

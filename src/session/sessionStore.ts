@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { assertSafeId } from "../workspace/paths.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Todo } from "../tools/types.js";
 import type { ApprovalMode } from "../config/config.js";
@@ -90,7 +91,7 @@ export class SessionStore {
 }
 
 export async function loadSession(workspaceRoot: string, id: string): Promise<PersistedSession> {
-  const file = path.join(sessionsDir(workspaceRoot), `${id}.json`);
+  const file = path.join(sessionsDir(workspaceRoot), `${assertSafeId(id)}.json`);
   return JSON.parse(await fs.readFile(file, "utf8")) as PersistedSession;
 }
 

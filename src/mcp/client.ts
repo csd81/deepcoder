@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { McpServerConfig } from "../config/fileConfig.js";
+import { redactSecrets } from "../workspace/redact.js";
 
 export interface McpToolInfo {
   name: string;
@@ -63,11 +64,13 @@ export class McpClient {
       timeoutMs,
       `call MCP tool "${toolName}"`,
     );
-    // Flatten content blocks into untrusted text, then cap the size.
+    // Flatten content blocks into untrusted text, redact secrets, then cap size.
     const content = Array.isArray(res.content) ? res.content : [];
-    const text = content
-      .map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text ?? "" : `[${c.type ?? "non-text"} content]`))
-      .join("\n");
+    const text = redactSecrets(
+      content
+        .map((c: { type?: string; text?: string }) => (c.type === "text" ? c.text ?? "" : `[${c.type ?? "non-text"} content]`))
+        .join("\n"),
+    );
     return text.length > MCP_OUTPUT_LIMIT ? text.slice(0, MCP_OUTPUT_LIMIT) + "\n…(MCP output truncated)" : text;
   }
 

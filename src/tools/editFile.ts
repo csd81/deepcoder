@@ -55,9 +55,11 @@ export const editFileTool: Tool = {
           `old_string matches ${count} times in ${args.path}. Add surrounding context to make it unique, or set replace_all: true.`,
         );
       }
+      // Use split/join for both cases so `$`-sequences in new_string (e.g. `$&`,
+      // `$1`) are inserted literally — String.replace would interpret them.
       const updated = args.replace_all
         ? original.split(args.old_string).join(args.new_string)
-        : original.replace(args.old_string, args.new_string);
+        : replaceFirst(original, args.old_string, args.new_string);
       return { updated, original, count, real };
     }
 
@@ -99,6 +101,13 @@ export const editFileTool: Tool = {
 };
 
 class EditError extends Error {}
+
+/** Replace the first occurrence literally (no `$`-pattern interpretation). */
+function replaceFirst(haystack: string, needle: string, replacement: string): string {
+  const i = haystack.indexOf(needle);
+  if (i === -1) return haystack;
+  return haystack.slice(0, i) + replacement + haystack.slice(i + needle.length);
+}
 
 function countOccurrences(haystack: string, needle: string): number {
   if (!needle) return 0;

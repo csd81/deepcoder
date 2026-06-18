@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { McpManager } from "../src/mcp/registry.js";
 import { makeCtx } from "./helpers/providers.js";
+import { assertNoSecrets, FIXTURE_SECRET } from "./helpers/safety.js";
 
 const SERVER = fileURLToPath(new URL("./helpers/mock-mcp-server.mjs", import.meta.url));
 
@@ -24,6 +25,20 @@ test("a real read-only MCP server is discovered and its tool is callable end-to-
 
     const result = await echo!.build({ text: "hi" }).execute(makeCtx(process.cwd()));
     assert.match(result.output, /echo: hi/);
+  } finally {
+    await manager.closeAll();
+  }
+});
+
+test("secret-shaped MCP tool output is redacted before reaching the model", async () => {
+  const manager = new McpManager({
+    mock: { command: process.execPath, args: [SERVER], mode: "readonly" },
+  });
+  await manager.connectAll();
+  try {
+    const echo = (await manager.tools()).find((t) => t.name === "mcp__mock__echo")!;
+    const result = await echo.build({ text: `leak ${FIXTURE_SECRET}` }).execute(makeCtx(process.cwd()));
+    assertNoSecrets(result.output);
   } finally {
     await manager.closeAll();
   }

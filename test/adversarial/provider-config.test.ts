@@ -27,6 +27,15 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
   }
 }
 
+test("malformed numeric env vars fall back to defaults (no NaN)", () => {
+  withEnv({ DEEPSEEK_API_KEY: "sk-x", DEEPCODER_COMPACT_AT: "abc", DEEPCODER_MAX_TURNS: "", DEEPCODER_CONTEXT_BUDGET_TOKENS: "oops" }, () => {
+    const cfg = loadConfig({ workspaceRoot: "/tmp" });
+    assert.equal(cfg.compactAt, 0.8);
+    assert.equal(cfg.maxTurns, 20);
+    assert.equal(cfg.contextBudgetTokens, 64000);
+  });
+});
+
 // --- F1: DeepSeek aliases must not leak into other providers ---
 
 test("ollama does not inherit DEEPSEEK_BASE_URL (no silent DeepSeek calls)", () => {

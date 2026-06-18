@@ -12,9 +12,15 @@ interface DiffLine {
   newNo: number; // 1-indexed line in new text, or 0 if removed
 }
 
+const MAX_DIFF_LINES = 4000; // LCS is O(n*m); guard against pathological previews
+
 export function unifiedDiff(oldText: string, newText: string, contextLines = 3): string {
   const a = oldText.length ? oldText.split("\n") : [];
   const b = newText.length ? newText.split("\n") : [];
+  // Avoid an O(n*m) table on huge inputs (a big write_file/edit preview).
+  if (a.length > MAX_DIFF_LINES || b.length > MAX_DIFF_LINES) {
+    return `(diff suppressed: ${a.length} → ${b.length} lines; too large to render)`;
+  }
   const ops = diffOps(a, b);
 
   // Annotate with line numbers.

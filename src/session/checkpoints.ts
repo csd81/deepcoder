@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { displayPath, resolveRealPathInWorkspace } from "../workspace/paths.js";
+import { displayPath, resolveRealPathInWorkspace, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 
 /**
@@ -159,6 +159,7 @@ export async function listCheckpoints(root: string): Promise<CheckpointManifest[
  * changed it after the run: refuse unless `force`.
  */
 export async function rollback(root: string, id: string, opts: { force?: boolean } = {}): Promise<RollbackResult> {
+  assertSafeId(id);
   const raw = await fs.readFile(path.join(checkpointsDir(root), id, "manifest.json"), "utf8");
   const manifest = JSON.parse(raw) as CheckpointManifest;
   const result: RollbackResult = { restored: [], deleted: [], conflicts: [], skipped: [] };

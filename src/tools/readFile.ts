@@ -12,6 +12,8 @@ const schema = z.object({
 });
 
 const DEFAULT_LIMIT = 2000;
+const MAX_BYTES = 1024 * 1024; // 1 MB
+const MAX_LINE = 2000;
 
 export const readFileTool: Tool = {
   name: "read_file",
@@ -35,6 +37,13 @@ export const readFileTool: Tool = {
         const abs = resolveReadPathInWorkspace(ctx.workspaceRoot, args.path);
         // Re-check sensitivity on the real, symlink-resolved path.
         if (isSensitivePath(displayPath(ctx.workspaceRoot, abs))) return blocked(args.path);
+        // Guard against pulling a huge file (or an absurd single line) fully
+        // into memory / the model context.
+        const stat = await fs.stat(abs);
+        if (stat.isDirectory()) return { output: `${args.path} is a directory; use list_dir.`, isError: true };
+        if (stat.size > MAX_BYTES) {
+          return { output: `${args.path} is ${Math.round(stat.size / 1024)} KB; too large to read (max ${MAX_BYTES / 1024} KB).`, isError: true };
+        }
         const content = await fs.readFile(abs, "utf8");
         // Key readTracker by the lexical path the user named, matching how
         // edit_file/write_file look up read-before-write.
@@ -44,7 +53,10 @@ export const readFileTool: Tool = {
         const end = start + (args.limit ?? DEFAULT_LIMIT);
         const slice = lines.slice(start, end);
         const numbered = slice
-          .map((l, i) => `${String(start + i + 1).padStart(6)}\t${l}`)
+          .map((l, i) => {
+            const clipped = l.length > MAX_LINE ? l.slice(0, MAX_LINE) + "… (line truncated)" : l;
+            return `${String(start + i + 1).padStart(6)}\t${clipped}`;
+          })
           .join("\n");
         const truncated = end < lines.length ? `\n... (${lines.length - end} more lines)` : "";
         return { output: numbered + truncated };

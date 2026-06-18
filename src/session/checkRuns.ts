@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { assertSafeId } from "../workspace/paths.js";
 
 /**
  * Persistence for `/check` runs. Records live under the gitignored
@@ -64,6 +65,7 @@ export async function listCheckRuns(root: string): Promise<CheckRun[]> {
 }
 
 export async function loadCheckRun(root: string, id: string): Promise<{ run: CheckRun; log: string }> {
+  assertSafeId(id);
   const run = JSON.parse(await fs.readFile(path.join(runsDir(root), `${id}.json`), "utf8")) as CheckRun;
   let log = "";
   try {
