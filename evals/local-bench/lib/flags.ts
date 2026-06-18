@@ -56,7 +56,7 @@ export function computeQualityFlags(input: QualityInput): string[] {
   if (patch.trim() === "" || changed.length === 0) {
     flags.add("no_code_change");
   } else {
-    if (Buffer.byteLength(patch, "utf8") > hugeBytes) flags.add("huge_patch");
+    if (Buffer.byteLength(added, "utf8") > hugeBytes) flags.add("huge_patch");
 
     if (input.allowedPaths.length > 0) {
       const allowed = (p: string) =>

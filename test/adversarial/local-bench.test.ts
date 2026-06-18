@@ -112,6 +112,38 @@ test("repeated identical attempt patches are detected", () => {
   assert.ok(flags.includes("repeated_patch"));
 });
 
+test("repeated_patch edge cases: single attempt, distinct hashes, and excluded empty patches", () => {
+  const base = { forbiddenPatterns: [], requiredPatterns: [], allowedPaths: ["solution.mjs"] };
+  const flags = (attempts: { patchHash?: string | null; patchBytes?: number | null }[]) =>
+    computeQualityFlags({ patch: "+++ b/solution.mjs\n+x = 1\n", attempts, ...base });
+
+  // one attempt can't repeat
+  assert.ok(!flags([{ patchHash: "a", patchBytes: 9 }]).includes("repeated_patch"));
+  // two DIFFERENT non-empty patches are not a repeat
+  assert.ok(!flags([{ patchHash: "a", patchBytes: 9 }, { patchHash: "b", patchBytes: 9 }]).includes("repeated_patch"));
+  // empty patches (0 or null bytes) are excluded — repeated EMPTY does not count as a repeat
+  assert.ok(!flags([{ patchHash: "z", patchBytes: 0 }, { patchHash: "z", patchBytes: 0 }]).includes("repeated_patch"));
+  assert.ok(!flags([{ patchHash: null, patchBytes: null }, { patchHash: null, patchBytes: null }]).includes("repeated_patch"));
+  // a real repeated non-empty patch alongside a null one IS flagged
+  assert.ok(flags([{ patchHash: null, patchBytes: 0 }, { patchHash: "r", patchBytes: 9 }, { patchHash: "r", patchBytes: 9 }]).includes("repeated_patch"));
+});
+
+test("huge_patch measures ADDED content, not context — a small fix in a big diff is not huge", () => {
+  const base = { attempts: [], forbiddenPatterns: [], requiredPatterns: [], allowedPaths: ["f.js"], hugePatchBytes: 40 };
+
+  // Mostly context (space-prefixed) with one tiny addition → added content is tiny → NOT huge.
+  const bigContext =
+    "+++ b/f.js\n" + Array.from({ length: 30 }, () => " // unchanged context line").join("\n") + "\n+x = 1\n";
+  assert.ok(!computeQualityFlags({ patch: bigContext, ...base }).includes("huge_patch"),
+    "huge context but tiny added content must not trip huge_patch");
+
+  // Lots of ADDED lines → over threshold → huge.
+  const bigAdded =
+    "+++ b/f.js\n" + Array.from({ length: 30 }, (_, i) => `+const filler${i} = ${i};`).join("\n") + "\n";
+  assert.ok(computeQualityFlags({ patch: bigAdded, ...base }).includes("huge_patch"),
+    "large added content must trip huge_patch");
+});
+
 test("a malformed forbidden regex never crashes (treated as no match)", () => {
   const flags = computeQualityFlags({
     patch: PATCH_VALUEERROR,
