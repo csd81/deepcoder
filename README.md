@@ -1,21 +1,38 @@
 # deepcoder
 
-A small, model-agnostic **agentic coding CLI** for the terminal. It runs an
-agent loop that reads, searches, edits, and runs commands in your project to
-complete a task — with a permission layer in front of everything that can
-change your machine.
+A small, **safety-first** agentic coding CLI for the terminal. It runs an agent
+loop that reads, searches, edits, and runs commands in your project to complete a
+task — but every action that can change your machine passes through a real
+permission model first, and the whole thing is **local-first and model-agnostic**.
 
-Default provider: **DeepSeek** (OpenAI-compatible). Any OpenAI-compatible backend
-(including local **Ollama**) works behind a vendor-neutral `ModelProvider`
-boundary — see [Providers](#providers). External tools can be added via
-[MCP servers](#mcp-servers-external-tools).
+It's deliberately compact (~4.5k lines) and **heavily tested** — including an
+adversarial suite that tries to *break* the safety guarantees, not just confirm
+the happy path.
+
+## Why deepcoder?
+
+- **Safety is the design, not a setting.** A segmenting command classifier,
+  approval modes (`readonly`/`ask`/`auto`), workspace + symlink confinement,
+  secret-file guards, and output redaction. Read-only subagents and verification
+  checks can't mutate your repo by construction. ~150 of the tests are adversarial.
+- **Local-first, no lock-in.** Runs against **Ollama** (fully local) or any of six
+  providers behind one vendor-neutral boundary — switch with one env var.
+- **Yours to audit.** Small, readable TypeScript; plain JSON session/checkpoint
+  state under `.deepcoder/`; no telemetry.
+- **Undo built in.** Optional local checkpoints can roll back a run of agent edits
+  (including deleting files it created) — not git, no commits.
+
+**Providers:** DeepSeek (default) · OpenAI-compatible · Ollama (local) · Qwen ·
+Gemini · Anthropic (native) — one vendor-neutral boundary, pick with
+`DEEPCODER_PROVIDER` ([details](#providers)).
 
 ## Status
 
-Through Phase 4B: streaming, sessions/resume, todos, project instructions,
-context compaction, a repo map, reasoner planning, **read-only MCP**, and a
-**multi-provider factory** (DeepSeek / OpenAI-compatible / Ollama) are in. See
-`plans/` for the per-phase plans and `ROADMAP.md` for
+Working: agent loop + permissions, streaming, sessions/resume, context
+compaction, repo map, reasoner planning (`/plan`), read-only MCP, six providers,
+local checkpoints, three read-only subagents (`/review`, `/research`, `/triage`),
+and user-invoked verification checks (`/checks`). **217 tests** (unit +
+adversarial). See `plans/` for the per-phase design notes and `ROADMAP.md` for
 what's next.
 
 ## Setup
