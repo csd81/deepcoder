@@ -14,6 +14,8 @@ export interface PersistedSession {
   messages: AgentMessage[];
   todos: Todo[];
   readTracker: string[];
+  /** Absolute real paths the agent has mutated (for checkpoint scoping). */
+  writeTracker?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -27,6 +29,7 @@ export interface SessionSnapshot {
   messages: AgentMessage[];
   todos: Todo[];
   readTracker: Set<string>;
+  writeTracker: Set<string>;
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -63,6 +66,7 @@ export class SessionStore {
       messages: snapshot.messages,
       todos: snapshot.todos,
       readTracker: [...snapshot.readTracker],
+      writeTracker: [...(snapshot.writeTracker ?? [])],
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };

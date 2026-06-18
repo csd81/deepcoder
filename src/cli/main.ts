@@ -13,6 +13,7 @@ import {
   latestSessionId,
 } from "../session/sessionStore.js";
 import { McpManager } from "../mcp/registry.js";
+import { CheckpointRecorder } from "../session/checkpoints.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../config/config.js";
 
@@ -57,6 +58,7 @@ async function buildSession(
   const provider = createProvider(config);
   const registry = defaultRegistry();
   const mcp = await initMcp(config, registry);
+  const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
 
   if (resume) {
     const id =
@@ -91,7 +93,9 @@ async function buildSession(
       mode: saved.mode,
       todos: saved.todos,
       readTracker: new Set(saved.readTracker),
+      writeTracker: new Set(saved.writeTracker ?? []),
       mcp,
+      recorder,
     };
   }
 
@@ -104,7 +108,9 @@ async function buildSession(
     mode: config.approvalMode,
     todos: [],
     readTracker: new Set<string>(),
+    writeTracker: new Set<string>(),
     mcp,
+    recorder,
   };
 }
 

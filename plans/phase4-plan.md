@@ -35,8 +35,16 @@ Three prerequisites the original draft assumed:
 ## Phase 4B — Additional providers (COMPLETE)
 Generalized DeepSeek impl → `src/providers/openaiCompatible.ts` (`OpenAICompatibleProvider`); `DeepSeekProvider` is now a thin preset. `src/providers/factory.ts` selects by `DEEPCODER_PROVIDER` (deepseek default | openai-compatible | ollama | anthropic→clear "not supported"). Generic `DEEPCODER_*` env with `DEEPSEEK_*` aliases; ollama needs no key. Stream tool-call accumulation extracted to a pure, tested `createToolCallAccumulator` (handles split args + duplicate indexes). `mapProviderError` generalized and never leaks the key. 123 tests (55 unit + 68 adversarial); typecheck clean; live readonly DeepSeek smoke test verified. **Paused before 4C.**
 
-## Phase 4C — Optional git checkpointing (deferred)
-`DEEPCODER_GIT_CHECKPOINTS=off|manual|auto` (default off; never commits). Add `writeTracker` to `ToolContext`/session (edit/write record it). `src/session/checkpoints.ts` snapshots only agent-touched files (content + sha + metadata) under `.deepcoder/checkpoints/<id>/`; never sensitive paths. `/checkpoint`, `/checkpoints`, `/rollback <id>`; rollback refuses user-modified files without re-confirm. Adversarial: skips sensitive files; touches only agent-owned files; refuses user-modified; no secrets in metadata.
+## Phase 4C — Checkpoints: local undo (in progress)
+**Not git** (renamed from "git checkpointing"; no commits/stashes) — a content-snapshot store under gitignored `.deepcoder/checkpoints/`. `DEEPCODER_CHECKPOINTS=off|manual|auto` (default off).
+
+Real undo via **pre-images**: when enabled, `edit_file`/`write_file` capture each file's content *before* the first change (`{ existed, restoreSha? }`) via `ctx.capturePreImage`; finalize (auto = task boundary, manual = `/checkpoint`) records the post-edit `expectedSha`. Manifests store **workspace-relative** paths; runtime trackers stay absolute.
+
+Rollback (`/rollback <id> [--force]`): current==expectedSha → apply (`existed:true` restore blob; `existed:false` **delete** the agent-created file); current!=expectedSha → conflict, refuse without `--force`; missing & existed → restorable (not conflict); missing & !existed → no-op. Prints a summary first; git used read-only for an FYI dirty-count only. Sensitive paths never captured (already rejected by edit/write). Deletion/rename tools out of scope for 4C.
+
+`src/session/checkpoints.ts` (`CheckpointRecorder`, `finalize`, `listCheckpoints`, `rollback`); `/checkpoint`, `/checkpoints`, `/rollback`. Adversarial: undo-modify, undo-create (delete), conflict guard, relative paths after move, sensitive exclusion, scope, mode gating, no-git.
+
+**COMPLETE.** 138 tests (55 unit + 83 adversarial); typecheck clean. Live integration verified: agent created a file under `auto` checkpoints → manifest recorded `existed:false` + relative path → `rollback` deleted the agent-created file. Paused before 4D (design-only).
 
 ## Phase 4D — Subagents (design-only, NOT implemented)
 Future constraints: restricted tools by default; no `run_bash`/mutating unless granted; subagent output is untrusted context; parent owns permission decisions; per-subagent max-turn + token budget. Required adversarial coverage before building: escalation attempt, injection output, max-turn loop, parent refusing unsafe recommendations.

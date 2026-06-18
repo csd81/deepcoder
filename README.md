@@ -60,7 +60,7 @@ npm run dev -- --resume <id>
 
 Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonly]`,
 `/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/mcp [reload]`,
-`/save`, `/status`, `/diff`.
+`/checkpoint`, `/checkpoints`, `/rollback <id>`, `/save`, `/status`, `/diff`.
 
 ## Providers
 
@@ -168,6 +168,31 @@ Discovered tools appear as `mcp__<server>__<tool>`; `/mcp` lists them and
   and truncated, and nothing a server returns can change the approval mode,
   system prompt, or permission policy — it's just a tool result like any other.
 
+## Checkpoints (local undo)
+
+Opt-in undo for a run of agent edits. **It does not use git** (no commits or
+stashes, despite past naming) — it snapshots file content under the gitignored
+`.deepcoder/checkpoints/`. Off by default; enable with `DEEPCODER_CHECKPOINTS`:
+
+| Mode | Behavior |
+|---|---|
+| `off` (default) | no checkpoints |
+| `manual` | `/checkpoint [label]` saves an undo point on demand |
+| `auto` | a checkpoint is saved automatically at each task boundary when files changed |
+
+A checkpoint records each agent-touched file's content **before** the agent
+changed it, so `/rollback <id>` truly undoes the run — restoring modified files
+and **deleting files the agent created**. Only agent-touched, non-secret files
+are ever captured. If you changed a file yourself after the checkpoint, rollback
+**refuses** it (showing a conflict) unless you pass `--force`. `/checkpoints`
+lists saved points. Deletion/rename by the agent is out of scope for now.
+
+```
+/checkpoint fix-auth      # save an undo point
+/rollback <id>            # undo; refuses files you changed since
+/rollback <id> --force    # overwrite conflicts too
+```
+
 ## Architecture
 
 ```
@@ -179,7 +204,7 @@ src/
   permissions/  command classifier, policy, approval prompt
   context/      project instructions, token budget, compaction, repo map
   mcp/          MCP client, schema adapter, tool registry (read-only)
-  session/      session persistence + resume
+  session/      session persistence + resume, checkpoints (local undo)
   workspace/    path confinement, git helpers, sensitive-path guard
   config/       env + .deepcoder/config.json loading
 ```

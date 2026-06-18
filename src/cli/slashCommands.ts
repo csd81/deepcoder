@@ -5,6 +5,7 @@ import { loadInstructions } from "../context/projectInstructions.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
+import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
 
@@ -113,6 +114,56 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "checkpoint": {
+      if (config.checkpoints === "off" || !session.recorder) {
+        console.log(chalk.dim("Checkpoints are off. Enable with DEEPCODER_CHECKPOINTS=manual (or auto)."));
+        return { consumed: true };
+      }
+      if (session.recorder.size === 0) {
+        console.log(chalk.dim("Nothing to checkpoint — the agent hasn't changed any files yet."));
+        return { consumed: true };
+      }
+      const id = await session.recorder.finalize(arg || undefined);
+      console.log(id ? chalk.dim(`Checkpoint ${id} saved. /rollback ${id} to undo.`) : chalk.dim("Nothing to checkpoint."));
+      return { consumed: true };
+    }
+
+    case "checkpoints": {
+      const list = await listCheckpoints(config.workspaceRoot);
+      if (list.length === 0) console.log(chalk.dim("No checkpoints."));
+      else for (const c of list) console.log(`${c.id}  ${chalk.dim(`${c.files.length} file(s) · ${c.createdAt}${c.label ? ` · ${c.label}` : ""}`)}`);
+      return { consumed: true };
+    }
+
+    case "rollback": {
+      const parts = arg.split(/\s+/).filter(Boolean);
+      const force = parts.includes("--force");
+      const id = parts.find((p) => p !== "--force");
+      if (!id) {
+        console.log(chalk.dim("usage: /rollback <id> [--force]  (see /checkpoints)"));
+        return { consumed: true };
+      }
+      // FYI only — read-only, never commits.
+      const git = new Git(config.workspaceRoot);
+      if (await git.isRepo()) console.log(chalk.dim(`git: ${await git.dirtySummary()}`));
+      try {
+        const res = await rollback(config.workspaceRoot, id, { force });
+        if (res.restored.length) console.log(chalk.green(`restored: ${res.restored.join(", ")}`));
+        if (res.deleted.length) console.log(chalk.green(`deleted (agent-created): ${res.deleted.join(", ")}`));
+        if (res.skipped.length) console.log(chalk.dim(`skipped: ${res.skipped.join(", ")}`));
+        if (res.conflicts.length) {
+          console.log(chalk.yellow(`conflicts (changed since checkpoint, NOT touched): ${res.conflicts.join(", ")}`));
+          console.log(chalk.dim("Re-run with --force to overwrite the conflicting files."));
+        }
+        if (!res.restored.length && !res.deleted.length && !res.conflicts.length) {
+          console.log(chalk.dim("Nothing to roll back (files already match the checkpoint)."));
+        }
+      } catch (err) {
+        console.log(chalk.red(`rollback failed: ${(err as Error).message}`));
+      }
+      return { consumed: true };
+    }
+
     case "mcp": {
       if (!session.mcp) {
         console.log(chalk.dim("No MCP servers configured (.deepcoder/config.json → mcpServers)."));
@@ -160,6 +211,9 @@ export async function handleSlashCommand(
           "/compact         compact conversation history now",
           "/plan <task>     produce a plan with the reasoner model (no tools run)",
           "/mcp [reload]    list configured MCP servers and tools",
+          "/checkpoint [l]  snapshot agent edits as an undo point (if enabled)",
+          "/checkpoints     list checkpoints",
+          "/rollback <id>   undo agent edits to a checkpoint ([--force] for conflicts)",
           "/save            save the session now",
           "/status          git status",
           "/diff            git diff",

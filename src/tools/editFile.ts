@@ -81,7 +81,9 @@ export const editFileTool: Tool = {
       async execute(ctx) {
         try {
           const { updated, count, real } = await apply(ctx);
+          await ctx.capturePreImage?.(real); // checkpoint pre-image (no-op if disabled)
           await fs.writeFile(real, updated, "utf8");
+          ctx.writeTracker?.add(real);
           return { output: `Edited ${args.path} (${count} replacement${count === 1 ? "" : "s"}).` };
         } catch (err) {
           if (err instanceof EditError) return { output: err.message, isError: true };

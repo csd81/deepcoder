@@ -2,6 +2,7 @@ import "dotenv/config";
 import { loadFileConfig, type McpServerConfig } from "./fileConfig.js";
 
 export type ApprovalMode = "ask" | "auto" | "readonly";
+export type CheckpointMode = "off" | "manual" | "auto";
 
 export interface Config {
   provider: string;
@@ -15,6 +16,8 @@ export interface Config {
   contextBudgetTokens: number;
   /** Fraction of the budget at which compaction triggers. */
   compactAt: number;
+  /** Local checkpoint/undo mode (not git): off | manual | auto. */
+  checkpoints: CheckpointMode;
   /** Absolute path the agent is allowed to operate within. */
   workspaceRoot: string;
   /** MCP servers from .deepcoder/config.json (empty if none configured). */
@@ -76,6 +79,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     approvalMode: approval,
     contextBudgetTokens: Number(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS || 64000),
     compactAt: Number(process.env.DEEPCODER_COMPACT_AT || 0.8),
+    checkpoints: ((process.env.DEEPCODER_CHECKPOINTS as CheckpointMode) || "off"),
     workspaceRoot,
     mcpServers: file.mcpServers ?? {},
     mcpExecuteEnabled: false, // Phase 4A: execute-mode MCP tools are denied

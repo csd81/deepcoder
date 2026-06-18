@@ -68,8 +68,10 @@ export const writeFileTool: Tool = {
             isError: true,
           };
         }
+        await ctx.capturePreImage?.(real); // checkpoint pre-image (no-op if disabled)
         await fs.mkdir(path.dirname(real), { recursive: true });
         await fs.writeFile(real, args.content, "utf8");
+        ctx.writeTracker?.add(real);
         return { output: `${existing === null ? "Created" : "Overwrote"} ${args.path}.` };
       },
     };

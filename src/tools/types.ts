@@ -34,6 +34,14 @@ export interface ToolContext {
    * to have been read before they overwrite it.
    */
   readTracker: Set<string>;
+  /** Absolute real paths the agent has mutated this session (for checkpoints). */
+  writeTracker?: Set<string>;
+  /**
+   * Called by mutating tools just before they write a file, when checkpointing
+   * is enabled. Captures the pre-change content so a checkpoint can undo the
+   * edit (and delete files the agent newly creates). No-op when disabled.
+   */
+  capturePreImage?(realAbsPath: string): Promise<void>;
   /**
    * Live todo list for the session. `session`-kind tools mutate this array in
    * place; the agent loop reads it to inject context and the session store

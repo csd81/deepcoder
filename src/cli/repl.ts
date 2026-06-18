@@ -12,6 +12,7 @@ import { promptForApproval } from "../permissions/prompt.js";
 import { handleSlashCommand } from "./slashCommands.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
+import { CheckpointRecorder } from "../session/checkpoints.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -23,8 +24,12 @@ export interface Session {
   mode: ApprovalMode;
   todos: Todo[];
   readTracker: Set<string>;
+  /** Absolute real paths the agent has mutated this session. */
+  writeTracker: Set<string>;
   /** Connected MCP servers (Phase 4A); undefined if none configured. */
   mcp?: McpManager;
+  /** Pre-image recorder for checkpoints; undefined when checkpoints are off. */
+  recorder?: CheckpointRecorder;
 }
 
 export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
@@ -44,6 +49,7 @@ function snapshot(session: Session): SessionSnapshot {
     messages: session.messages,
     todos: session.todos,
     readTracker: session.readTracker,
+    writeTracker: session.writeTracker,
   };
 }
 
@@ -56,6 +62,8 @@ async function runTask(session: Session): Promise<void> {
     workspaceRoot: session.config.workspaceRoot,
     signal: controller.signal,
     readTracker: session.readTracker,
+    writeTracker: session.writeTracker,
+    capturePreImage: session.recorder ? (p) => session.recorder!.capture(p) : undefined,
     todos: session.todos,
     history: session.messages,
   };
@@ -100,6 +108,11 @@ async function runTask(session: Session): Promise<void> {
   try {
     await runAgentLoop(session.messages, deps);
     if (streaming) stdout.write("\n");
+    // auto mode: finalize a checkpoint at the task boundary if the agent edited anything.
+    if (session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {
+      const id = await session.recorder.finalize("auto");
+      if (id) stdout.write(chalk.dim(`Checkpoint ${id} saved (auto). /rollback ${id} to undo.\n`));
+    }
   } finally {
     process.removeListener("SIGINT", onSigint);
   }

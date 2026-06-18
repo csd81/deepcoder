@@ -41,7 +41,7 @@ See `plans/phase4-plan.md`.
 
 - [x] **4A** — MCP client (read-only), `.deepcoder/config.json`, `/mcp`; MCP tools/output untrusted, execute-mode MCP denied for now
 - [x] **4B** — provider factory + generic OpenAI-compatible/Ollama backends (`DEEPCODER_PROVIDER`); DeepSeek stays default, `DEEPSEEK_*` env still works (Anthropic deferred)
-- [ ] **4C** — optional git checkpointing (`/checkpoint`, `/rollback`; never auto-commits)
+- [x] **4C** — checkpoints: local undo for agent edits (`/checkpoint`, `/rollback`; pre-image based, **not git**, off by default)
 - [ ] **4D** — subagents (design-gated; not started until 4A–4C are stable)
 
 ## Non-goals (for now)
