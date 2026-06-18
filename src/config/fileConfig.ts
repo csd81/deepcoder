@@ -12,9 +12,15 @@ export interface McpServerConfig {
   mode?: McpMode;
 }
 
+export interface CheckConfig {
+  command: string;
+  timeoutMs?: number;
+}
+
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
   mcpServers?: Record<string, McpServerConfig>;
+  checks?: Record<string, CheckConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -22,6 +28,12 @@ const mcpServerSchema = z.object({
   args: z.array(z.string()).optional(),
   enabled: z.boolean().optional(),
   mode: z.enum(["readonly", "execute"]).optional(),
+});
+
+const CHECK_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const checkSchema = z.object({
+  command: z.string().min(1),
+  timeoutMs: z.number().int().positive().optional(),
 });
 
 /**
@@ -60,7 +72,22 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
       else warn(`ignoring mcpServers["${name}"]: ${result.error.issues.map((i) => i.message).join("; ")}`);
     }
   }
-  return { mcpServers };
+
+  const rawChecks = (parsed as { checks?: unknown }).checks;
+  const checks: Record<string, CheckConfig> = {};
+  if (rawChecks && typeof rawChecks === "object") {
+    for (const [name, value] of Object.entries(rawChecks as Record<string, unknown>)) {
+      if (!CHECK_NAME_RE.test(name)) {
+        warn(`ignoring check "${name}": name must match ${CHECK_NAME_RE}`);
+        continue;
+      }
+      const result = checkSchema.safeParse(value);
+      if (result.success) checks[name] = result.data;
+      else warn(`ignoring checks["${name}"]: ${result.error.issues.map((i) => i.message).join("; ")}`);
+    }
+  }
+
+  return { mcpServers, checks };
 }
 
 function warn(msg: string): void {

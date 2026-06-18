@@ -48,7 +48,7 @@ See `plans/phase4-plan.md`.
 
 See `plans/phase5-verification-workflows-plan.md`.
 
-- [ ] **5A** — user-invoked named checks (`/checks`, `/check <name>`), bounded/redacted/quarantined output, no model-callable execution
+- [x] **5A** — user-invoked named checks (`/checks`, `/check <name>`); classifier-gated, streamed live but bounded/redacted/quarantined under `.deepcoder/runs/`; not model-callable
 - [ ] **5B** — explicit `/triage --run <id>` integration for stored check output
 
 ## Non-goals (for now)

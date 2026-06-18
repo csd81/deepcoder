@@ -11,6 +11,10 @@ import { compactIfNeeded } from "../context/compaction.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
+import { runCheck, CheckRefusedError } from "../checks/runner.js";
+import { classifyCommand } from "../permissions/commandClassifier.js";
+import { confirm } from "../permissions/prompt.js";
+import { stdout } from "node:process";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
@@ -226,6 +230,73 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "checks": {
+      const names = Object.keys(config.checks);
+      if (names.length === 0) {
+        console.log(
+          chalk.dim(
+            'No checks configured. Add to .deepcoder/config.json, e.g.:\n  { "checks": { "unit": { "command": "npm run test:unit" } } }',
+          ),
+        );
+        return { consumed: true };
+      }
+      for (const n of names.sort()) {
+        const c = config.checks[n]!;
+        const gate = classifyCommand(c.command) === "deny" ? chalk.red(" [blocked by policy]") : "";
+        console.log(`${n.padEnd(16)} ${chalk.dim(c.command)}${gate}`);
+      }
+      return { consumed: true };
+    }
+
+    case "check": {
+      const name = arg.trim();
+      if (!name) {
+        console.log(chalk.dim("usage: /check <name>   (see /checks)"));
+        return { consumed: true };
+      }
+      const check = config.checks[name];
+      if (!check) {
+        console.log(chalk.red(`Unknown check "${name}". See /checks.`));
+        return { consumed: true };
+      }
+      if (classifyCommand(check.command) === "deny") {
+        console.log(chalk.red(`Check "${name}" is blocked by the permission policy: ${check.command}`));
+        return { consumed: true };
+      }
+      const timeoutMs = check.timeoutMs ?? 120000;
+      const ok = await confirm(`Run check "${name}": ${chalk.bold(check.command)} (timeout ${Math.round(timeoutMs / 1000)}s)?`);
+      if (!ok) {
+        console.log(chalk.dim("Cancelled."));
+        return { consumed: true };
+      }
+
+      const controller = new AbortController();
+      const onSigint = () => controller.abort();
+      process.once("SIGINT", onSigint);
+      try {
+        const run = await runCheck(name, check, {
+          workspaceRoot: config.workspaceRoot,
+          signal: controller.signal,
+          onData: (chunk) => stdout.write(chunk), // already redacted by the runner
+        });
+        const status = run.timedOut
+          ? chalk.red("timed out")
+          : run.exitCode === 0
+            ? chalk.green("passed (exit 0)")
+            : chalk.red(`failed (exit ${run.exitCode ?? "?"}${run.signal ? `, ${run.signal}` : ""})`);
+        console.log(
+          `\n${status} · ${Math.round(run.durationMs)}ms${run.truncated ? " · output truncated" : ""} · run ${run.id}`,
+        );
+        console.log(chalk.dim(`saved to ${run.logPath} (quarantined; /triage --run integration lands in 5B)`));
+      } catch (err) {
+        if (err instanceof CheckRefusedError) console.log(chalk.red(err.message));
+        else console.log(chalk.red(`check failed to start: ${(err as Error).message}`));
+      } finally {
+        process.removeListener("SIGINT", onSigint);
+      }
+      return { consumed: true };
+    }
+
     case "mcp": {
       if (!session.mcp) {
         console.log(chalk.dim("No MCP servers configured (.deepcoder/config.json → mcpServers)."));
@@ -276,6 +347,8 @@ export async function handleSlashCommand(
           "/review <scope>  run a read-only reviewer subagent over files/topic",
           "/research <q>    run a read-only researcher subagent to explain the codebase",
           "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
+          "/checks          list configured verification checks",
+          "/check <name>    run a configured check (gated, bounded, quarantined)",
           "/checkpoint [l]  snapshot agent edits as an undo point (if enabled)",
           "/checkpoints     list checkpoints",
           "/rollback <id>   undo agent edits to a checkpoint ([--force] for conflicts)",

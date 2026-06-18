@@ -19,9 +19,14 @@ export async function promptForApproval(
     stdout.write(renderDiff(preview.diff) + "\n");
   }
 
+  return confirm("Approve?");
+}
+
+/** Generic y/N confirmation. Defaults to "no" on empty/EOF input. */
+export async function confirm(message: string): Promise<boolean> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
-    const answer = (await rl.question(chalk.cyan("Approve? [y/N] "))).trim().toLowerCase();
+    const answer = (await rl.question(chalk.cyan(`${message} [y/N] `))).trim().toLowerCase();
     return answer === "y" || answer === "yes";
   } finally {
     rl.close();

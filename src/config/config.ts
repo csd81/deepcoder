@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { loadFileConfig, type McpServerConfig } from "./fileConfig.js";
+import { loadFileConfig, type McpServerConfig, type CheckConfig } from "./fileConfig.js";
 
 export type ApprovalMode = "ask" | "auto" | "readonly";
 export type CheckpointMode = "off" | "manual" | "auto";
@@ -24,6 +24,8 @@ export interface Config {
   workspaceRoot: string;
   /** MCP servers from .deepcoder/config.json (empty if none configured). */
   mcpServers: Record<string, McpServerConfig>;
+  /** Named verification checks from .deepcoder/config.json (user-invoked only). */
+  checks: Record<string, CheckConfig>;
   /**
    * Whether execute-kind MCP tools may run. Off in Phase 4A — execute-mode MCP
    * tools are discovered but denied until a later phase enables them.
@@ -85,6 +87,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     checkpoints: ((process.env.DEEPCODER_CHECKPOINTS as CheckpointMode) || "off"),
     workspaceRoot,
     mcpServers: file.mcpServers ?? {},
+    checks: file.checks ?? {},
     mcpExecuteEnabled: false, // Phase 4A: execute-mode MCP tools are denied
     ...overrides,
   };

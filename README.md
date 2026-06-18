@@ -60,8 +60,9 @@ npm run dev -- --resume <id>
 
 Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonly]`,
 `/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/mcp [reload]`,
-`/review <scope>`, `/research <question>`, `/triage <failure>`, `/checkpoint`,
-`/checkpoints`, `/rollback <id>`, `/save`, `/status`, `/diff`.
+`/review <scope>`, `/research <question>`, `/triage <failure>`, `/checks`,
+`/check <name>`, `/checkpoint`, `/checkpoints`, `/rollback <id>`, `/save`,
+`/status`, `/diff`.
 
 ## Providers
 
@@ -194,6 +195,32 @@ any changes yourself. Set `DEEPCODER_SUBAGENT_MODEL` to use a cheaper model for
 subagents (defaults to the main model). They're user-invoked only — the model can't
 spawn subagents on its own.
 
+## Checks (verification commands)
+
+Run **named, pre-configured** project checks from the CLI. Configure them in
+`.deepcoder/config.json`:
+
+```json
+{
+  "checks": {
+    "typecheck": { "command": "npm run typecheck" },
+    "unit": { "command": "npm run test:unit", "timeoutMs": 120000 }
+  }
+}
+```
+
+- `/checks` lists configured checks; `/check <name>` runs one.
+- **User-invoked only** — the model can't run or define checks.
+- Every configured command still passes the **command classifier** at run time, so
+  a dangerous command (`rm`, pipe-to-shell, redirects, …) is refused even if configured.
+- `/check` asks for confirmation, streams output live, and stores a **bounded
+  (256 KB), redacted** run record under the gitignored `.deepcoder/runs/`. Check
+  output is **never** added to the model's conversation (it's untrusted, like a
+  tool result) — and those run logs can't be read back via `read_file` (`.deepcoder`
+  is a protected path). Ctrl-C and the per-check timeout kill the process.
+
+(Feeding a stored run straight into `/triage` is planned as a follow-up.)
+
 ## Checkpoints (local undo)
 
 Opt-in undo for a run of agent edits. **It does not use git** (no commits or
@@ -231,7 +258,8 @@ src/
   context/      project instructions, token budget, compaction, repo map
   mcp/          MCP client, schema adapter, tool registry (read-only)
   subagents/    read-only review subagent (profiles, runner, result parsing)
-  session/      session persistence + resume, checkpoints (local undo)
+  checks/       user-invoked verification runner (gated, bounded, quarantined)
+  session/      session persistence + resume, checkpoints, check-run store
   workspace/    path confinement, git helpers, sensitive-path guard
   config/       env + .deepcoder/config.json loading
 ```

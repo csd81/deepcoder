@@ -11,6 +11,10 @@ import type {
   ModelProvider,
   ToolCall,
 } from "./types.js";
+import { redactSecrets } from "../workspace/redact.js";
+
+// Re-export so existing `from "./openaiCompatible.js"` import paths keep working.
+export { redactSecrets };
 
 export interface OpenAICompatibleOptions {
   apiKey: string;
@@ -174,21 +178,6 @@ export class ProviderError extends Error {
     super(message);
     this.name = "ProviderError";
   }
-}
-
-/**
- * Strip anything key-shaped from free-form error text. The status-mapped errors
- * never echo the SDK message, but the default branch does — and an SDK / proxy /
- * network error can carry an auth header, a `?api_key=` query param, or a raw
- * token. Defence in depth so a key never reaches logs or the model.
- */
-export function redactSecrets(text: string): string {
-  return text
-    .replace(/sk-[A-Za-z0-9_-]{6,}/g, "sk-***")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer ***")
-    .replace(/(authorization)\s*[:=]\s*["']?[^\s"',}]+/gi, "$1: ***")
-    .replace(/(api[_-]?key|apikey|access[_-]?token|token)\s*[:=]\s*["']?[^\s"',}&]+/gi, "$1=***")
-    .replace(/([?&](?:api_?key|key|token|access_token)=)[^&\s"']+/gi, "$1***");
 }
 
 export function mapProviderError(err: unknown, ctx: { label: string; model: string }): ProviderError {
