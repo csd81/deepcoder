@@ -11,6 +11,16 @@ export async function promptForApproval(
   invocation: ToolInvocation,
   preview?: ToolPreview,
 ): Promise<boolean> {
+  // No interactive terminal (headless one-shot, --solve, piped, in-container):
+  // we cannot ask, so deny safely. The agent loop turns this into a "rejected"
+  // tool result and continues — never blocking on stdin that will never answer.
+  if (!stdin.isTTY) {
+    stdout.write(
+      "\n" + chalk.yellow("● permission required — auto-denied (no interactive terminal): ") +
+        invocation.describe() + "\n",
+    );
+    return false;
+  }
   stdout.write("\n" + chalk.yellow("● permission required: ") + invocation.describe() + "\n");
   if (preview?.description) {
     stdout.write(chalk.dim(preview.description) + "\n");
@@ -22,8 +32,10 @@ export async function promptForApproval(
   return confirm("Approve?");
 }
 
-/** Generic y/N confirmation. Defaults to "no" on empty/EOF input. */
+/** Generic y/N confirmation. Defaults to "no" on empty/EOF input, and on a
+ *  non-interactive stdin (no TTY) returns "no" without blocking on a read. */
 export async function confirm(message: string): Promise<boolean> {
+  if (!stdin.isTTY) return false;
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
     const answer = (await rl.question(chalk.cyan(`${message} [y/N] `))).trim().toLowerCase();
