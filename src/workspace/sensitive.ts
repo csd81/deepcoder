@@ -22,3 +22,23 @@ export function isSensitivePath(p: string): boolean {
   const base = path.basename(normalized);
   return SENSITIVE_PATTERNS.some((re) => re.test(normalized) || re.test(base));
 }
+
+/**
+ * ripgrep `--glob` exclusion patterns (the `!` form) that keep secret files out
+ * of content searches, no matter where they sit in the tree.
+ */
+export const SENSITIVE_GLOB_EXCLUDES: string[] = [
+  "!**/.env",
+  "!**/.env.*",
+  "!.env",
+  "!.env.*",
+  "!**/.deepcoder/**",
+  "!.deepcoder/**",
+  "!**/.git/**",
+  "!**/*.pem",
+  "!**/id_rsa*",
+  "!**/id_ed25519*",
+  "!**/credentials*",
+  "!**/.npmrc",
+  "!**/.aws/**",
+];

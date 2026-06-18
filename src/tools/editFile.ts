@@ -2,7 +2,8 @@ import { promises as fs } from "node:fs";
 import { z } from "zod";
 import type { Tool, ToolInvocation, ToolContext } from "./types.js";
 import { parseArgs, InvalidArgumentsError } from "./types.js";
-import { resolveInWorkspace, resolveRealPathInWorkspace } from "../workspace/paths.js";
+import { resolveInWorkspace, resolveRealPathInWorkspace, displayPath } from "../workspace/paths.js";
+import { isSensitivePath } from "../workspace/sensitive.js";
 import { unifiedDiff } from "./diff.js";
 
 const schema = z.object({
@@ -25,12 +26,26 @@ export const editFileTool: Tool = {
       throw new InvalidArgumentsError("edit_file", "old_string and new_string are identical.");
     }
 
-    async function apply(ctx: ToolContext): Promise<{ updated: string; original: string; count: number }> {
-      const abs = resolveInWorkspace(ctx.workspaceRoot, args.path);
-      if (!ctx.readTracker.has(abs)) {
+    if (isSensitivePath(args.path)) {
+      throw new InvalidArgumentsError("edit_file", `${args.path} is a protected/secret path and cannot be edited.`);
+    }
+
+    // Resolve the SAME real target for read, preview, and write so a symlinked
+    // in-workspace path can't be previewed as one file and written to another.
+    function resolveTarget(ctx: ToolContext): { real: string; lexical: string } {
+      return {
+        real: resolveRealPathInWorkspace(ctx.workspaceRoot, args.path),
+        lexical: resolveInWorkspace(ctx.workspaceRoot, args.path),
+      };
+    }
+
+    async function apply(ctx: ToolContext): Promise<{ updated: string; original: string; count: number; real: string }> {
+      const { real, lexical } = resolveTarget(ctx);
+      // readTracker is keyed by the lexical path that read_file recorded.
+      if (!ctx.readTracker.has(lexical) && !ctx.readTracker.has(real)) {
         throw new EditError(`You must read ${args.path} before editing it. Call read_file first.`);
       }
-      const original = await fs.readFile(abs, "utf8");
+      const original = await fs.readFile(real, "utf8");
       const count = countOccurrences(original, args.old_string);
       if (count === 0) {
         throw new EditError(`old_string not found in ${args.path}. Read the file and copy the text exactly.`);
@@ -43,7 +58,7 @@ export const editFileTool: Tool = {
       const updated = args.replace_all
         ? original.split(args.old_string).join(args.new_string)
         : original.replace(args.old_string, args.new_string);
-      return { updated, original, count };
+      return { updated, original, count, real };
     }
 
     return {
@@ -52,9 +67,11 @@ export const editFileTool: Tool = {
       describe: () => `Edit ${args.path}`,
       async preview(ctx) {
         try {
-          const { original, updated, count } = await apply(ctx);
+          const { original, updated, count, real } = await apply(ctx);
+          const realRel = displayPath(ctx.workspaceRoot, real);
+          const target = realRel === args.path ? args.path : `${args.path} → ${realRel}`;
           return {
-            description: `Edit ${args.path} (${count} replacement${count === 1 ? "" : "s"})`,
+            description: `Edit ${target} (${count} replacement${count === 1 ? "" : "s"})`,
             diff: unifiedDiff(original, updated),
           };
         } catch (err) {
@@ -63,9 +80,8 @@ export const editFileTool: Tool = {
       },
       async execute(ctx) {
         try {
-          const abs = resolveRealPathInWorkspace(ctx.workspaceRoot, args.path);
-          const { updated, count } = await apply(ctx);
-          await fs.writeFile(abs, updated, "utf8");
+          const { updated, count, real } = await apply(ctx);
+          await fs.writeFile(real, updated, "utf8");
           return { output: `Edited ${args.path} (${count} replacement${count === 1 ? "" : "s"}).` };
         } catch (err) {
           if (err instanceof EditError) return { output: err.message, isError: true };

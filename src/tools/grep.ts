@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
 import { resolveInWorkspace } from "../workspace/paths.js";
+import { isSensitivePath, SENSITIVE_GLOB_EXCLUDES } from "../workspace/sensitive.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,9 +26,19 @@ export const grepTool: Tool = {
       kind: "read-only",
       describe: () => `grep "${args.pattern}" in ${args.path}`,
       async execute(ctx) {
+        if (isSensitivePath(args.path)) {
+          return {
+            output: `Searching ${args.path} is blocked: it may contain secrets. It was not searched.`,
+            isError: true,
+          };
+        }
         const abs = resolveInWorkspace(ctx.workspaceRoot, args.path);
-        const rgArgs = ["--line-number", "--no-heading", "--color=never", args.pattern, abs];
+        const rgArgs = ["--line-number", "--no-heading", "--color=never"];
+        // Always exclude secret files so a broad search (e.g. path ".") can't
+        // pull .env / .deepcoder contents into the model context.
+        for (const ex of SENSITIVE_GLOB_EXCLUDES) rgArgs.push("--glob", ex);
         if (args.glob) rgArgs.push("--glob", args.glob);
+        rgArgs.push(args.pattern, abs);
         try {
           const { stdout } = await execFileAsync("rg", rgArgs, {
             signal: ctx.signal,

@@ -144,10 +144,39 @@ function withTodoContext(messages: AgentMessage[], ctx: ToolContext): AgentMessa
   return [...messages, { role: "system", content: `Current todo list:\n${renderTodos(ctx.todos)}` }];
 }
 
+/**
+ * Produce a provider-safe copy of the message list: every assistant tool-call
+ * must have its tool result present, and every tool message must have its
+ * owning assistant call. OpenAI-compatible APIs reject either kind of dangling
+ * reference. This defends against compaction boundaries AND corrupted/resumed
+ * history. Operates on a copy — stored history is never mutated.
+ */
+export function sanitizeForProvider(messages: AgentMessage[]): AgentMessage[] {
+  const presentResultIds = new Set<string>();
+  for (const m of messages) if (m.role === "tool" && m.toolCallId) presentResultIds.add(m.toolCallId);
+
+  const keptCallIds = new Set<string>();
+  const out: AgentMessage[] = [];
+  for (const m of messages) {
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      const calls = m.toolCalls.filter((c) => presentResultIds.has(c.id));
+      for (const c of calls) keptCallIds.add(c.id);
+      if (calls.length === 0 && !m.content) continue; // empty, useless turn
+      out.push(calls.length ? { ...m, toolCalls: calls } : { ...m, toolCalls: undefined });
+    } else if (m.role === "tool") {
+      if (m.toolCallId && keptCallIds.has(m.toolCallId)) out.push(m);
+      // else: orphan tool result — drop it
+    } else {
+      out.push(m);
+    }
+  }
+  return out;
+}
+
 /** Use streaming when the provider supports it; otherwise a single chat() call. */
 async function getResponse(deps: AgentDeps, sent: AgentMessage[]): Promise<ChatResponse> {
   const req: ChatRequest = {
-    messages: sent,
+    messages: sanitizeForProvider(sent),
     tools: deps.registry.schemas(),
     model: deps.model,
     signal: deps.ctx.signal,
