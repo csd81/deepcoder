@@ -32,6 +32,8 @@ def run(cmd, cwd=None, timeout=None, check=True):
 
 
 def generate(instance, workdir, solve_cmd=None, solve_attempts=3):
+    """Returns (diff, telemetry) where telemetry is the solver's per-attempt
+    JSON record (None unless a solve command was supplied)."""
     repo = instance["repo"]
     url = f"https://github.com/{repo}.git"
     clone = os.path.join(workdir, repo.replace("/", "__"))
@@ -54,11 +56,15 @@ def generate(instance, workdir, solve_cmd=None, solve_attempts=3):
     # as a named check and run closed-loop (edit→check→retry). Otherwise one-shot.
     # NOTE: this is intentionally NOT auto-derived from the instance — you choose a
     # safe project test command, so we never couple the score to hidden tests.
+    telemetry_path = None
     if solve_cmd:
         os.makedirs(os.path.join(clone, ".deepcoder"), exist_ok=True)
         with open(os.path.join(clone, ".deepcoder", "config.json"), "w") as cf:
             json.dump({"checks": {"verify": {"command": solve_cmd}}}, cf)
-        cmd += ["--solve", "--check", "verify", "--solve-attempts", str(solve_attempts)]
+        # Telemetry lands OUTSIDE the clone so it never pollutes `git diff`.
+        telemetry_path = os.path.join(workdir, "solve-telemetry.json")
+        cmd += ["--solve", "--check", "verify", "--solve-attempts", str(solve_attempts),
+                "--telemetry", telemetry_path]
     cmd.append(prompt)
     subprocess.run(
         cmd,
@@ -70,7 +76,14 @@ def generate(instance, workdir, solve_cmd=None, solve_attempts=3):
         env=os.environ,
     )
     diff = run(["git", "diff"], cwd=clone, check=False).stdout
-    return diff
+    telemetry = None
+    if telemetry_path and os.path.exists(telemetry_path):
+        try:
+            with open(telemetry_path) as tf:
+                telemetry = json.load(tf)
+        except (OSError, ValueError):
+            telemetry = None
+    return diff, telemetry
 
 
 def main():
@@ -89,13 +102,19 @@ def main():
     ids = args.instances.split(",")
     ds = {i["instance_id"]: i for i in load_swebench_dataset(args.dataset, "test", ids)}
 
+    # Telemetry sidecar: keeps predictions.jsonl strictly canonical for the
+    # official harness while still recording the solve diagnostics.
+    tele_path = args.out + ".telemetry.jsonl"
+    tele_f = open(tele_path, "w") if args.solve_cmd else None
     with open(args.out, "w") as f:
         for iid in ids:
             inst = ds[iid]
             print(f"[gen] {iid} …", flush=True)
             wd = tempfile.mkdtemp(prefix="swe-gen-")
             try:
-                patch = generate(inst, wd, solve_cmd=args.solve_cmd, solve_attempts=args.solve_attempts)
+                patch, telemetry = generate(
+                    inst, wd, solve_cmd=args.solve_cmd, solve_attempts=args.solve_attempts
+                )
             finally:
                 shutil.rmtree(wd, ignore_errors=True)
             print(f"      patch: {len(patch)} chars, {patch.count(chr(10))} lines")
@@ -104,6 +123,17 @@ def main():
                 "model_name_or_path": MODEL_NAME,
                 "model_patch": patch,
             }) + "\n")
+            if tele_f is not None:
+                rec = {
+                    "instance_id": iid,
+                    "final_patch_bytes": len(patch.encode("utf-8")),
+                    "final_patch_empty": patch.strip() == "",
+                    "telemetry": telemetry,  # None if the solver wrote nothing
+                }
+                tele_f.write(json.dumps(rec) + "\n")
+    if tele_f is not None:
+        tele_f.close()
+        print(f"wrote {tele_path}")
     print(f"wrote {args.out}")
 
 

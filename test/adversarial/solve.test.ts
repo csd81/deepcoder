@@ -157,6 +157,30 @@ test("a huge failing log is summarized and capped (no raw-log flood)", async () 
   assert.ok(retry!.content.length < 8 * 1024, `retry prompt bounded, was ${retry!.content.length}`);
 });
 
+test("snapshotPatch telemetry is recorded per attempt and a passing run carries its hash", async () => {
+  const s = await sessionWith({ test: node("process.exit(0)") });
+  const res = await runSolveLoop(s, { task: "fix", checkName: "test", maxAttempts: 1 }, {
+    runAgent: async () => {},
+    signal: ac(),
+    snapshotPatch: async () => ({ hash: "deadbeef", bytes: 42 }),
+  });
+  assert.equal(res.solved, true);
+  assert.equal(res.attempts[0]!.patchHash, "deadbeef");
+  assert.equal(res.attempts[0]!.patchBytes, 42);
+});
+
+test("a throwing snapshotPatch is swallowed (telemetry must not break the solve)", async () => {
+  const s = await sessionWith({ test: node("process.exit(1)") });
+  const res = await runSolveLoop(s, { task: "fix", checkName: "test", maxAttempts: 1 }, {
+    runAgent: async () => {},
+    signal: ac(),
+    snapshotPatch: async () => { throw new Error("git exploded"); },
+  });
+  assert.equal(res.solved, false);
+  assert.equal(res.attempts.length, 1);
+  assert.equal(res.attempts[0]!.patchHash, undefined);
+});
+
 test("a checkpoint failure during an attempt is non-fatal", async () => {
   const s = await sessionWith({ test: node("process.exit(0)") });
   s.config.checkpoints = "auto";

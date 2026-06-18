@@ -1,9 +1,13 @@
 import { stdout } from "node:process";
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import chalk from "chalk";
 import type { Session } from "./repl.js";
 import { runSolveLoop } from "../solve/solver.js";
-import type { SolveOptions } from "../solve/types.js";
+import type { SolveOptions, SolveResult } from "../solve/types.js";
+import { Git } from "../workspace/git.js";
+import { redactSecrets } from "../workspace/redact.js";
 
 /**
  * Drive the closed-loop solver for one task and render progress + a final
@@ -19,10 +23,26 @@ export async function runSolveCommand(
   const onSigint = () => controller.abort();
   process.on("SIGINT", onSigint);
   let checkStreaming = false;
+  // Telemetry (headless eval only): hash the working-tree patch each attempt so
+  // we can detect repeated/empty edits. Git stays out of the solver core.
+  const wantTelemetry = !!session.config.solveTelemetry;
+  const git = wantTelemetry ? new Git(session.config.workspaceRoot) : null;
+  const isRepo = git ? await git.isRepo() : false;
+  const snapshotPatch = wantTelemetry
+    ? async () => {
+        if (!git || !isRepo) return null;
+        const diff = await git.diff();
+        return {
+          hash: createHash("sha256").update(diff).digest("hex").slice(0, 16),
+          bytes: Buffer.byteLength(diff),
+        };
+      }
+    : undefined;
   try {
     const result = await runSolveLoop(session, opts, {
       runAgent,
       signal: controller.signal,
+      snapshotPatch,
       onProgress: (e) => {
         if (e.type === "attempt-start") {
           stdout.write(chalk.cyan(`\nsolve attempt ${e.index}/${e.max}\n`));
@@ -47,6 +67,10 @@ export async function runSolveCommand(
       },
     });
 
+    if (session.config.solveTelemetry) {
+      await writeTelemetry(session.config.solveTelemetry, session, opts, result);
+    }
+
     if (result.refusal) {
       stdout.write(chalk.red(`\n${result.refusal}\n`));
       return;
@@ -63,5 +87,42 @@ export async function runSolveCommand(
     );
   } finally {
     process.removeListener("SIGINT", onSigint);
+  }
+}
+
+/**
+ * Write a machine-readable telemetry record of one solve run (headless eval).
+ * Raw patches are never stored — only a hash + byte count — and the whole JSON
+ * is re-redacted before write (the per-attempt failure summary is already
+ * redacted upstream; this is defense-in-depth). Best-effort: never throws.
+ */
+async function writeTelemetry(
+  filePath: string,
+  session: Session,
+  opts: SolveOptions,
+  result: SolveResult,
+): Promise<void> {
+  try {
+    const record = {
+      checkName: opts.checkName,
+      maxAttempts: opts.maxAttempts,
+      solved: result.solved,
+      refusal: result.refusal ?? null,
+      attemptsCount: result.attempts.length,
+      lastRunId: result.lastRunId ?? null,
+      changedFiles: [...session.writeTracker].map((p) => path.basename(p)),
+      attempts: result.attempts.map((a) => ({
+        index: a.index,
+        checkPassed: a.checkPassed,
+        checkTimedOut: a.checkTimedOut,
+        checkRunId: a.checkRunId ?? null,
+        patchHash: a.patchHash ?? null,
+        patchBytes: a.patchBytes ?? null,
+        failureSummary: a.failureSummary ?? null,
+      })),
+    };
+    await writeFile(filePath, redactSecrets(JSON.stringify(record, null, 2)), "utf8");
+  } catch {
+    /* telemetry is best-effort; a write failure must not fail the solve */
   }
 }
