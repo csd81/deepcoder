@@ -21,6 +21,19 @@ export interface ToolResult {
 export interface ToolContext {
   workspaceRoot: string;
   signal: AbortSignal;
+  /**
+   * Absolute paths the session has already read. Created once per session and
+   * shared across every tool execution, so mutation tools can require a file
+   * to have been read before they overwrite it.
+   */
+  readTracker: Set<string>;
+}
+
+/** What a tool will do, computed before execution for approval prompts. */
+export interface ToolPreview {
+  description: string;
+  /** Optional unified-diff-ish text rendered in the approval prompt. */
+  diff?: string;
 }
 
 export interface ToolInvocation {
@@ -32,6 +45,10 @@ export interface ToolInvocation {
    * classify it (rm/sudo/network/etc). Undefined for non-shell tools.
    */
   command?: string;
+  /** Workspace-relative paths this invocation would change (mutating tools). */
+  affectedPaths?: string[];
+  /** Compute a human-facing preview (e.g. a diff) without executing. */
+  preview?(ctx: ToolContext): Promise<ToolPreview>;
   execute(ctx: ToolContext): Promise<ToolResult>;
 }
 

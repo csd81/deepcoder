@@ -24,17 +24,25 @@ export class DeepSeekProvider implements ModelProvider {
   }
 
   async chat(input: ChatRequest): Promise<ChatResponse> {
-    const res = await this.client.chat.completions.create(
-      {
-        model: input.model,
-        temperature: input.temperature ?? 0,
-        messages: input.messages.map(toWireMessage),
-        tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
-        tool_choice: input.tools.length ? "auto" : undefined,
-      },
-      { signal: input.signal },
-    );
+    let res;
+    try {
+      res = await this.client.chat.completions.create(
+        {
+          model: input.model,
+          temperature: input.temperature ?? 0,
+          messages: input.messages.map(toWireMessage),
+          tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
+          tool_choice: input.tools.length ? "auto" : undefined,
+        },
+        { signal: input.signal },
+      );
+    } catch (err) {
+      throw mapProviderError(err, input.model);
+    }
 
+    if (!res.choices?.length) {
+      throw new ProviderError("DeepSeek returned no choices. Try again or check the model name.");
+    }
     const choice = res.choices[0]?.message;
     const toolCalls: ToolCall[] = (choice?.tool_calls ?? []).flatMap((tc) => {
       if (tc.type !== "function") return [];
@@ -88,5 +96,33 @@ function safeParseArgs(raw: string): Record<string, unknown> {
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
+  }
+}
+
+/** A clean, user-facing provider error (no SDK stack noise). */
+export class ProviderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderError";
+  }
+}
+
+function mapProviderError(err: unknown, model: string): ProviderError {
+  const status = (err as { status?: number }).status;
+  switch (status) {
+    case 401:
+      return new ProviderError("DeepSeek rejected the API key (401). Check DEEPSEEK_API_KEY.");
+    case 429:
+      return new ProviderError("DeepSeek rate limit hit (429). Wait a moment and retry.");
+    case 400:
+    case 404:
+      return new ProviderError(`DeepSeek could not use model "${model}" (${status}). Check DEEPSEEK_MODEL.`);
+    default: {
+      if ((err as { name?: string }).name === "AbortError") {
+        return new ProviderError("Request aborted.");
+      }
+      const msg = (err as { message?: string }).message ?? String(err);
+      return new ProviderError(`DeepSeek request failed: ${msg}`);
+    }
   }
 }

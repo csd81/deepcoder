@@ -26,6 +26,7 @@ export const readFileTool: Tool = {
       async execute(ctx) {
         const abs = resolveInWorkspace(ctx.workspaceRoot, args.path);
         const content = await fs.readFile(abs, "utf8");
+        ctx.readTracker.add(abs);
         const lines = content.split("\n");
         const start = (args.offset ?? 1) - 1;
         const end = start + (args.limit ?? DEFAULT_LIMIT);
