@@ -60,7 +60,11 @@ export class SessionStore {
       updatedAt: new Date().toISOString(),
     };
     await fs.mkdir(sessionsDir(this.workspaceRoot), { recursive: true });
-    await fs.writeFile(this.file(), JSON.stringify(data, null, 2), "utf8");
+    // Atomic write: a crash mid-write leaves the temp file, never a half-written
+    // session. rename() is atomic on the same filesystem.
+    const tmp = `${this.file()}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
+    await fs.rename(tmp, this.file());
   }
 }
 

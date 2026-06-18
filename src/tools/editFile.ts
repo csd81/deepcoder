@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { z } from "zod";
 import type { Tool, ToolInvocation, ToolContext } from "./types.js";
 import { parseArgs, InvalidArgumentsError } from "./types.js";
-import { resolveInWorkspace } from "../workspace/paths.js";
+import { resolveInWorkspace, resolveRealPathInWorkspace } from "../workspace/paths.js";
 import { unifiedDiff } from "./diff.js";
 
 const schema = z.object({
@@ -63,12 +63,15 @@ export const editFileTool: Tool = {
       },
       async execute(ctx) {
         try {
-          const abs = resolveInWorkspace(ctx.workspaceRoot, args.path);
+          const abs = resolveRealPathInWorkspace(ctx.workspaceRoot, args.path);
           const { updated, count } = await apply(ctx);
           await fs.writeFile(abs, updated, "utf8");
           return { output: `Edited ${args.path} (${count} replacement${count === 1 ? "" : "s"}).` };
         } catch (err) {
           if (err instanceof EditError) return { output: err.message, isError: true };
+          if (err instanceof Error && err.message.includes("outside the workspace")) {
+            return { output: err.message, isError: true };
+          }
           throw err;
         }
       },

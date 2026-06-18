@@ -26,6 +26,32 @@ test("classifier asks for builds/tests", () => {
   }
 });
 
+test("classifier no longer auto-allows chained side effects (Phase 3 hardening)", () => {
+  // These all used to slip through prefix matching.
+  assert.equal(classifyCommand("ls; touch x"), "ask");
+  assert.equal(classifyCommand("git status && git checkout -- file"), "ask");
+  assert.equal(classifyCommand("echo hi > rel-file"), "ask"); // relative redirect → ask
+  assert.equal(classifyCommand("ls | sort"), "ask"); // unsafe segment in pipe
+});
+
+test("classifier denies absolute-path redirects and reads outside the workspace", () => {
+  assert.equal(classifyCommand("echo hi > /etc/cron.d/x"), "deny");
+  assert.equal(classifyCommand("cat /etc/passwd"), "ask"); // absolute operand → not allow
+  assert.equal(classifyCommand("cat ../../secret"), "ask"); // parent escape → not allow
+});
+
+test("classifier still allows safe read-only pipelines", () => {
+  assert.equal(classifyCommand("cat README.md"), "allow");
+  assert.equal(classifyCommand("grep foo src/a.ts | grep bar"), "allow"); // all segments read-only
+  assert.equal(classifyCommand("cat /dev/null"), "allow"); // /dev/null is whitelisted
+  assert.equal(classifyCommand("git log --oneline"), "allow");
+});
+
+test("classifier denies command substitution", () => {
+  assert.equal(classifyCommand("echo $(whoami)"), "deny");
+  assert.equal(classifyCommand("cat `ls`"), "deny");
+});
+
 test("policy: read-only always allowed, even in readonly mode", () => {
   assert.equal(checkPermission(inv("read-only"), "readonly"), "allow");
 });

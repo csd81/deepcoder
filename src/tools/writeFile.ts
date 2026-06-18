@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { Tool, ToolInvocation, ToolContext } from "./types.js";
 import { parseArgs } from "./types.js";
-import { resolveInWorkspace } from "../workspace/paths.js";
+import { resolveInWorkspace, resolveRealPathInWorkspace } from "../workspace/paths.js";
 import { unifiedDiff } from "./diff.js";
 
 const schema = z.object({
@@ -52,8 +52,16 @@ export const writeFileTool: Tool = {
             isError: true,
           };
         }
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, args.content, "utf8");
+        // Resolve symlinks at write time so the bytes can't land outside the
+        // workspace; readTracker keys stay lexical (matching read_file).
+        let writeTarget: string;
+        try {
+          writeTarget = resolveRealPathInWorkspace(ctx.workspaceRoot, args.path);
+        } catch (err) {
+          return { output: (err as Error).message, isError: true };
+        }
+        await fs.mkdir(path.dirname(writeTarget), { recursive: true });
+        await fs.writeFile(writeTarget, args.content, "utf8");
         return { output: `${existing === null ? "Created" : "Overwrote"} ${args.path}.` };
       },
     };

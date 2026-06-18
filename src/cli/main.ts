@@ -53,12 +53,18 @@ async function buildSession(
     const saved = await loadSession(config.workspaceRoot, id);
     const cfg = { ...config, model: saved.model };
     console.log(chalk.dim(`Resuming session ${id} (${saved.messages.length} messages).`));
+    // Rebuild the system prompt from CURRENT project instructions rather than
+    // trusting the (possibly stale) saved one, then keep the rest of history.
+    const messages = saved.messages.slice();
+    const fresh = systemMessage(cfg, saved.mode);
+    if (messages[0]?.role === "system") messages[0] = fresh;
+    else messages.unshift(fresh);
     return {
       config: cfg,
       provider,
       registry,
       store: new SessionStore(config.workspaceRoot, id, saved.createdAt),
-      messages: saved.messages,
+      messages,
       mode: saved.mode,
       todos: saved.todos,
       readTracker: new Set(saved.readTracker),
