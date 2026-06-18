@@ -60,8 +60,8 @@ npm run dev -- --resume <id>
 
 Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonly]`,
 `/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/mcp [reload]`,
-`/review <scope>`, `/research <question>`, `/checkpoint`, `/checkpoints`,
-`/rollback <id>`, `/save`, `/status`, `/diff`.
+`/review <scope>`, `/research <question>`, `/triage <failure>`, `/checkpoint`,
+`/checkpoints`, `/rollback <id>`, `/save`, `/status`, `/diff`.
 
 ## Providers
 
@@ -171,14 +171,16 @@ Discovered tools appear as `mcp__<server>__<tool>`; `/mcp` lists them and
 
 ## Subagents (read-only)
 
-Two **read-only** subagents you invoke explicitly:
+Three **read-only** subagents you invoke explicitly:
 
 - `/review <scope>` — reviewer: reports findings (bugs, regressions, missing tests).
 - `/research <question>` — researcher: explains how a feature/subsystem works, with citations.
+- `/triage <failure>` — test-triage: diagnoses a failure (likely cause, relevant files, what to inspect/re-run). Diagnostic only — it never runs tests. Also `/triage --file <log>` (bounded, non-secret) and `/triage --scope <scope> <failure>`.
 
 ```
 /review src/tools/grep.ts
 /research "where are permissions enforced?"
+/triage --file test-output.log
 ```
 
 It's safe by construction: the subagent runs through the same agent loop but with

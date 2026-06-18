@@ -1,13 +1,16 @@
+import { readFileSync } from "node:fs";
 import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
 import { Git } from "../workspace/git.js";
+import { resolveInWorkspace } from "../workspace/paths.js";
+import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { runSubagent } from "../subagents/runner.js";
-import { reviewer, researcher } from "../subagents/profiles.js";
+import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
@@ -190,6 +193,39 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "triage": {
+      const parsed = parseTriageArgs(arg);
+      if (!parsed.scope && !parsed.file && !parsed.failure) {
+        console.log(
+          chalk.dim(
+            "usage: /triage <failure>  |  /triage --file <path>  |  /triage --scope <scope> <failure>",
+          ),
+        );
+        return { consumed: true };
+      }
+
+      const taskParts = [
+        "Triage this failure using only read-only inspection. Identify what failed, the most likely cause " +
+          "(ranked hypotheses with file:line evidence), the relevant files/functions, and what to inspect or " +
+          "re-run BY HAND next. You did not run anything — do not claim any test was run or passed.",
+      ];
+      if (parsed.scope) taskParts.push(`\nScope to focus on: ${parsed.scope}`);
+      if (parsed.failure) taskParts.push(`\nReported failure:\n${parsed.failure}`);
+      if (parsed.file) {
+        const log = readLogInput(session.config.workspaceRoot, parsed.file);
+        if ("error" in log) {
+          console.log(chalk.red(log.error));
+          return { consumed: true }; // no provider call
+        }
+        taskParts.push(
+          `\nFailure log from ${parsed.file}${log.truncated ? " (truncated)" : ""}:\n\`\`\`\n${log.text}\n\`\`\``,
+        );
+      }
+
+      await runSubagentCommand(session, save, testTriage, taskParts.join("\n"));
+      return { consumed: true };
+    }
+
     case "mcp": {
       if (!session.mcp) {
         console.log(chalk.dim("No MCP servers configured (.deepcoder/config.json → mcpServers)."));
@@ -239,6 +275,7 @@ export async function handleSlashCommand(
           "/mcp [reload]    list configured MCP servers and tools",
           "/review <scope>  run a read-only reviewer subagent over files/topic",
           "/research <q>    run a read-only researcher subagent to explain the codebase",
+          "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
           "/checkpoint [l]  snapshot agent edits as an undo point (if enabled)",
           "/checkpoints     list checkpoints",
           "/rollback <id>   undo agent edits to a checkpoint ([--force] for conflicts)",
@@ -261,6 +298,64 @@ const SEVERITY_COLOR: Record<string, (s: string) => string> = {
   medium: chalk.yellow,
   low: chalk.dim,
 };
+
+const LOG_MAX_BYTES = 80 * 1024;
+const LOG_MAX_LINES = 2000;
+
+interface TriageArgs {
+  scope?: string;
+  file?: string;
+  failure?: string;
+}
+
+/** Parse `/triage` args: `--file <path>`, `--scope <scope>`, rest = pasted failure text. */
+export function parseTriageArgs(arg: string): TriageArgs {
+  const tokens = arg.split(/\s+/).filter(Boolean);
+  const out: TriageArgs = {};
+  const rest: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] === "--file" && i + 1 < tokens.length) out.file = tokens[++i];
+    else if (tokens[i] === "--scope" && i + 1 < tokens.length) out.scope = tokens[++i];
+    else rest.push(tokens[i]!);
+  }
+  if (rest.length) out.failure = rest.join(" ");
+  return out;
+}
+
+/**
+ * Read a workspace log file for triage input: in-workspace, non-sensitive, and
+ * bounded (80 KB / 2000 lines). A direct fs read — NOT the read_file tool — so
+ * it never touches readTracker (a log read must not satisfy read-before-write).
+ */
+export function readLogInput(
+  workspaceRoot: string,
+  relPath: string,
+): { text: string; truncated: boolean } | { error: string } {
+  if (isSensitivePath(relPath)) return { error: `Refusing to read ${relPath}: it may contain secrets.` };
+  let abs: string;
+  try {
+    abs = resolveInWorkspace(workspaceRoot, relPath);
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(abs, "utf8");
+  } catch (err) {
+    return { error: `Could not read ${relPath}: ${(err as Error).message}` };
+  }
+  let truncated = false;
+  if (raw.length > LOG_MAX_BYTES) {
+    raw = raw.slice(0, LOG_MAX_BYTES);
+    truncated = true;
+  }
+  const lines = raw.split("\n");
+  if (lines.length > LOG_MAX_LINES) {
+    raw = lines.slice(0, LOG_MAX_LINES).join("\n");
+    truncated = true;
+  }
+  return { text: raw, truncated };
+}
 
 /**
  * Shared driver for read-only subagent slash commands (/review, /research):

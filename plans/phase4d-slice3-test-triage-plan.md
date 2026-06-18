@@ -1,5 +1,12 @@
 # Deepcoder Phase 4D Slice 3 — Read-Only Test Triage Subagent
 
+> **Status: implemented.** `test_triage` profile + `/triage <failure>` (also
+> `--file <log>` bounded/non-secret, and `--scope`) shipped as a narrow copy of
+> the `/review`/`/research` path: read-only by construction + `readonly` mode,
+> output quarantined into `session.reviews`. Bounded log reader caps at 80 KB /
+> 2000 lines and never touches `readTracker`. Covered by
+> `test/adversarial/test-triage-subagent.test.ts`.
+
 ## Context
 
 Phase 4D now has two user-invoked, read-only subagents:

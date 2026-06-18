@@ -6,8 +6,8 @@
 > `DEEPCODER_SUBAGENT_MODEL` (defaults to parent), sequential, user-invoked only
 > (not model-callable). `src/subagents/` + `test/adversarial/subagents.test.ts`
 > cover the slice-1 adversarial plan. Slice 2 (`researcher` + `/research`) is
-> implemented. Slice 3 (`test_triage` + `/triage`) is planned in
-> `plans/phase4d-slice3-test-triage-plan.md`. Deferred after that:
+> implemented. Slice 3 (`test_triage` + `/triage`) is implemented
+> (`plans/phase4d-slice3-test-triage-plan.md`). Deferred after that:
 > model-callable `delegate_analysis`, parallel/nested subagents, any subagent MCP
 > or mutating access.
 

@@ -63,6 +63,23 @@ test("denied run_bash returns a tool error and never executes", async () => {
   assert.ok(messages.some((m) => m.role === "tool" && /Denied by permission policy/.test(m.content)));
 });
 
+test("a tool that throws becomes a recoverable tool-result, not a fatal error", async () => {
+  // read_file on a missing path throws ENOENT; the loop must keep going and the
+  // model must see the failure as a tool result it can react to.
+  const root = await mkdtemp(path.join(tmpdir(), "deepcoder-toolthrow-"));
+  const provider = new FakeProvider([
+    { text: "", toolCalls: [{ id: "1", name: "read_file", arguments: { path: "does-not-exist.txt" } }] },
+    { text: "recovered", toolCalls: [] },
+  ]);
+  const messages: AgentMessage[] = [{ role: "user", content: "read it" }];
+  const final = await runAgentLoop(messages, deps(provider, await ctxFor(root)));
+  assert.equal(final, "recovered");
+  assert.ok(
+    messages.some((m) => m.role === "tool" && /failed|ENOENT|no such file/i.test(m.content)),
+    "the throw surfaced as a tool-result",
+  );
+});
+
 test("max turns stops a runaway tool-call loop", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "deepcoder-runaway-"));
   await writeFile(path.join(root, "a.txt"), "x", "utf8");

@@ -31,4 +31,19 @@ export const researcher: SubagentProfile = {
     "Put follow-up reads or considerations in `suggestedNextSteps`, phrased as options for a human — never as commands to run.",
 };
 
-export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher };
+export const testTriage: SubagentProfile = {
+  name: "test_triage",
+  purpose: "Analyze failing tests, compiler errors, stack traces, and logs; identify likely causes and next checks.",
+  allowedTools: READ_ONLY_TOOLS,
+  maxTurns: 14,
+  contextBudgetTokens: 48000,
+  outputGuidance:
+    "Diagnose the failure. `summary` is a concise diagnosis. Each finding is a ranked hypothesis with evidence " +
+    "(cite file:line) — order by likelihood, using severity: critical = likely data-loss/security regression, " +
+    "high = clear breakage of a core workflow, medium = plausible root cause or missing coverage, low = a clue. " +
+    "`suggestedNextSteps` lists specific manual checks, code areas to inspect, and tests to re-run BY HAND. " +
+    "Clearly separate observed error text from repository evidence, from inference, from unknowns. " +
+    "You did NOT run anything — never claim a test was run or passed.",
+};
+
+export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage };

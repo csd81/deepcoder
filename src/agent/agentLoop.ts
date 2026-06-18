@@ -127,7 +127,14 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       }
 
       deps.onToolCall?.(call.name, invocation.describe());
-      const result = await invocation.execute(ctx);
+      // A tool that throws (e.g. read_file on a missing path) must not abort the
+      // whole run — turn it into a recoverable tool-result the model can react to.
+      let result: ToolResult;
+      try {
+        result = await invocation.execute(ctx);
+      } catch (err) {
+        result = { output: `Tool ${call.name} failed: ${(err as Error).message ?? String(err)}`, isError: true };
+      }
       deps.onToolResult?.(call.name, result);
       pushToolResult(messages, call.id, call.name, result.output);
       await deps.onPersist?.();
