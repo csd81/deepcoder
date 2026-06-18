@@ -20,12 +20,14 @@ npm run eval:local -- --fake-solve fixed     # applies fixed/ overlay → all so
 npm run eval:local -- --fake-solve noop       # makes no change → none solved (empty flagged)
 
 # live (needs `npm run build` + a provider key) — does the AGENT actually fix it?
-npm run eval:local -- --case wrong-operator
-npm run eval:local -- --cases off-by-one,wrong-operator
+npm run eval:local                            # all 40
+npm run eval:local -- --lang node             # the 20 Node cases
+npm run eval:local -- --lang python           # the 20 Python cases
+npm run eval:local -- --case node-18-public-check-trap
 npm run eval:local:report                     # re-print the newest run's summary
 ```
-Flags: `--case <id>` · `--cases a,b` · `--max-cases N` · `--keep-workdir` · `--no-report` ·
-`--selftest` · `--fake-solve <fixed|noop>`. Artifacts (redacted) per run land under
+Flags: `--lang node|python` · `--case <id>` · `--cases a,b` · `--max-cases N` · `--keep-workdir` ·
+`--no-report` · `--selftest` · `--fake-solve <fixed|noop>`. Artifacts (redacted) per run land under
 `runs/<ts>/<case>/`: `result.json`, `patch.diff`, `telemetry.jsonl`, `stdout.log` (gitignored).
 
 ## Case format — `cases/<id>/`
@@ -69,12 +71,20 @@ Default to Tier 0–1 for daily work; only escalate to SWE-bench (Tier 3+) after
 improves. Narrow a single test with `npm test -- test/solve.test.ts`, then the full
 `npm run test:phase` before committing.
 
-## Cases (10, increasing complexity)
-`wrong-operator`, `off-by-one`, `runtime-validation-dotted-name` (assert-vs-ValueError),
-`multi-file-helper` (fix the helper, not the caller), `exception-type` (specific exception),
-`state-mutation` (don't mutate the caller's input), `async-await` (missing `await`),
-`cli-exit-code` (non-zero exit on misuse), `public-check-trap` (a broad-`except` fix passes the
-test but is flagged → not solved), `merge-intervals` (sort + touching-interval merge).
+## Cases — 40 total, numbered by increasing difficulty
+`cases/node-01..20-*` and `cases/python-01..20-*` (filter with `--lang`). Each pair of suites
+ramps from one-liners to small algorithms:
+
+- **01–06** basics: wrong operator, off-by-one, boolean and/or, comparison boundary, empty-list
+  default, string normalize.
+- **07–10** correctness + quality gates: runtime validation (raise, don't `assert`), exception
+  type (specific exception), state mutation (don't mutate input), then a language-flavored trap
+  (Node `percentage-rounding`; Python `mutable-default-arg`).
+- **11–17** data handling: accumulator init, option-merge precedence, recursion base case,
+  numeric/key sort, order-preserving dedupe, multi-file-helper (fix the helper, not the caller),
+  clamp.
+- **18–20** harder: `public-check-trap` (a broad-`except`/`try-catch` fix passes the test but is
+  flagged → **not solved**), `merge-intervals` (sort + touching), `balanced-brackets` (stack).
 
 ## Later
 Wire the read-only `reviewer` subagent (`src/subagents/runner.ts`) as an LLM quality gate

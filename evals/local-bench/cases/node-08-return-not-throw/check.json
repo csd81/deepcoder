@@ -1,0 +1,13 @@
+{
+  "name": "unit",
+  "command": "node test.mjs",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "forbiddenPatterns": [],
+  "requiredPatterns": [
+    "throw"
+  ],
+  "allowedPaths": [
+    "solution.mjs"
+  ]
+}

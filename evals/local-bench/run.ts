@@ -35,6 +35,11 @@ const CASES_ROOT = path.join(HERE, "cases");
 const RUNS_ROOT = path.join(HERE, "runs");
 const CLI = path.join(REPO_ROOT, "dist", "cli", "main.js");
 
+// Never write .pyc: running a check on the buggy code then overlaying the fix
+// within the same second can otherwise serve stale (buggy) bytecode via Python's
+// mtime-based cache. Inherited by every spawned check + the solve subprocess.
+process.env.PYTHONDONTWRITEBYTECODE = "1";
+
 const argv = process.argv.slice(2);
 const has = (f: string) => argv.includes(f);
 const opt = (f: string) => {
@@ -235,8 +240,10 @@ async function main() {
   let ids = await listCases(CASES_ROOT);
   const only = opt("--case");
   const many = opt("--cases");
+  const lang = opt("--lang"); // "node" | "python" — case ids are prefixed by language
   if (only) ids = [only];
   else if (many) ids = many.split(",").map((s) => s.trim()).filter(Boolean);
+  else if (lang) ids = ids.filter((id) => id.startsWith(`${lang}-`));
   const maxc = opt("--max-cases");
   if (maxc) ids = ids.slice(0, parseInt(maxc, 10));
 

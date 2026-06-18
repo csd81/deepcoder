@@ -1,0 +1,11 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 120000,
+  "solveAttempts": 3,
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "helpers.py"
+  ]
+}

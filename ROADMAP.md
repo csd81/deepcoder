@@ -60,9 +60,10 @@ See `plans/phase5-verification-workflows-plan.md`.
   telemetry → `report.py`. 3-instance live smoke: check 3/3, resolved 0/3, 1 empty patch.
 - [x] **6B local bugfix benchmark** (`evals/local-bench/`, `plans/phase6b-local-bench-plan.md`):
   fast, no-Docker, Node/TS runner with a **real red→green oracle** + deterministic patch-quality
-  gate. **solved = tests_passed && quality_passed** (a green-but-bad patch is not solved). 10 cases
-  of increasing complexity; `--selftest` / `--fake-solve fixed|noop` give a full no-model acceptance
-  path. Documents a tiered iteration loop (Tier 0 unit → Tier 5 SWE smoke).
+  gate. **solved = tests_passed && quality_passed** (a green-but-bad patch is not solved). 40 cases
+  (20 Node + 20 Python, `--lang` filter) numbered by increasing difficulty; `--selftest` /
+  `--fake-solve fixed|noop` give a full no-model acceptance path. Documents a tiered iteration loop
+  (Tier 0 unit → Tier 5 SWE smoke).
 - [ ] follow-ups: wire the read-only `reviewer` subagent as an LLM quality gate; consider a
   non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding).
 
