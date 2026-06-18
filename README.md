@@ -60,7 +60,8 @@ npm run dev -- --resume <id>
 
 Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonly]`,
 `/todos`, `/instructions`, `/context`, `/compact`, `/plan <task>`, `/mcp [reload]`,
-`/checkpoint`, `/checkpoints`, `/rollback <id>`, `/save`, `/status`, `/diff`.
+`/review <scope>`, `/checkpoint`, `/checkpoints`, `/rollback <id>`, `/save`,
+`/status`, `/diff`.
 
 ## Providers
 
@@ -168,6 +169,24 @@ Discovered tools appear as `mcp__<server>__<tool>`; `/mcp` lists them and
   and truncated, and nothing a server returns can change the approval mode,
   system prompt, or permission policy — it's just a tool result like any other.
 
+## Subagents (read-only review)
+
+`/review <scope>` runs a **read-only** reviewer subagent over the given files or
+topic and reports findings (bugs, regressions, missing tests):
+
+```
+/review src/tools/grep.ts
+/review "the permission classifier"
+```
+
+It's safe by construction: the subagent runs through the same agent loop but with
+a registry restricted to read-only/context tools **and** in `readonly` mode, so it
+**cannot** edit files, run commands, change config, or touch checkpoints — any such
+attempt is denied. Its output is **advisory**: the parent only stores a compact
+summary and never acts on it automatically; you make any changes yourself. Set
+`DEEPCODER_SUBAGENT_MODEL` to use a cheaper model for reviews (defaults to the main
+model). It's user-invoked only — the model can't spawn subagents on its own.
+
 ## Checkpoints (local undo)
 
 Opt-in undo for a run of agent edits. **It does not use git** (no commits or
@@ -204,6 +223,7 @@ src/
   permissions/  command classifier, policy, approval prompt
   context/      project instructions, token budget, compaction, repo map
   mcp/          MCP client, schema adapter, tool registry (read-only)
+  subagents/    read-only review subagent (profiles, runner, result parsing)
   session/      session persistence + resume, checkpoints (local undo)
   workspace/    path confinement, git helpers, sensitive-path guard
   config/       env + .deepcoder/config.json loading

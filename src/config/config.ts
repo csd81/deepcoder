@@ -10,6 +10,8 @@ export interface Config {
   baseUrl: string;
   model: string;
   reasonerModel?: string;
+  /** Model used by read-only review subagents; defaults to `model` when unset. */
+  subagentModel?: string;
   maxTurns: number;
   approvalMode: ApprovalMode;
   /** Approximate token budget before history compaction kicks in. */
@@ -75,6 +77,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     baseUrl,
     model,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? alias(process.env.DEEPSEEK_REASONER_MODEL),
+    subagentModel: process.env.DEEPCODER_SUBAGENT_MODEL,
     maxTurns: Number(process.env.DEEPCODER_MAX_TURNS || 20),
     approvalMode: approval,
     contextBudgetTokens: Number(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS || 64000),

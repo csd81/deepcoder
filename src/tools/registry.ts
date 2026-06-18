@@ -46,23 +46,36 @@ export class ToolRegistry {
   }
 }
 
-/** The MVP tool set (build order steps 4–6). */
+/** All built-in native tools, keyed by name (excludes MCP tools by definition). */
+const NATIVE_TOOLS: Tool[] = [
+  readFileTool,
+  listDirTool,
+  grepTool,
+  globTool,
+  editFileTool,
+  writeFileTool,
+  runBashTool,
+  todoWriteTool,
+  repoMapTool,
+  findSymbolsTool,
+  listRecentContextTool,
+];
+
+/** The full native tool set. */
 export function defaultRegistry(): ToolRegistry {
   const r = new ToolRegistry();
-  for (const t of [
-    readFileTool,
-    listDirTool,
-    grepTool,
-    globTool,
-    editFileTool,
-    writeFileTool,
-    runBashTool,
-    todoWriteTool,
-    repoMapTool,
-    findSymbolsTool,
-    listRecentContextTool,
-  ]) {
-    r.register(t);
-  }
+  for (const t of NATIVE_TOOLS) r.register(t);
+  return r;
+}
+
+/**
+ * A registry containing only the named native tools. Used to give a subagent a
+ * minimal blast radius — MCP tools are never included, and unknown names are
+ * ignored. (Defence in depth: the subagent also runs in `readonly` mode.)
+ */
+export function restrictedRegistry(toolNames: string[]): ToolRegistry {
+  const allowed = new Set(toolNames);
+  const r = new ToolRegistry();
+  for (const t of NATIVE_TOOLS) if (allowed.has(t.name)) r.register(t);
   return r;
 }

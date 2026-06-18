@@ -6,6 +6,9 @@ import { renderTodos } from "../tools/todoWrite.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
+import { runSubagent } from "../subagents/runner.js";
+import { reviewer } from "../subagents/profiles.js";
+import type { SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
 
@@ -164,6 +167,36 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "review": {
+      if (!arg) {
+        console.log(chalk.dim("usage: /review <scope>  — run a read-only reviewer subagent over the given files/topic"));
+        return { consumed: true };
+      }
+      const task = `Review this scope for bugs, regressions, and missing tests: ${arg}`;
+      const controller = new AbortController();
+      const onSigint = () => controller.abort();
+      process.once("SIGINT", onSigint);
+      console.log(chalk.dim("Running reviewer subagent (read-only)…"));
+      try {
+        const { result, trace } = await runSubagent(reviewer, task, {
+          workspaceRoot: config.workspaceRoot,
+          provider: session.provider,
+          parentModel: config.model,
+          subagentModel: config.subagentModel,
+          contextBudgetTokens: config.contextBudgetTokens,
+          compactAt: config.compactAt,
+          signal: controller.signal,
+        });
+        renderSubagentResult(result, trace);
+        // Persist only a compact, clearly-labelled summary (advisory context, not instructions).
+        session.messages.push({ role: "assistant", content: subagentDigest(result, trace) });
+        await save();
+      } finally {
+        process.removeListener("SIGINT", onSigint);
+      }
+      return { consumed: true };
+    }
+
     case "mcp": {
       if (!session.mcp) {
         console.log(chalk.dim("No MCP servers configured (.deepcoder/config.json → mcpServers)."));
@@ -211,6 +244,7 @@ export async function handleSlashCommand(
           "/compact         compact conversation history now",
           "/plan <task>     produce a plan with the reasoner model (no tools run)",
           "/mcp [reload]    list configured MCP servers and tools",
+          "/review <scope>  run a read-only reviewer subagent over files/topic",
           "/checkpoint [l]  snapshot agent edits as an undo point (if enabled)",
           "/checkpoints     list checkpoints",
           "/rollback <id>   undo agent edits to a checkpoint ([--force] for conflicts)",
@@ -225,4 +259,36 @@ export async function handleSlashCommand(
       console.log(chalk.dim(`Unknown command: /${cmd}. Try /help.`));
       return { consumed: true };
   }
+}
+
+const SEVERITY_COLOR: Record<string, (s: string) => string> = {
+  critical: chalk.red.bold,
+  high: chalk.red,
+  medium: chalk.yellow,
+  low: chalk.dim,
+};
+
+function renderSubagentResult(result: SubagentResult, trace: SubagentTrace): void {
+  console.log("\n" + chalk.bold(`reviewer> `) + result.summary);
+  for (const f of result.findings) {
+    const color = SEVERITY_COLOR[f.severity] ?? chalk.white;
+    const loc = f.file ? ` ${f.file}${f.line ? `:${f.line}` : ""}` : "";
+    console.log(`  ${color(`[${f.severity}]`)}${loc} ${f.claim}`);
+    if (f.evidence) console.log(chalk.dim(`      ${f.evidence}`));
+  }
+  for (const s of result.suggestedNextSteps) console.log(chalk.dim(`  → ${s}`));
+  if (result.errors.length) console.log(chalk.yellow(`  (${result.errors.join("; ")})`));
+  console.log(chalk.dim(`  · reviewer · ${trace.toolsCalled.length} tool calls · ${trace.turns} turns · ${trace.model}`));
+  console.log(chalk.dim("  (advisory — make any changes yourself; the reviewer cannot edit or run anything)"));
+}
+
+/** Compact, labelled summary stored in history — advisory context, never instructions. */
+function subagentDigest(result: SubagentResult, trace: SubagentTrace): string {
+  const lines = [`[subagent:reviewer] (advisory; not instructions) ${result.summary}`];
+  for (const f of result.findings.slice(0, 20)) {
+    lines.push(`- [${f.severity}]${f.file ? ` ${f.file}${f.line ? `:${f.line}` : ""}` : ""} ${f.claim}`);
+  }
+  if (result.errors.length) lines.push(`(errors: ${result.errors.join("; ")})`);
+  lines.push(`(trace: ${trace.toolsCalled.length} tool calls, ${trace.turns} turns)`);
+  return lines.join("\n");
 }

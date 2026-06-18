@@ -47,6 +47,8 @@ Rollback (`/rollback <id> [--force]`): current==expectedSha → apply (`existed:
 **COMPLETE.** 138 tests (55 unit + 83 adversarial); typecheck clean. Live integration verified: agent created a file under `auto` checkpoints → manifest recorded `existed:false` + relative path → `rollback` deleted the agent-created file. Paused before 4D (design-only).
 
 ## Phase 4D — Subagents (design-only, NOT implemented)
+Dedicated design: `plans/phase4d-subagents-design.md`.
+
 Future constraints: restricted tools by default; no `run_bash`/mutating unless granted; subagent output is untrusted context; parent owns permission decisions; per-subagent max-turn + token budget. Required adversarial coverage before building: escalation attempt, injection output, max-turn loop, parent refusing unsafe recommendations.
 
 ## Notes
