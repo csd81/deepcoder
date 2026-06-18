@@ -50,6 +50,7 @@ function snapshot(session: Session): SessionSnapshot {
     todos: session.todos,
     readTracker: session.readTracker,
     writeTracker: session.writeTracker,
+    pendingCheckpoint: session.recorder?.serialize() ?? [],
   };
 }
 
@@ -64,6 +65,7 @@ async function runTask(session: Session): Promise<void> {
     readTracker: session.readTracker,
     writeTracker: session.writeTracker,
     capturePreImage: session.recorder ? (p) => session.recorder!.capture(p) : undefined,
+    recordPostWrite: session.recorder ? (p) => session.recorder!.recordPostWrite(p) : undefined,
     todos: session.todos,
     history: session.messages,
   };
@@ -105,16 +107,23 @@ async function runTask(session: Session): Promise<void> {
     onNotice: (m) => stdout.write(chalk.yellow(`\n${m}\n`)),
   };
 
+  let completed = false;
   try {
     await runAgentLoop(session.messages, deps);
     if (streaming) stdout.write("\n");
-    // auto mode: finalize a checkpoint at the task boundary if the agent edited anything.
-    if (session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {
-      const id = await session.recorder.finalize("auto");
-      if (id) stdout.write(chalk.dim(`Checkpoint ${id} saved (auto). /rollback ${id} to undo.\n`));
-    }
+    completed = true;
   } finally {
     process.removeListener("SIGINT", onSigint);
+    // auto mode: finalize a checkpoint even if the run errored or was aborted,
+    // so files the agent already wrote always have a rollback point.
+    if (session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {
+      try {
+        const id = await session.recorder.finalize(completed ? "auto" : "auto:interrupted");
+        if (id) stdout.write(chalk.dim(`Checkpoint ${id} saved (${completed ? "auto" : "auto:interrupted"}). /rollback ${id} to undo.\n`));
+      } catch {
+        /* never mask the original error with a checkpoint failure */
+      }
+    }
   }
 }
 

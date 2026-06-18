@@ -83,6 +83,7 @@ export const editFileTool: Tool = {
           const { updated, count, real } = await apply(ctx);
           await ctx.capturePreImage?.(real); // checkpoint pre-image (no-op if disabled)
           await fs.writeFile(real, updated, "utf8");
+          await ctx.recordPostWrite?.(real); // record post-write sha for conflict detection
           ctx.writeTracker?.add(real);
           return { output: `Edited ${args.path} (${count} replacement${count === 1 ? "" : "s"}).` };
         } catch (err) {

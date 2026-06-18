@@ -62,38 +62,56 @@ function newCheckpointId(): string {
  * writes a checkpoint and resets the window.
  */
 export class CheckpointRecorder {
-  private pending = new Map<string, { existed: boolean; restoreSha?: string }>();
+  // Keyed by workspace-relative path. `expectedSha` is filled in immediately
+  // after the agent's write (recordPostWrite) — NOT at finalize — so a later
+  // user edit can't masquerade as the agent's post-write state.
+  private pending = new Map<string, CheckpointFile>();
 
   constructor(private root: string) {}
 
+  /** Number of finalizable entries (those the agent actually wrote). */
   get size(): number {
-    return this.pending.size;
+    let n = 0;
+    for (const e of this.pending.values()) if (e.expectedSha !== undefined) n++;
+    return n;
   }
 
-  /** Capture the pre-image of `realAbs` (once). Skips sensitive paths. */
+  /** Capture the pre-image of `realAbs` (once), before the agent writes it. */
   async capture(realAbs: string): Promise<void> {
     const rel = displayPath(this.root, realAbs);
     if (this.pending.has(rel) || isSensitivePath(rel)) return;
     const content = await readFileOrNull(realAbs);
     if (content === null) {
-      this.pending.set(rel, { existed: false });
+      this.pending.set(rel, { path: rel, existed: false });
       return;
     }
     const sha = sha256(content);
     await this.writeBlob(sha, content);
-    this.pending.set(rel, { existed: true, restoreSha: sha });
+    this.pending.set(rel, { path: rel, existed: true, restoreSha: sha });
+  }
+
+  /** Record the agent's post-write content sha, immediately after a successful write. */
+  async recordPostWrite(realAbs: string): Promise<void> {
+    const rel = displayPath(this.root, realAbs);
+    const entry = this.pending.get(rel);
+    if (!entry || isSensitivePath(rel)) return;
+    entry.expectedSha = (await shaOfFile(realAbs)) ?? undefined;
+  }
+
+  /** Persist/restore the pending window across process restarts (manual mode). */
+  serialize(): CheckpointFile[] {
+    return [...this.pending.values()];
+  }
+  load(entries: CheckpointFile[]): void {
+    this.pending = new Map(entries.map((e) => [e.path, { ...e }]));
   }
 
   /** Write the captured window as a checkpoint; returns its id, or null if empty. */
   async finalize(label?: string): Promise<string | null> {
-    if (this.pending.size === 0) return null;
+    // Only entries that were actually written (have expectedSha) are undoable.
+    const files = [...this.pending.values()].filter((e) => e.expectedSha !== undefined);
+    if (files.length === 0) return null;
     const id = newCheckpointId();
-    const files: CheckpointFile[] = [];
-    for (const [rel, pre] of this.pending) {
-      const abs = path.join(this.root, rel);
-      const expectedSha = (await shaOfFile(abs)) ?? undefined;
-      files.push({ path: rel, existed: pre.existed, restoreSha: pre.restoreSha, expectedSha });
-    }
     const manifest: CheckpointManifest = { id, label, createdAt: new Date().toISOString(), files };
     const dir = path.join(checkpointsDir(this.root), id);
     await fs.mkdir(dir, { recursive: true });

@@ -65,6 +65,8 @@ async function buildSession(
       typeof resume === "string" ? resume : await latestSessionId(config.workspaceRoot);
     if (!id) throw new Error("No saved session to resume.");
     const saved = await loadSession(config.workspaceRoot, id);
+    // Recover any not-yet-finalized checkpoint window (manual mode / interrupted run).
+    if (recorder && saved.pendingCheckpoint?.length) recorder.load(saved.pendingCheckpoint);
     // Only restore the saved model if it belongs to the SAME provider — otherwise
     // we'd send e.g. an Ollama model name to DeepSeek. On a provider change, keep
     // the current provider's model and warn.

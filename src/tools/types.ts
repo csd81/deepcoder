@@ -43,6 +43,12 @@ export interface ToolContext {
    */
   capturePreImage?(realAbsPath: string): Promise<void>;
   /**
+   * Called by mutating tools immediately AFTER a successful write, when
+   * checkpointing is enabled. Records the agent's post-write content sha so the
+   * checkpoint can later detect (and refuse to clobber) a subsequent user edit.
+   */
+  recordPostWrite?(realAbsPath: string): Promise<void>;
+  /**
    * Live todo list for the session. `session`-kind tools mutate this array in
    * place; the agent loop reads it to inject context and the session store
    * persists it.

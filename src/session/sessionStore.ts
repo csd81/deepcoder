@@ -3,6 +3,7 @@ import path from "node:path";
 import type { AgentMessage } from "../providers/types.js";
 import type { Todo } from "../tools/types.js";
 import type { ApprovalMode } from "../config/config.js";
+import type { CheckpointFile } from "./checkpoints.js";
 
 export interface PersistedSession {
   id: string;
@@ -16,6 +17,8 @@ export interface PersistedSession {
   readTracker: string[];
   /** Absolute real paths the agent has mutated (for checkpoint scoping). */
   writeTracker?: string[];
+  /** Not-yet-finalized checkpoint pre-images (manual mode survives a restart). */
+  pendingCheckpoint?: CheckpointFile[];
   createdAt: string;
   updatedAt: string;
 }
@@ -30,6 +33,7 @@ export interface SessionSnapshot {
   todos: Todo[];
   readTracker: Set<string>;
   writeTracker: Set<string>;
+  pendingCheckpoint: CheckpointFile[];
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -67,6 +71,7 @@ export class SessionStore {
       todos: snapshot.todos,
       readTracker: [...snapshot.readTracker],
       writeTracker: [...(snapshot.writeTracker ?? [])],
+      pendingCheckpoint: snapshot.pendingCheckpoint ?? [],
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };
