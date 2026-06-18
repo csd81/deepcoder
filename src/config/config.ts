@@ -16,6 +16,12 @@ export interface Config {
    * Lets a stronger reasoning model guide a cheaper editing model.
    */
   planFirst?: boolean;
+  /** Closed-loop solve mode: edit → run `solveCheck` → retry on failure. */
+  solve?: boolean;
+  /** Name of the configured check to verify with in solve mode. */
+  solveCheck?: string;
+  /** Maximum edit→verify attempts in solve mode. */
+  solveMaxAttempts: number;
   /** Model used by read-only review subagents; defaults to `model` when unset. */
   subagentModel?: string;
   maxTurns: number;
@@ -94,7 +100,11 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     baseUrl,
     model,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? alias(process.env.DEEPSEEK_REASONER_MODEL),
-    planFirst: ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()),
+    planFirst:
+      ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||
+      ["1", "true", "yes"].includes((process.env.DEEPCODER_SOLVE_PLAN_FIRST ?? "").toLowerCase()),
+    solveCheck: process.env.DEEPCODER_SOLVE_CHECK || undefined,
+    solveMaxAttempts: Math.max(1, Math.trunc(numEnv(process.env.DEEPCODER_SOLVE_MAX_ATTEMPTS, 3))),
     subagentModel: process.env.DEEPCODER_SUBAGENT_MODEL,
     maxTurns: numEnv(process.env.DEEPCODER_MAX_TURNS, 20),
     approvalMode: approval,

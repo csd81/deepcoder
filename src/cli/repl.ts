@@ -10,6 +10,7 @@ import { buildSystemPrompt } from "../agent/systemPrompt.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { promptForApproval } from "../permissions/prompt.js";
 import { handleSlashCommand } from "./slashCommands.js";
+import { runSolveCommand } from "./solveRunner.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
@@ -133,10 +134,24 @@ async function runTask(session: Session): Promise<void> {
 
 /** Non-interactive: run a single task and exit. */
 export async function runOneShot(session: Session, prompt: string): Promise<void> {
-  if (session.config.planFirst) await planFirstPass(session, prompt);
-  session.messages.push({ role: "user", content: prompt });
-  await session.store.save(snapshot(session));
   try {
+    if (session.config.solve) {
+      const checkName = session.config.solveCheck;
+      if (!checkName) {
+        stdout.write(chalk.red("--solve requires --check <name> (or DEEPCODER_SOLVE_CHECK).\n"));
+        return;
+      }
+      if (session.config.planFirst) await planFirstPass(session, prompt);
+      await runSolveCommand(
+        session,
+        { task: prompt, checkName, maxAttempts: session.config.solveMaxAttempts },
+        () => runTask(session),
+      );
+      return;
+    }
+    if (session.config.planFirst) await planFirstPass(session, prompt);
+    session.messages.push({ role: "user", content: prompt });
+    await session.store.save(snapshot(session));
     await runTask(session);
   } finally {
     await session.mcp?.closeAll();
@@ -193,7 +208,9 @@ export async function runRepl(session: Session): Promise<void> {
       const input = (await rl.question(chalk.cyan("\ndeepcoder> "))).trim();
       if (!input) continue;
 
-      const slash = await handleSlashCommand(input, session, () => session.store.save(snapshot(session)));
+      const slash = await handleSlashCommand(input, session, () => session.store.save(snapshot(session)), () =>
+        runTask(session),
+      );
       if (slash.exit) break;
       if (slash.consumed) {
         // Keep the system prompt in sync if the mode changed.

@@ -44,6 +44,17 @@ DEEPCODER_EVAL_NAME=deepcoder-reasoner-plan+chat \
 `DEEPCODER_PLAN_FIRST=1` adds a reasoner planning pass before the agent edits
 (also available interactively / one-shot as `deepcoder --plan-first <task>`).
 
+```bash
+# closed-loop solve: edit → run a verification command → retry on failure
+python3 evals/swebench/gen_predictions.py --instances <ids> --out preds.jsonl \
+  --solve-cmd "python -m pytest -q tests" --solve-attempts 3
+```
+
+`--solve-cmd` (or `DEEPCODER_SOLVE_CMD`) writes a per-clone `.deepcoder/config.json`
+check and runs `--solve`. **You** pick a safe project test command — the harness
+never auto-derives it from the instance, so the score is never coupled to the
+hidden grading tests. Without `--solve-cmd` the generator stays one-shot.
+
 ## Honest result so far
 
 A **3-instance smoke** (`pallets/flask`) with deepcoder + `deepseek-chat`,

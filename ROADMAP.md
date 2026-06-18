@@ -49,7 +49,8 @@ See `plans/phase4-plan.md`.
 See `plans/phase5-verification-workflows-plan.md`.
 
 - [x] **5A** — user-invoked named checks (`/checks`, `/check <name>`); classifier-gated, streamed live but bounded/redacted/quarantined under `.deepcoder/runs/`; not model-callable
-- [ ] **5B** — explicit `/triage --run <id>` integration for stored check output
+- [x] **5B** — closed-loop solver (`/solve <check> <task>`, `--solve --check`): edit → run the named check → feed a deterministic, bounded, redacted, untrusted-framed failure summary back → retry to budget. No auto-rollback; check stays user-configured/classifier-gated; SWE-bench thin `--solve-cmd` hook
+- [ ] explicit `/triage --run <id>` integration for stored check output (follow-up); LLM/triage-subagent failure summarizer (5B uses a deterministic one)
 
 ## Non-goals (for now)
 

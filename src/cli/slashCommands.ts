@@ -14,6 +14,7 @@ import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
+import { runSolveCommand } from "./solveRunner.js";
 import { stdout } from "node:process";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
@@ -34,6 +35,7 @@ export async function handleSlashCommand(
   input: string,
   session: Session,
   save: () => Promise<void>,
+  runAgent?: () => Promise<void>,
 ): Promise<SlashOutcome> {
   if (!input.startsWith("/")) return { consumed: false };
 
@@ -297,6 +299,26 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "solve": {
+      const [checkName, ...taskParts] = arg.split(/\s+/);
+      const task = taskParts.join(" ").trim();
+      if (!checkName || !task) {
+        console.log(chalk.dim("usage: /solve <check-name> <task>   (edits, runs the check, retries on failure)"));
+        return { consumed: true };
+      }
+      if (!runAgent) {
+        console.log(chalk.red("Solve mode is unavailable in this context."));
+        return { consumed: true };
+      }
+      await runSolveCommand(
+        session,
+        { task, checkName, maxAttempts: config.solveMaxAttempts },
+        runAgent,
+      );
+      await save();
+      return { consumed: true };
+    }
+
     case "mcp": {
       if (!session.mcp) {
         console.log(chalk.dim("No MCP servers configured (.deepcoder/config.json → mcpServers)."));
@@ -349,6 +371,7 @@ export async function handleSlashCommand(
           "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",
+          "/solve <chk> <t> edit→run check→retry until it passes or budget runs out",
           "/checkpoint [l]  snapshot agent edits as an undo point (if enabled)",
           "/checkpoints     list checkpoints",
           "/rollback <id>   undo agent edits to a checkpoint ([--force] for conflicts)",

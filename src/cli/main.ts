@@ -28,6 +28,9 @@ program
   .option("--list-sessions", "list saved sessions and exit")
   .option("--planning-model <model>", "model used by /plan (default: deepseek-reasoner)")
   .option("--plan-first", "for a one-shot run: plan with the reasoner model first, then edit")
+  .option("--solve", "closed-loop solve: edit, run --check, retry on failure (needs --check)")
+  .option("--check <name>", "configured check to verify with in --solve mode")
+  .option("--solve-attempts <n>", "max attempts in --solve mode (default 3)")
   .action(
     async (
       promptParts: string[],
@@ -37,12 +40,20 @@ program
         listSessions?: boolean;
         planningModel?: string;
         planFirst?: boolean;
+        solve?: boolean;
+        check?: string;
+        solveAttempts?: string;
       },
     ) => {
     const baseConfig = loadConfig({
       ...(opts.mode ? { approvalMode: opts.mode as ApprovalMode } : {}),
       ...(opts.planningModel ? { reasonerModel: opts.planningModel } : {}),
       ...(opts.planFirst ? { planFirst: true } : {}),
+      ...(opts.solve ? { solve: true } : {}),
+      ...(opts.check ? { solveCheck: opts.check } : {}),
+      ...(opts.solveAttempts && Number.isFinite(Number(opts.solveAttempts))
+        ? { solveMaxAttempts: Math.max(1, Math.trunc(Number(opts.solveAttempts))) }
+        : {}),
     });
 
     if (opts.listSessions) {

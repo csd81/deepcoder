@@ -31,7 +31,7 @@ def run(cmd, cwd=None, timeout=None, check=True):
     return r
 
 
-def generate(instance, workdir):
+def generate(instance, workdir, solve_cmd=None, solve_attempts=3):
     repo = instance["repo"]
     url = f"https://github.com/{repo}.git"
     clone = os.path.join(workdir, repo.replace("/", "__"))
@@ -50,6 +50,15 @@ def generate(instance, workdir):
     # and DEEPCODER_REASONER_MODEL=deepseek-reasoner in the environment).
     if os.environ.get("DEEPCODER_PLAN_FIRST", "").lower() in ("1", "true", "yes"):
         cmd.append("--plan-first")
+    # Thin solve-loop hook: when a verification command is supplied, configure it
+    # as a named check and run closed-loop (edit→check→retry). Otherwise one-shot.
+    # NOTE: this is intentionally NOT auto-derived from the instance — you choose a
+    # safe project test command, so we never couple the score to hidden tests.
+    if solve_cmd:
+        os.makedirs(os.path.join(clone, ".deepcoder"), exist_ok=True)
+        with open(os.path.join(clone, ".deepcoder", "config.json"), "w") as cf:
+            json.dump({"checks": {"verify": {"command": solve_cmd}}}, cf)
+        cmd += ["--solve", "--check", "verify", "--solve-attempts", str(solve_attempts)]
     cmd.append(prompt)
     subprocess.run(
         cmd,
@@ -69,6 +78,10 @@ def main():
     ap.add_argument("--instances", required=True, help="comma-separated instance_ids")
     ap.add_argument("--dataset", default="SWE-bench/SWE-bench_Lite")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--solve-cmd", default=os.environ.get("DEEPCODER_SOLVE_CMD"),
+                    help="verification command for closed-loop solve mode (else one-shot)")
+    ap.add_argument("--solve-attempts", type=int,
+                    default=int(os.environ.get("DEEPCODER_SOLVE_MAX_ATTEMPTS", "3")))
     args = ap.parse_args()
 
     from swebench.harness.utils import load_swebench_dataset
@@ -82,7 +95,7 @@ def main():
             print(f"[gen] {iid} …", flush=True)
             wd = tempfile.mkdtemp(prefix="swe-gen-")
             try:
-                patch = generate(inst, wd)
+                patch = generate(inst, wd, solve_cmd=args.solve_cmd, solve_attempts=args.solve_attempts)
             finally:
                 shutil.rmtree(wd, ignore_errors=True)
             print(f"      patch: {len(patch)} chars, {patch.count(chr(10))} lines")

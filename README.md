@@ -240,6 +240,29 @@ Run **named, pre-configured** project checks from the CLI. Configure them in
 
 (Feeding a stored run straight into `/triage` is planned as a follow-up.)
 
+## Solve loop (closed-loop verification)
+
+Instead of editing once and hoping, deepcoder can **iterate against a check**:
+edit → run the named check → on failure feed a bounded, redacted summary back →
+retry, until it passes or the attempt budget runs out.
+
+```bash
+# one-shot, headless
+deepcoder --solve --check unit "fix the failing parser test"
+# interactive
+/solve unit fix the failing parser test
+```
+
+- The check is **user-configured and chosen by name** — never picked by the
+  model — and is still classifier-gated at run time.
+- Only a **deterministic, ≤6 KB, redacted** failure summary re-enters the
+  conversation, wrapped as explicitly **untrusted** evidence (test output can't
+  smuggle instructions). Raw logs stay quarantined in `.deepcoder/runs/`.
+- No automatic rollback; a per-attempt checkpoint is taken only if checkpoints
+  are enabled, and a checkpoint failure never aborts the solve.
+- Budget: `--solve-attempts <n>` / `DEEPCODER_SOLVE_MAX_ATTEMPTS` (default 3).
+  Ctrl-C stops the whole loop.
+
 ## Checkpoints (local undo)
 
 Opt-in undo for a run of agent edits. **It does not use git** (no commits or
