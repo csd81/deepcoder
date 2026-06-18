@@ -82,8 +82,46 @@ you provide a working env. Pinned-dependency drift bites here: e.g. flask 2.0 at
 base commit pulls werkzeug 3.x and dies with `ImportError: url_quote`. The robust
 place for a verify loop is **inside the per-instance SWE-bench container** (pinned env
 + public suite already present); a host-side loop is only meaningful where the
-instance's deps happen to resolve on your interpreter. Until an in-container solve
-mode exists, prefer the toy-repo demo below for an honest end-to-end of the loop.
+instance's deps happen to resolve on your interpreter. That in-container mode now
+exists — see below.
+
+## In-container solve loop (Phase 6)
+
+Runs the `--solve` loop **inside** the official SWE-bench instance container, where
+`/testbed` + the pinned conda env make the public suite runnable (the host clone
+can't). Reuses swebench's own image build, so the solve env == the scoring env.
+
+```bash
+# 1. build the injectable deepcoder bundle once (pinned, checksum-verified Node + dist + prod deps)
+bash evals/swebench/build-bundle.sh
+# 2. (no-API) prove the wiring on an instance: build -> inject -> check config -> node --help -> public check
+python3 evals/swebench/gen_predictions_incontainer.py \
+  --instances pallets__flask-4045 --solve-tests evals/swebench/solve-tests.flask.json --setup-only
+# 3. (live) solve one instance -> predictions + telemetry sidecar
+python3 evals/swebench/gen_predictions_incontainer.py \
+  --instances pallets__flask-4045 --solve-tests evals/swebench/solve-tests.flask.json \
+  --out preds.jsonl --solve-attempts 3
+```
+
+The check is a **baseline-diff regression guard** (`incontainer_verify.py`): it records
+the failing/erroring node-id set *before* the agent edits, then each attempt passes iff
+no **new** failures appear. The public test target per instance comes from an authored
+map (`solve-tests.flask.json`), never the hidden `FAIL_TO_PASS`. The provider key is
+passed only as a docker-exec env var, never into a command string, config, image, or log.
+
+### Honest result — 1 instance, in-container, live (`deepseek-chat`)
+
+| Instance | check_solved | hidden resolved | attempts |
+|---|---|---|---|
+| `pallets__flask-4045` | **yes** | **no** | 1 |
+
+This **validates the infrastructure** end-to-end (live API in-container → telemetry →
+patch extraction → official scoring) **and documents the oracle limitation**: the public
+baseline-diff check only guards against regressions, it is not a fix oracle. Here the model
+wrote `assert "." not in name` instead of `raise ValueError`, which introduces no public-suite
+regression (check passes in 1 attempt) but does not satisfy the hidden test (it expects a
+raised error, and `assert` is stripped under `python -O`). The `check_solved` vs `resolved`
+gap is the intended, honest signal — not a pipeline failure.
 
 ## Honest result so far
 
