@@ -17,6 +17,12 @@ export interface SolveDeps {
   onProgress?: (e: SolveProgress) => void;
   /** Live (already-redacted) check output sink. */
   onCheckData?: (chunk: string) => void;
+  /**
+   * Optional, git-agnostic snapshot of the patch the agent just produced, used
+   * only for telemetry (detecting repeated/empty edits). Injected by the caller
+   * so the solver core stays free of git/SWE logic. Failures are swallowed.
+   */
+  snapshotPatch?: () => Promise<{ hash: string; bytes: number } | null>;
 }
 
 /**
@@ -82,6 +88,16 @@ export async function runSolveLoop(
     }
     lastRunId = run.id;
 
+    // Best-effort telemetry snapshot of the patch that was just verified.
+    let patch: { hash: string; bytes: number } | null = null;
+    if (deps.snapshotPatch) {
+      try {
+        patch = await deps.snapshotPatch();
+      } catch {
+        /* telemetry must never break the solve */
+      }
+    }
+
     const passed = !run.timedOut && run.exitCode === 0;
     deps.onProgress?.({
       type: "check-result",
@@ -93,7 +109,14 @@ export async function runSolveLoop(
     });
 
     if (passed) {
-      attempts.push({ index: i, checkRunId: run.id, checkPassed: true, checkTimedOut: false });
+      attempts.push({
+        index: i,
+        checkRunId: run.id,
+        checkPassed: true,
+        checkTimedOut: false,
+        patchHash: patch?.hash,
+        patchBytes: patch?.bytes,
+      });
       return { solved: true, attempts, lastRunId };
     }
 
@@ -106,6 +129,8 @@ export async function runSolveLoop(
       checkPassed: false,
       checkTimedOut: run.timedOut,
       failureSummary,
+      patchHash: patch?.hash,
+      patchBytes: patch?.bytes,
     });
 
     if (i < opts.maxAttempts) {

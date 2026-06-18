@@ -51,6 +51,7 @@ See `plans/phase5-verification-workflows-plan.md`.
 - [x] **5A** — user-invoked named checks (`/checks`, `/check <name>`); classifier-gated, streamed live but bounded/redacted/quarantined under `.deepcoder/runs/`; not model-callable
 - [x] **5B** — closed-loop solver (`/solve <check> <task>`, `--solve --check`): edit → run the named check → feed a deterministic, bounded, redacted, untrusted-framed failure summary back → retry to budget. No auto-rollback; check stays user-configured/classifier-gated; SWE-bench thin `--solve-cmd` hook
 - [ ] explicit `/triage --run <id>` integration for stored check output (follow-up); LLM/triage-subagent failure summarizer (5B uses a deterministic one)
+- [ ] **solve telemetry shipped** (`--telemetry` JSON sink + `evals/swebench/report.py`: per-attempt patch hash, repeated/empty-patch, failure-signature change, check-vs-hidden-resolved). Open follow-ups: per-instance API/token cost (needs a `usage` field on `ChatResponse` through every provider adapter); an **in-container** SWE solve loop (host verify env can't pin per-instance deps/Python — old flask fails to import on a modern interpreter)
 
 ## Non-goals (for now)
 

@@ -31,6 +31,7 @@ program
   .option("--solve", "closed-loop solve: edit, run --check, retry on failure (needs --check)")
   .option("--check <name>", "configured check to verify with in --solve mode")
   .option("--solve-attempts <n>", "max attempts in --solve mode (default 3)")
+  .option("--telemetry <path>", "write a solve telemetry JSON to this path (headless eval)")
   .action(
     async (
       promptParts: string[],
@@ -43,6 +44,7 @@ program
         solve?: boolean;
         check?: string;
         solveAttempts?: string;
+        telemetry?: string;
       },
     ) => {
     const baseConfig = loadConfig({
@@ -54,6 +56,7 @@ program
       ...(opts.solveAttempts && Number.isFinite(Number(opts.solveAttempts))
         ? { solveMaxAttempts: Math.max(1, Math.trunc(Number(opts.solveAttempts))) }
         : {}),
+      ...(opts.telemetry ? { solveTelemetry: opts.telemetry } : {}),
     });
 
     if (opts.listSessions) {

@@ -10,6 +10,10 @@ export interface SolveAttempt {
   checkTimedOut: boolean;
   /** Bounded, redacted failure summary fed back on failure (absent on pass). */
   failureSummary?: string;
+  /** Hash of the working-tree patch verified this attempt (detects repeats). */
+  patchHash?: string;
+  /** Size of that patch in bytes (0 == empty/no edit this attempt). */
+  patchBytes?: number;
 }
 
 export interface SolveOptions {

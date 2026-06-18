@@ -55,6 +55,36 @@ check and runs `--solve`. **You** pick a safe project test command — the harne
 never auto-derives it from the instance, so the score is never coupled to the
 hidden grading tests. Without `--solve-cmd` the generator stays one-shot.
 
+### Solve telemetry + diagnostics report
+
+When `--solve-cmd` is set, the generator also writes a telemetry sidecar
+`<out>.telemetry.jsonl` (predictions.jsonl stays canonical for the harness). It
+records, per instance, each attempt's check exit/timeout, a **patch hash + byte
+count** (never the raw patch), and the bounded failure summary. `report.py` rolls
+these up into the diagnostics that matter for a verify loop — not just solved-count:
+
+```bash
+python3 evals/swebench/report.py --telemetry preds.jsonl.telemetry.jsonl \
+  [--eval-report logs/run_evaluation/<run_id>/<model>/results.json]
+```
+
+It prints empty-patch / timeout / **repeated-identical-patch** / failure-signature-change
+/ attempts-to-solve counters, and — given the official eval report — `check_solved`
+(our loop's own oracle) **vs** `resolved` (the hidden grading tests) side by side.
+A gap between those two is itself a finding: a check that passes without resolving
+the issue is a weak/uncoupled oracle.
+
+### Caveat: the verify env
+
+The solve loop runs during **generation**, on the host, where a fresh `git clone`
+at `base_commit` is **not installed** — so `pytest` can't import the project unless
+you provide a working env. Pinned-dependency drift bites here: e.g. flask 2.0 at its
+base commit pulls werkzeug 3.x and dies with `ImportError: url_quote`. The robust
+place for a verify loop is **inside the per-instance SWE-bench container** (pinned env
++ public suite already present); a host-side loop is only meaningful where the
+instance's deps happen to resolve on your interpreter. Until an in-container solve
+mode exists, prefer the toy-repo demo below for an honest end-to-end of the loop.
+
 ## Honest result so far
 
 A **3-instance smoke** (`pallets/flask`) with deepcoder + `deepseek-chat`,
