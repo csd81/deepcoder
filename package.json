@@ -17,7 +17,10 @@
     "test:phase": "npm run typecheck && npm run test:unit && npm run test:adversarial",
     "test:live": "node --import tsx src/cli/main.ts --mode readonly \"list the files in src and summarize the project\"",
     "eval": "node evals/run.mjs",
-    "eval:selftest": "node evals/run.mjs --selftest"
+    "eval:selftest": "node evals/run.mjs --selftest",
+    "eval:local": "node --import tsx evals/local-bench/run.ts",
+    "eval:local:selftest": "node --import tsx evals/local-bench/run.ts --selftest",
+    "eval:local:report": "node --import tsx evals/local-bench/report.ts"
   },
   "engines": {
     "node": ">=20"

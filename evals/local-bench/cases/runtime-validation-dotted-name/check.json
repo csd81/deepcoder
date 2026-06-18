@@ -1,0 +1,9 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 120000,
+  "solveAttempts": 3,
+  "forbiddenPatterns": ["\\bassert\\b"],
+  "requiredPatterns": ["raise ValueError"],
+  "allowedPaths": ["mini_flask/blueprints.py"]
+}
