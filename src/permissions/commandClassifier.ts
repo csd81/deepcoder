@@ -12,11 +12,18 @@ import { isSensitivePath } from "../workspace/sensitive.js";
  * redirects, substitutions, or backgrounding.
  */
 
-// Leading commands that only read state.
-const READ_ONLY_CMDS = new Set(["pwd", "ls", "cat", "head", "tail", "echo", "which", "rg", "grep", "find", "wc"]);
+// Leading commands that only read state. NOTE: `find` is deliberately excluded —
+// it has -delete / -exec / -execdir / -ok primaries that mutate or run commands,
+// which the shallow operand check can't safely vet. `find …` therefore falls
+// through to `ask`.
+const READ_ONLY_CMDS = new Set(["pwd", "ls", "cat", "head", "tail", "echo", "which", "rg", "grep", "wc"]);
 
-// `git` subcommands that don't mutate the repo.
-const READ_ONLY_GIT = new Set(["status", "diff", "log", "show", "branch", "remote"]);
+// `git` subcommands that don't mutate the repo. Excludes `branch`/`remote`
+// (which have mutating forms like `branch -D`, `remote add`).
+const READ_ONLY_GIT = new Set(["status", "diff", "log", "show"]);
+
+// git flags that make a read-only subcommand write a file.
+const GIT_WRITE_FLAGS = [/^--output(=|$)/, /^-o$/];
 
 // Tokens that are never auto-runnable, anywhere in the command.
 const DANGEROUS_TOKENS = [
@@ -73,10 +80,14 @@ function isReadOnlySegment(segment: string): boolean {
   }
   if (!safeCmd) return false;
 
+  // A git read-only subcommand with a write flag (e.g. `git diff --output=x`)
+  // actually writes a file — not read-only.
+  if (head === "git" && operands.some((a) => GIT_WRITE_FLAGS.some((re) => re.test(a)))) return false;
+
   // Operands must not reach outside the workspace or touch secret files.
   const args = head === "git" ? operands.slice(1) : operands;
   for (const a of args) {
-    if (a.startsWith("-")) continue; // flags are fine
+    if (a.startsWith("-")) continue; // remaining flags are fine
     if (a === "/dev/null") continue;
     if (a.startsWith("/")) return false; // absolute path
     if (a.split("/").includes("..")) return false; // parent escape

@@ -49,7 +49,9 @@ export const readFileTool: Tool = {
         // edit_file/write_file look up read-before-write.
         ctx.readTracker.add(resolveInWorkspace(ctx.workspaceRoot, args.path));
         const lines = content.split("\n");
-        const start = (args.offset ?? 1) - 1;
+        // offset is 1-indexed; clamp so offset 0 or 1 both start at the first line
+        // (a negative start would otherwise slice from the end).
+        const start = Math.max(0, (args.offset ?? 1) - 1);
         const end = start + (args.limit ?? DEFAULT_LIMIT);
         const slice = lines.slice(start, end);
         const numbered = slice

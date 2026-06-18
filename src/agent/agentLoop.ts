@@ -123,7 +123,12 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       }
 
       if (decision === "ask") {
-        const preview = invocation.preview ? await invocation.preview(ctx) : undefined;
+        let preview: ToolPreview | undefined;
+        try {
+          preview = invocation.preview ? await invocation.preview(ctx) : undefined;
+        } catch {
+          preview = undefined; // a preview failure must not abort the run
+        }
         const approved = await deps.approve(invocation, preview);
         if (!approved) {
           pushToolResult(messages, call.id, call.name, "User rejected this action. It was not run.");

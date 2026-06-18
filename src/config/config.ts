@@ -93,7 +93,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     approvalMode: approval,
     contextBudgetTokens: numEnv(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS, 64000),
     compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, 0.8),
-    checkpoints: ((process.env.DEEPCODER_CHECKPOINTS as CheckpointMode) || "off"),
+    checkpoints: (["off", "manual", "auto"].includes(process.env.DEEPCODER_CHECKPOINTS ?? "")
+      ? (process.env.DEEPCODER_CHECKPOINTS as CheckpointMode)
+      : "off"),
     workspaceRoot,
     mcpServers: file.mcpServers ?? {},
     checks: file.checks ?? {},

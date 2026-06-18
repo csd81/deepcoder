@@ -108,6 +108,38 @@ test("aborting during one tool stops the remaining tool calls in the same turn",
   assert.equal(secondRan, false, "the second tool must not run after an abort");
 });
 
+test("a tool whose preview throws still runs after approval (preview is best-effort)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "deepcoder-preview-"));
+  let executed = false;
+  const flakyPreview: Tool = {
+    name: "flaky",
+    description: "flaky",
+    kind: "mutate", // forces an `ask` in ask mode → preview is consulted
+    rawSchema: { type: "object" },
+    build: () => ({
+      kind: "mutate",
+      describe: () => "flaky",
+      preview: async () => { throw new Error("preview blew up"); },
+      execute: async () => { executed = true; return { output: "ran" }; },
+    }),
+  };
+  const reg = new ToolRegistry();
+  reg.register(flakyPreview);
+  const provider = new FakeProvider([
+    { text: "", toolCalls: [{ id: "1", name: "flaky", arguments: {} }] },
+    { text: "done", toolCalls: [] },
+  ]);
+  const messages: AgentMessage[] = [{ role: "user", content: "go" }];
+  let sawPreview: unknown = "unset";
+  const final = await runAgentLoop(messages, deps(provider, await ctxFor(root), {
+    registry: reg,
+    approve: async (_inv, preview) => { sawPreview = preview; return true; },
+  }));
+  assert.equal(final, "done");
+  assert.equal(executed, true, "a thrown preview must not block execution");
+  assert.equal(sawPreview, undefined, "approve receives undefined when preview throws");
+});
+
 test("max turns stops a runaway tool-call loop", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "deepcoder-runaway-"));
   await writeFile(path.join(root, "a.txt"), "x", "utf8");

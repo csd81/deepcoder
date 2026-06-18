@@ -67,15 +67,17 @@ async function buildSession(
     const saved = await loadSession(config.workspaceRoot, id);
     // Recover any not-yet-finalized checkpoint window (manual mode / interrupted run).
     if (recorder && saved.pendingCheckpoint?.length) recorder.load(saved.pendingCheckpoint);
-    // Only restore the saved model if it belongs to the SAME provider — otherwise
-    // we'd send e.g. an Ollama model name to DeepSeek. On a provider change, keep
-    // the current provider's model and warn.
-    const sameProvider = !saved.provider || saved.provider === config.provider;
-    const cfg = sameProvider ? { ...config, model: saved.model } : config;
-    if (!sameProvider) {
+    // Only restore the saved model if it belongs to the SAME backend (provider
+    // AND base URL) — otherwise we'd point a saved model at an incompatible
+    // endpoint. On a change, keep the current model and warn.
+    const sameBackend =
+      (!saved.provider || saved.provider === config.provider) &&
+      (saved.baseUrl ?? "") === (config.baseUrl ?? "");
+    const cfg = sameBackend ? { ...config, model: saved.model } : config;
+    if (!sameBackend) {
       console.log(
         chalk.yellow(
-          `Session was saved with provider "${saved.provider}"; resuming under "${config.provider}" and keeping model "${config.model}" (saved model "${saved.model}" not restored).`,
+          `Session backend changed (provider/base URL); keeping current model "${config.model}" (saved "${saved.model}" not restored).`,
         ),
       );
     }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
 import { resolveReadPathInWorkspace } from "../workspace/paths.js";
+import { isSensitivePath } from "../workspace/sensitive.js";
 
 const schema = z.object({
   path: z.string().default(".").describe("Directory to list, relative to the workspace root."),
@@ -24,7 +25,7 @@ export const listDirTool: Tool = {
         const abs = resolveReadPathInWorkspace(ctx.workspaceRoot, args.path);
         const entries = await fs.readdir(abs, { withFileTypes: true });
         const lines = entries
-          .filter((e) => e.name !== "node_modules" && e.name !== ".git")
+          .filter((e) => e.name !== "node_modules" && e.name !== ".git" && !isSensitivePath(e.name))
           .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
           .sort();
         return { output: lines.join("\n") || "(empty)" };

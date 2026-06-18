@@ -30,6 +30,15 @@ export const ASK: string[] = [
   "cat .env",
   "cat .env.local",
   "npm test",
+  // find is no longer auto-allowed (it has -delete/-exec); must ask.
+  "find . -delete",
+  "find . -exec rm -rf {} ;",
+  "find . -exec sh -c id ;",
+  "find . -name '*.ts'",
+  // mutating git subcommands / write flags are not read-only.
+  "git branch -D main",
+  "git remote add origin url",
+  "git diff --output=patch.txt",
 ];
 
 /** Genuinely read-only pipelines with in-workspace operands — may be ALLOWED. */

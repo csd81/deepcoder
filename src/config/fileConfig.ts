@@ -33,7 +33,7 @@ const mcpServerSchema = z.object({
 const CHECK_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const checkSchema = z.object({
   command: z.string().min(1),
-  timeoutMs: z.number().int().positive().optional(),
+  timeoutMs: z.number().int().positive().max(600_000).optional(),
 });
 
 /**

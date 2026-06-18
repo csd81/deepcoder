@@ -163,6 +163,49 @@ test("rollback only touches manifest files, never untracked siblings", async () 
   assert.equal(await readFile(sibling, "utf8"), "do not touch");
 });
 
+// --- atomic rollback: a conflict on ONE file leaves ALL files untouched ---
+test("rollback is all-or-nothing: one conflict blocks restore of the clean file too", async () => {
+  const root = await ws();
+  const a = path.join(root, "a.txt");
+  const b = path.join(root, "b.txt");
+  await writeFile(a, "A-ORIG", "utf8");
+  await writeFile(b, "B-ORIG", "utf8");
+  const rec = new CheckpointRecorder(root);
+  await agentWrite(rec, a, "A-EDIT");
+  await agentWrite(rec, b, "B-EDIT");
+  const id = await rec.finalize();
+
+  // User edits only b after the run → b conflicts, a is clean.
+  await writeFile(b, "B-USER", "utf8");
+
+  const res = await rollback(root, id!);
+  assert.deepEqual(res.conflicts, ["b.txt"]);
+  assert.deepEqual(res.restored, [], "no file restored when any conflicts");
+  assert.equal(await readFile(a, "utf8"), "A-EDIT", "clean file must NOT be half-rolled-back");
+  assert.equal(await readFile(b, "utf8"), "B-USER");
+});
+
+// --- a malformed restoreSha is never joined into a blob path ---
+test("rollback skips a file whose manifest restoreSha is not a clean sha256", async () => {
+  const root = await ws();
+  const file = path.join(root, "a.txt");
+  await writeFile(file, "v1", "utf8");
+  const rec = new CheckpointRecorder(root);
+  await agentWrite(rec, file, "v2");
+  const id = await rec.finalize();
+
+  // Tamper the manifest with a traversal-shaped restoreSha.
+  const mpath = path.join(root, ".deepcoder", "checkpoints", id!, "manifest.json");
+  const m = JSON.parse(await readFile(mpath, "utf8"));
+  m.files[0].restoreSha = "../../../../etc/passwd";
+  await writeFile(mpath, JSON.stringify(m), "utf8");
+
+  const res = await rollback(root, id!);
+  assert.deepEqual(res.skipped, ["a.txt"]);
+  assert.deepEqual(res.restored, []);
+  assert.equal(await readFile(file, "utf8"), "v2", "tampered ref must not restore anything");
+});
+
 test("an empty window finalizes to null", async () => {
   const root = await ws();
   const rec = new CheckpointRecorder(root);

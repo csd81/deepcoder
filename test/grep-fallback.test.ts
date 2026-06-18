@@ -71,3 +71,12 @@ test("skips binary files", async () => {
   const res = await grepFallback(root, root, "NEEDLE", undefined, signal);
   assert.ok(!res.output.includes("blob.bin"));
 });
+
+test("an aborted search reports the abort as an error (not silent partial results)", async () => {
+  const root = await fixture();
+  const ac = new AbortController();
+  ac.abort(); // aborted before the walk loop checks
+  const res = await grepFallback(root, root, "NEEDLE", undefined, ac.signal);
+  assert.equal(res.isError, true);
+  assert.match(res.output, /search aborted/);
+});

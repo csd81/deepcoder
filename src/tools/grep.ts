@@ -110,8 +110,12 @@ export async function grepFallback(
 
   const out: string[] = [];
   let truncated = false;
+  let aborted = false;
   for (const abs of files) {
-    if (signal.aborted) break;
+    if (signal.aborted) {
+      aborted = true;
+      break;
+    }
     const rel = displayPath(workspaceRoot, abs);
     if (isSensitivePath(rel)) continue;
     if (globRe && !globRe.test(rel) && !globRe.test(path.basename(abs))) continue;
@@ -126,7 +130,8 @@ export async function grepFallback(
     const lines = content.split("\n");
     for (let i = 0; i < lines.length; i++) {
       if (re.test(lines[i]!)) {
-        out.push(`${abs}:${i + 1}:${lines[i]}`);
+        // Workspace-relative prefix (don't leak the absolute workspace path).
+        out.push(`${rel}:${i + 1}:${lines[i]}`);
         if (out.length >= MAX_MATCH_LINES) {
           truncated = true;
           break;
@@ -136,6 +141,7 @@ export async function grepFallback(
     if (truncated) break;
   }
 
+  if (aborted) return { output: out.length ? out.join("\n") + "\n… (search aborted)" : "(search aborted)", isError: true };
   if (out.length === 0) return { output: "(no matches)" };
   return { output: out.join("\n") + (truncated ? "\n… (results truncated)" : "") };
 }

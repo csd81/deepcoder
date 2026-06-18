@@ -43,11 +43,22 @@ export function parseSubagentResult(profile: string, task: string, text: string)
 function extractLastJsonObject(text: string): unknown {
   const end = text.lastIndexOf("}");
   if (end === -1) return null;
-  // Walk back to the matching opening brace.
+  // Walk back to the matching opening brace, ignoring braces that appear INSIDE
+  // JSON strings (with escape handling) so `{"x":"a}b"}` parses correctly.
   let depth = 0;
+  let inString = false;
   for (let i = end; i >= 0; i--) {
-    if (text[i] === "}") depth++;
-    else if (text[i] === "{") {
+    const ch = text[i];
+    if (inString) {
+      // Entering a string from the right: an unescaped `"` opens it (going left).
+      if (ch === '"' && !isEscaped(text, i)) inString = false;
+      continue;
+    }
+    if (ch === '"' && !isEscaped(text, i)) {
+      inString = true;
+    } else if (ch === "}") {
+      depth++;
+    } else if (ch === "{") {
       depth--;
       if (depth === 0) {
         try {
@@ -59,4 +70,11 @@ function extractLastJsonObject(text: string): unknown {
     }
   }
   return null;
+}
+
+/** True if the char at `i` is escaped by an odd run of preceding backslashes. */
+function isEscaped(text: string, i: number): boolean {
+  let n = 0;
+  for (let j = i - 1; j >= 0 && text[j] === "\\"; j--) n++;
+  return n % 2 === 1;
 }

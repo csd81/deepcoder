@@ -164,6 +164,10 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
   const manifest = JSON.parse(raw) as CheckpointManifest;
   const result: RollbackResult = { restored: [], deleted: [], conflicts: [], skipped: [] };
 
+  // Phase 1: resolve targets and detect conflicts WITHOUT mutating anything, so
+  // rollback is all-or-nothing — a conflict on a later file never leaves earlier
+  // files half-rolled-back.
+  const plan: Array<{ f: CheckpointFile; abs: string; current: string | null }> = [];
   for (const f of manifest.files) {
     let abs: string;
     try {
@@ -172,15 +176,22 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
       result.skipped.push(f.path); // would resolve outside the workspace now
       continue;
     }
-    const current = await shaOfFile(abs);
-    const changedSinceRun = current !== null && current !== f.expectedSha;
-    if (changedSinceRun && !opts.force) {
-      result.conflicts.push(f.path);
+    if (f.restoreSha && !/^[a-f0-9]{64}$/.test(f.restoreSha)) {
+      result.skipped.push(f.path); // malformed blob ref — never join it into a path
       continue;
     }
+    const current = await shaOfFile(abs);
+    if (current !== null && current !== f.expectedSha) result.conflicts.push(f.path);
+    plan.push({ f, abs, current });
+  }
+  if (result.conflicts.length && !opts.force) {
+    return result; // refuse the whole rollback; nothing mutated
+  }
 
+  // Phase 2: apply.
+  for (const { f, abs, current } of plan) {
+    if (result.conflicts.includes(f.path) && !opts.force) continue;
     if (f.existed) {
-      // Restore the pre-image content. (Missing-now is restorable, not a conflict.)
       if (!f.restoreSha) {
         result.skipped.push(f.path);
         continue;
@@ -190,7 +201,6 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
       await fs.writeFile(abs, content);
       result.restored.push(f.path);
     } else {
-      // The agent created this file → undo means delete it.
       if (current === null) {
         result.skipped.push(f.path); // already gone
         continue;
