@@ -3,6 +3,8 @@ import type { ApprovalMode } from "../config/config.js";
 import { Git } from "../workspace/git.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { renderTodos } from "../tools/todoWrite.js";
+import { estimateMessages } from "../context/tokenBudget.js";
+import { compactIfNeeded } from "../context/compaction.js";
 import type { Session } from "./repl.js";
 
 export interface SlashOutcome {
@@ -63,6 +65,30 @@ export async function handleSlashCommand(
       console.log(chalk.dim(`Saved session ${session.store.id}`));
       return { consumed: true };
 
+    case "context": {
+      const used = estimateMessages(session.messages);
+      const budget = config.contextBudgetTokens;
+      const pct = Math.round((used / budget) * 100);
+      console.log(chalk.dim(`~${used} / ${budget} tokens (${pct}%), compacts at ${Math.round(config.compactAt * 100)}%`));
+      return { consumed: true };
+    }
+
+    case "compact": {
+      const res = compactIfNeeded(session.messages, {
+        budgetTokens: config.contextBudgetTokens,
+        compactAt: config.compactAt,
+        todos: session.todos,
+        force: true,
+      });
+      console.log(
+        res.compacted
+          ? chalk.dim(`Compacted ~${res.before} → ~${res.after} tokens.`)
+          : chalk.dim("Nothing to compact yet."),
+      );
+      if (res.compacted) await save();
+      return { consumed: true };
+    }
+
     case "status": {
       const git = new Git(config.workspaceRoot);
       console.log((await git.isRepo()) ? await git.status() : chalk.dim("Not a git repository."));
@@ -85,6 +111,8 @@ export async function handleSlashCommand(
           "/mode [m]        show or set approval mode (ask | auto | readonly)",
           "/todos           show the current todo list",
           "/instructions    show loaded project instructions",
+          "/context         show context-token usage",
+          "/compact         compact conversation history now",
           "/save            save the session now",
           "/status          git status",
           "/diff            git diff",

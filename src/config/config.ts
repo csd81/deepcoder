@@ -10,6 +10,10 @@ export interface Config {
   reasonerModel?: string;
   maxTurns: number;
   approvalMode: ApprovalMode;
+  /** Approximate token budget before history compaction kicks in. */
+  contextBudgetTokens: number;
+  /** Fraction of the budget at which compaction triggers. */
+  compactAt: number;
   /** Absolute path the agent is allowed to operate within. */
   workspaceRoot: string;
 }
@@ -33,6 +37,8 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     reasonerModel: process.env.DEEPSEEK_REASONER_MODEL,
     maxTurns: Number(process.env.DEEPCODER_MAX_TURNS || 20),
     approvalMode: approval,
+    contextBudgetTokens: Number(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS || 64000),
+    compactAt: Number(process.env.DEEPCODER_COMPACT_AT || 0.8),
     workspaceRoot: process.cwd(),
     ...overrides,
   };

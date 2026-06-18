@@ -12,6 +12,7 @@ import { InvalidArgumentsError } from "../tools/types.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import type { ApprovalMode } from "../config/config.js";
 import { checkPermission } from "../permissions/policy.js";
+import { compactIfNeeded } from "../context/compaction.js";
 
 export interface AgentDeps {
   provider: ModelProvider;
@@ -20,6 +21,9 @@ export interface AgentDeps {
   model: string;
   mode: ApprovalMode;
   maxTurns: number;
+  /** Token budget + trigger fraction for history compaction. */
+  contextBudgetTokens: number;
+  compactAt: number;
   /** Streaming text hook (fired per chunk when the provider supports streaming). */
   onAssistantTextDelta?(chunk: string): void;
   /** Final assistant text (fired once per turn; fallback when not streaming). */
@@ -45,6 +49,16 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
     if (ctx.signal.aborted) {
       deps.onNotice?.("Aborted.");
       return "";
+    }
+
+    const compaction = compactIfNeeded(messages, {
+      budgetTokens: deps.contextBudgetTokens,
+      compactAt: deps.compactAt,
+      todos: ctx.todos,
+    });
+    if (compaction.compacted) {
+      deps.onNotice?.(`Compacted context (~${compaction.before} → ~${compaction.after} tokens).`);
+      await deps.onPersist?.();
     }
 
     const response = await getResponse(deps, withTodoContext(messages, ctx));

@@ -29,6 +29,8 @@ function deps(provider: ModelProvider, ctx: ToolContext, over: Partial<AgentDeps
     model: "fake",
     mode: "ask",
     maxTurns: 10,
+    contextBudgetTokens: 64000,
+    compactAt: 0.8,
     approve: async () => true,
     ...over,
   };

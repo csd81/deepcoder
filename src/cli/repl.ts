@@ -62,6 +62,8 @@ async function runTask(session: Session): Promise<void> {
     model: session.config.model,
     mode: session.mode,
     maxTurns: session.config.maxTurns,
+    contextBudgetTokens: session.config.contextBudgetTokens,
+    compactAt: session.config.compactAt,
     approve: (inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview),
     onPersist: () => session.store.save(snapshot(session)),
     onAssistantTextDelta: (chunk) => {

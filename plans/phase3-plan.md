@@ -73,4 +73,4 @@ A (commit as its own unit) → B → C → E → D → F.
 Fake providers for automated tests; live key only for readonly smoke tests; never print/commit the key; key is exposed → rotate.
 
 ## Progress
-- [x] A1 classifier  - [x] A2 atomic saves  - [x] A3 resume prompt  - [x] A4 realpath  - [ ] B compaction  - [ ] C repo map  - [ ] D reasoner  - [ ] E context tools  - [ ] F docs
+- [x] A1 classifier  - [x] A2 atomic saves  - [x] A3 resume prompt  - [x] A4 realpath  - [x] B compaction  - [ ] C repo map  - [ ] D reasoner  - [ ] E context tools  - [ ] F docs

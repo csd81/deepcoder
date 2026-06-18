@@ -27,7 +27,7 @@ async function ctxFor(root: string): Promise<ToolContext> {
 function deps(provider: ModelProvider, ctx: ToolContext, over: Partial<AgentDeps> = {}): AgentDeps {
   return {
     provider, registry: defaultRegistry(), ctx, model: "fake", mode: "ask", maxTurns: 10,
-    approve: async () => true, ...over,
+    contextBudgetTokens: 64000, compactAt: 0.8, approve: async () => true, ...over,
   };
 }
 
