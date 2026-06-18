@@ -87,6 +87,13 @@ exists — see below.
 
 ## In-container solve loop (Phase 6)
 
+> ⚠️ **Early / experimental — not the default loop yet.** This harness validates the
+> infrastructure (it runs end-to-end), but its baseline-diff check is a *regression guard*, not a
+> fix oracle: the 3-instance smoke was **check 3/3, resolved 0/3, 1 empty patch**. It is slow
+> (Docker + live API) and best used for occasional Tier 3–5 checks. For day-to-day iteration use
+> the **local bugfix benchmark** (`evals/local-bench/`, Phase 6B), which has a real red→green
+> oracle and a patch-quality gate. Treat results here as infra validation, not a quality signal.
+
 Runs the `--solve` loop **inside** the official SWE-bench instance container, where
 `/testbed` + the pinned conda env make the public suite runnable (the host clone
 can't). Reuses swebench's own image build, so the solve env == the scoring env.
