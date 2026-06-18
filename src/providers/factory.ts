@@ -1,9 +1,11 @@
 import type { ModelProvider } from "./types.js";
 import { OpenAICompatibleProvider } from "./openaiCompatible.js";
+import { AnthropicProvider } from "./anthropic.js";
 import { DEEPSEEK_DEFAULT_BASE_URL } from "./deepseek.js";
 import type { Config } from "../config/config.js";
 
 export const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1";
+export const QWEN_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 
 /**
  * Build a provider from config. All providers map onto the same
@@ -27,6 +29,14 @@ export function createProvider(config: Config): ModelProvider {
         label: "Ollama",
       });
 
+    case "qwen":
+      // Alibaba Qwen via the DashScope OpenAI-compatible endpoint.
+      return new OpenAICompatibleProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl || QWEN_DEFAULT_BASE_URL,
+        label: "Qwen",
+      });
+
     case "openai-compatible":
       if (!config.baseUrl) {
         throw new Error(
@@ -40,11 +50,14 @@ export function createProvider(config: Config): ModelProvider {
       });
 
     case "anthropic":
-      throw new Error(
-        'provider "anthropic" is not supported yet. Use "openai-compatible" with an Anthropic-compatible gateway, or "deepseek".',
-      );
+      // Native Messages API adapter (not OpenAI-compatible). baseUrl optional.
+      return new AnthropicProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl || undefined,
+        label: "Anthropic",
+      });
 
     default:
-      throw new Error(`Unknown provider "${config.provider}". Use deepseek | openai-compatible | ollama.`);
+      throw new Error(`Unknown provider "${config.provider}". Use deepseek | openai-compatible | ollama | qwen | anthropic.`);
   }
 }

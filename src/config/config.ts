@@ -53,7 +53,8 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   deepseek: "deepseek-chat",
   ollama: "llama3.1",
   "openai-compatible": "gpt-4o-mini",
-  anthropic: "claude-3-5-sonnet",
+  qwen: "qwen2.5-coder-32b-instruct",
+  anthropic: "claude-3-5-sonnet-latest",
 };
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));

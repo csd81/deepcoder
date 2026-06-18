@@ -75,7 +75,8 @@ with `DEEPCODER_PROVIDER`:
 | `deepseek` (default) | uses `DEEPSEEK_*` or the generic `DEEPCODER_*` env |
 | `openai-compatible` | any OpenAI-style `/v1` endpoint; **requires `DEEPCODER_BASE_URL`** |
 | `ollama` | local models; no API key needed; defaults to `http://localhost:11434/v1` |
-| `anthropic` | not supported yet (different wire format) — use a gateway via `openai-compatible` |
+| `qwen` | Alibaba Qwen via the DashScope OpenAI-compatible endpoint (default `qwen2.5-coder-32b-instruct`) |
+| `anthropic` | **native** Claude adapter (Messages API); default `claude-3-5-sonnet-latest`, override with `DEEPCODER_MODEL` |
 
 Generic env (`DEEPCODER_API_KEY/BASE_URL/MODEL`) takes precedence over the
 `DEEPSEEK_*` aliases. Example — point at local Ollama:
@@ -252,7 +253,7 @@ lists saved points. Deletion/rename by the agent is out of scope for now.
 src/
   cli/          entry point, REPL, slash commands
   agent/        agent loop + system prompt
-  providers/    vendor-neutral ModelProvider, OpenAI-compatible adapter + factory
+  providers/    vendor-neutral ModelProvider; OpenAI-compatible + native Anthropic adapters + factory
   tools/        Tool -> build() -> ToolInvocation -> execute(), + registry
   permissions/  command classifier, policy, approval prompt
   context/      project instructions, token budget, compaction, repo map
@@ -270,8 +271,7 @@ can `describe()` itself, `preview()` its effect, and `execute()`.
 
 ## Limitations
 
-- Providers: DeepSeek / OpenAI-compatible / Ollama. Anthropic isn't supported yet
-  (use an OpenAI-compatible gateway).
+- Providers: DeepSeek / OpenAI-compatible / Ollama / Qwen / Anthropic (native).
 - MCP is read-only (execute-mode MCP tools are discovered but denied). No
   subagents yet.
 - The command classifier is a heuristic, **not a sandbox** — review actions in

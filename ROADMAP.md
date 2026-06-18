@@ -40,7 +40,7 @@ See `plans/phase3-plan.md`.
 See `plans/phase4-plan.md`.
 
 - [x] **4A** — MCP client (read-only), `.deepcoder/config.json`, `/mcp`; MCP tools/output untrusted, execute-mode MCP denied for now
-- [x] **4B** — provider factory + generic OpenAI-compatible/Ollama backends (`DEEPCODER_PROVIDER`); DeepSeek stays default, `DEEPSEEK_*` env still works (Anthropic deferred)
+- [x] **4B** — provider factory + backends (`DEEPCODER_PROVIDER`): DeepSeek (default), OpenAI-compatible, Ollama, Qwen (DashScope), and a **native Anthropic** adapter; `DEEPSEEK_*` env still works
 - [x] **4C** — checkpoints: local undo for agent edits (`/checkpoint`, `/rollback`; pre-image based, **not git**, off by default)
 - [~] **4D** — subagents (design `plans/phase4d-subagents-design.md`): slices 1–3 shipped — read-only `reviewer` (`/review`), `researcher` (`/research`), `test_triage` (`/triage`); restricted-registry + readonly by construction, output quarantined out of model history; model-callable/parallel deferred
 

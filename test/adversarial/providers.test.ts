@@ -7,6 +7,7 @@ import {
   OpenAICompatibleProvider,
 } from "../../src/providers/openaiCompatible.js";
 import { DeepSeekProvider } from "../../src/providers/deepseek.js";
+import { AnthropicProvider } from "../../src/providers/anthropic.js";
 import { checkPermission } from "../../src/permissions/policy.js";
 import type { Config } from "../../src/config/config.js";
 import type { ToolInvocation } from "../../src/tools/types.js";
@@ -25,14 +26,12 @@ test("factory builds a provider for each supported backend", () => {
   assert.ok(createProvider(cfg({ provider: "deepseek" })) instanceof OpenAICompatibleProvider);
   assert.ok(createProvider(cfg({ provider: "ollama", apiKey: "" })) instanceof OpenAICompatibleProvider); // no key needed
   assert.ok(createProvider(cfg({ provider: "openai-compatible", baseUrl: "https://x.example/v1" })) instanceof OpenAICompatibleProvider);
+  assert.ok(createProvider(cfg({ provider: "qwen" })) instanceof OpenAICompatibleProvider); // DashScope preset
+  assert.ok(createProvider(cfg({ provider: "anthropic" })) instanceof AnthropicProvider); // native adapter
 });
 
 test("openai-compatible without a base URL fails with a clear error", () => {
   assert.throws(() => createProvider(cfg({ provider: "openai-compatible", baseUrl: "" })), /requires a base URL/);
-});
-
-test("anthropic is explicitly not supported yet", () => {
-  assert.throws(() => createProvider(cfg({ provider: "anthropic" })), /not supported yet/);
 });
 
 test("unknown provider is rejected", () => {
