@@ -316,3 +316,15 @@ Test tiers (all run with **fake providers** — no API key needed):
 new capability ships with both normal and adversarial coverage. Fixtures and
 snapshots must never contain real secrets; the live key is only for `test:live`.
 See `plans/adversarial-testing-framework.md`.
+
+### Evaluation
+
+A small, transparent bug-fixing benchmark lives in [`evals/`](evals/README.md):
+
+```bash
+npm run eval:selftest                              # no model — proves the tasks are well-formed
+DEEPCODER_PROVIDER=… DEEPCODER_API_KEY=… npm run eval   # scored run (needs a provider key)
+```
+
+It's a **custom** suite (not SWE-bench): 8 self-contained JS bugs the agent must
+fix until a hidden test passes. Treat it as a capability smoke-test, not a ranking.
