@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
-import { resolveInWorkspace } from "../workspace/paths.js";
+import { resolveInWorkspace, resolveReadPathInWorkspace, displayPath } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 
 const schema = z.object({
@@ -25,15 +25,20 @@ export const readFileTool: Tool = {
       kind: "read-only",
       describe: () => `Read ${args.path}`,
       async execute(ctx) {
-        if (isSensitivePath(args.path)) {
-          return {
-            output: `Reading ${args.path} is blocked: it may contain secrets (e.g. API keys). It was not read.`,
-            isError: true,
-          };
-        }
-        const abs = resolveInWorkspace(ctx.workspaceRoot, args.path);
+        const blocked = (p: string) => ({
+          output: `Reading ${p} is blocked: it may contain secrets (e.g. API keys). It was not read.`,
+          isError: true as const,
+        });
+        if (isSensitivePath(args.path)) return blocked(args.path);
+        // Resolve symlinks and confirm the real target is in-workspace (a symlink
+        // could point at /etc/passwd or at .env). Throws → handled by the loop.
+        const abs = resolveReadPathInWorkspace(ctx.workspaceRoot, args.path);
+        // Re-check sensitivity on the real, symlink-resolved path.
+        if (isSensitivePath(displayPath(ctx.workspaceRoot, abs))) return blocked(args.path);
         const content = await fs.readFile(abs, "utf8");
-        ctx.readTracker.add(abs);
+        // Key readTracker by the lexical path the user named, matching how
+        // edit_file/write_file look up read-before-write.
+        ctx.readTracker.add(resolveInWorkspace(ctx.workspaceRoot, args.path));
         const lines = content.split("\n");
         const start = (args.offset ?? 1) - 1;
         const end = start + (args.limit ?? DEFAULT_LIMIT);

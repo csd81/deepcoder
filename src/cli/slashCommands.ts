@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
+import { openSync, readSync, fstatSync, closeSync } from "node:fs";
 import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
 import { Git } from "../workspace/git.js";
-import { resolveInWorkspace } from "../workspace/paths.js";
+import { resolveReadPathInWorkspace, displayPath } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { renderTodos } from "../tools/todoWrite.js";
@@ -334,21 +334,35 @@ export function readLogInput(
   if (isSensitivePath(relPath)) return { error: `Refusing to read ${relPath}: it may contain secrets.` };
   let abs: string;
   try {
-    abs = resolveInWorkspace(workspaceRoot, relPath);
+    // Symlink-safe: rejects a link pointing outside the workspace.
+    abs = resolveReadPathInWorkspace(workspaceRoot, relPath);
   } catch (err) {
     return { error: (err as Error).message };
   }
+  // Re-check sensitivity on the real (symlink-resolved) path.
+  if (isSensitivePath(displayPath(workspaceRoot, abs))) {
+    return { error: `Refusing to read ${relPath}: it resolves to a path that may contain secrets.` };
+  }
+
+  // Bounded read: only the first LOG_MAX_BYTES are pulled off disk (a huge log
+  // must never be slurped whole into memory), then line-limited.
   let raw: string;
+  let truncated = false;
+  let fd: number | undefined;
   try {
-    raw = readFileSync(abs, "utf8");
+    fd = openSync(abs, "r");
+    const size = fstatSync(fd).size;
+    const toRead = Math.min(size, LOG_MAX_BYTES);
+    const buf = Buffer.alloc(toRead);
+    const n = readSync(fd, buf, 0, toRead, 0);
+    raw = buf.subarray(0, n).toString("utf8");
+    if (size > LOG_MAX_BYTES) truncated = true;
   } catch (err) {
     return { error: `Could not read ${relPath}: ${(err as Error).message}` };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
-  let truncated = false;
-  if (raw.length > LOG_MAX_BYTES) {
-    raw = raw.slice(0, LOG_MAX_BYTES);
-    truncated = true;
-  }
+
   const lines = raw.split("\n");
   if (lines.length > LOG_MAX_LINES) {
     raw = lines.slice(0, LOG_MAX_LINES).join("\n");

@@ -39,6 +39,16 @@ test("grep over the whole workspace never returns .env / .deepcoder secret conte
   assert.ok(!res.output.match(/\.deepcoder\/config\.json/), "no .deepcoder file in results");
 });
 
+test("grep refuses a single-file symlink target that escapes the workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "adv-grepesc-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "adv-grepesc-out-"));
+  await writeFile(path.join(outside, "secret.txt"), "OUTSIDE-GREP-SECRET", "utf8");
+  await symlink(path.join(outside, "secret.txt"), path.join(root, "link.txt"));
+  const res = await grepTool.build({ pattern: ".", path: "link.txt" }).execute(makeCtx(root));
+  assert.equal(res.isError, true);
+  assert.ok(!res.output.includes("OUTSIDE-GREP-SECRET"));
+});
+
 // --- Finding 2: mutating tools must not touch sensitive files ---
 
 test("write_file refuses to create a secret file", () => {

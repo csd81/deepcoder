@@ -77,6 +77,12 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
     if (response.toolCalls.length === 0) return response.text;
 
     for (const call of response.toolCalls) {
+      // Abort between tool calls in the same assistant turn — otherwise a Ctrl-C
+      // during one tool would still let the remaining calls run.
+      if (ctx.signal.aborted) {
+        deps.onNotice?.("Aborted.");
+        return "";
+      }
       const tool = deps.registry.get(call.name);
       if (!tool) {
         pushToolResult(messages, call.id, call.name, `Unknown tool "${call.name}".`);
@@ -133,6 +139,11 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       try {
         result = await invocation.execute(ctx);
       } catch (err) {
+        // An abort must stop the whole run, not be swallowed as a recoverable error.
+        if (ctx.signal.aborted || (err as Error).name === "AbortError") {
+          deps.onNotice?.("Aborted.");
+          return "";
+        }
         result = { output: `Tool ${call.name} failed: ${(err as Error).message ?? String(err)}`, isError: true };
       }
       deps.onToolResult?.(call.name, result);

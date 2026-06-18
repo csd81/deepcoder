@@ -23,6 +23,35 @@ export function displayPath(workspaceRoot: string, abs: string): string {
 }
 
 /**
+ * Resolve a path for READING, defeating symlink escapes. Returns the **real**
+ * (symlink-resolved) absolute path and throws if that real target is outside
+ * the workspace — so `link.txt -> /etc/passwd` is rejected even though the
+ * lexical path looks in-bounds. Callers should also re-check sensitivity on the
+ * returned real path (a symlink may point at `.env`). A non-existent path is
+ * returned lexically (the read will then ENOENT through the normal path).
+ */
+export function resolveReadPathInWorkspace(workspaceRoot: string, p: string): string {
+  const lexical = resolveInWorkspace(workspaceRoot, p);
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(workspaceRoot);
+  } catch {
+    return lexical;
+  }
+  let real: string;
+  try {
+    real = realpathSync(lexical);
+  } catch {
+    return lexical; // doesn't exist yet — read will fail normally
+  }
+  const rel = path.relative(realRoot, real);
+  if (rel !== "" && (rel.startsWith("..") || path.isAbsolute(rel))) {
+    throw new Error(`Path "${p}" resolves (via symlink) outside the workspace root.`);
+  }
+  return real;
+}
+
+/**
  * Like `resolveInWorkspace`, but additionally resolves symlinks (realpath) and
  * confirms the *real* target stays inside the workspace. For a not-yet-existing
  * file, the nearest existing ancestor directory is checked instead. Mutating

@@ -44,6 +44,13 @@ See `plans/phase4-plan.md`.
 - [x] **4C** — checkpoints: local undo for agent edits (`/checkpoint`, `/rollback`; pre-image based, **not git**, off by default)
 - [~] **4D** — subagents (design `plans/phase4d-subagents-design.md`): slices 1–3 shipped — read-only `reviewer` (`/review`), `researcher` (`/research`), `test_triage` (`/triage`); restricted-registry + readonly by construction, output quarantined out of model history; model-callable/parallel deferred
 
+## Phase 5 — Controlled verification workflows (planned)
+
+See `plans/phase5-verification-workflows-plan.md`.
+
+- [ ] **5A** — user-invoked named checks (`/checks`, `/check <name>`), bounded/redacted/quarantined output, no model-callable execution
+- [ ] **5B** — explicit `/triage --run <id>` integration for stored check output
+
 ## Non-goals (for now)
 
 - IDE/GUI integration — this is a terminal-first tool

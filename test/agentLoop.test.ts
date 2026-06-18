@@ -4,9 +4,9 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runAgentLoop, type AgentDeps } from "../src/agent/agentLoop.js";
-import { defaultRegistry } from "../src/tools/registry.js";
+import { defaultRegistry, ToolRegistry } from "../src/tools/registry.js";
 import type { AgentMessage, ChatRequest, ChatResponse, ModelProvider } from "../src/providers/types.js";
-import type { ToolContext } from "../src/tools/types.js";
+import type { Tool, ToolContext } from "../src/tools/types.js";
 
 /** A provider that replays a scripted list of responses, one per turn. */
 class FakeProvider implements ModelProvider {
@@ -78,6 +78,34 @@ test("a tool that throws becomes a recoverable tool-result, not a fatal error", 
     messages.some((m) => m.role === "tool" && /failed|ENOENT|no such file/i.test(m.content)),
     "the throw surfaced as a tool-result",
   );
+});
+
+test("aborting during one tool stops the remaining tool calls in the same turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "deepcoder-abort-"));
+  const controller = new AbortController();
+  let secondRan = false;
+  const fakeTool = (name: string, exec: () => void): Tool => ({
+    name,
+    description: name,
+    kind: "read-only",
+    rawSchema: { type: "object" },
+    build: () => ({ kind: "read-only", describe: () => name, execute: async () => { exec(); return { output: "ok" }; } }),
+  });
+  const reg = new ToolRegistry();
+  reg.register(fakeTool("abort_now", () => controller.abort()));
+  reg.register(fakeTool("after", () => { secondRan = true; }));
+
+  const provider = new FakeProvider([
+    { text: "", toolCalls: [{ id: "1", name: "abort_now", arguments: {} }, { id: "2", name: "after", arguments: {} }] },
+    { text: "should not get here", toolCalls: [] },
+  ]);
+  const ctx: ToolContext = { workspaceRoot: root, signal: controller.signal, readTracker: new Set(), todos: [] };
+  const messages: AgentMessage[] = [{ role: "user", content: "go" }];
+  await runAgentLoop(messages, {
+    provider, registry: reg, ctx, model: "fake", mode: "ask", maxTurns: 10,
+    contextBudgetTokens: 64000, compactAt: 0.8, approve: async () => true,
+  });
+  assert.equal(secondRan, false, "the second tool must not run after an abort");
 });
 
 test("max turns stops a runaway tool-call loop", async () => {

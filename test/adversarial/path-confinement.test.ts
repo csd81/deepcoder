@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { resolveInWorkspace, resolveRealPathInWorkspace } from "../../src/workspace/paths.js";
+import { resolveInWorkspace, resolveRealPathInWorkspace, resolveReadPathInWorkspace } from "../../src/workspace/paths.js";
 import { writeFileTool } from "../../src/tools/writeFile.js";
 import { editFileTool } from "../../src/tools/editFile.js";
 import { readFileTool } from "../../src/tools/readFile.js";
@@ -15,6 +15,37 @@ test("lexical resolution rejects escapes", () => {
   for (const p of ["../outside.txt", "/etc/passwd", "a/../../outside.txt", "../../x"]) {
     assert.throws(() => resolveInWorkspace(ROOT, p), /outside the workspace/, p);
   }
+});
+
+test("read_file refuses a symlink that escapes the workspace (no foreign content)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "adv-readesc-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "adv-readesc-out-"));
+  await writeFile(path.join(outside, "secret.txt"), "TOPSECRET-OUTSIDE", "utf8");
+  await symlink(path.join(outside, "secret.txt"), path.join(root, "link.txt"));
+  await assert.rejects(
+    readFileTool.build({ path: "link.txt" }).execute(makeCtx(root)),
+    /outside the workspace/,
+  );
+});
+
+test("read_file blocks an in-workspace symlink that points at .env", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "adv-readenv-"));
+  await writeFile(path.join(root, ".env"), "DEEPSEEK_API_KEY=sk-LINKED-secret", "utf8");
+  await symlink(path.join(root, ".env"), path.join(root, "cfg.txt"));
+  const res = await readFileTool.build({ path: "cfg.txt" }).execute(makeCtx(root));
+  assert.equal(res.isError, true);
+  assert.ok(!res.output.includes("sk-LINKED-secret"));
+});
+
+test("resolveReadPathInWorkspace throws on a symlink escape, allows in-workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "adv-readres-"));
+  const outside = await mkdtemp(path.join(tmpdir(), "adv-readres-out-"));
+  await writeFile(path.join(root, "real.txt"), "ok", "utf8");
+  await writeFile(path.join(outside, "x.txt"), "outside", "utf8");
+  await symlink(outside, path.join(root, "outlink"));
+  // An existing target reached via a symlinked dir must be rejected.
+  assert.throws(() => resolveReadPathInWorkspace(root, "outlink/x.txt"), /outside the workspace/);
+  assert.match(resolveReadPathInWorkspace(root, "real.txt"), /real\.txt$/); // in-workspace: allowed
 });
 
 test("realpath resolution rejects a symlinked dir that escapes", async () => {

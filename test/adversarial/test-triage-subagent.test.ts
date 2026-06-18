@@ -85,6 +85,16 @@ test("readLogInput rejects sensitive and out-of-workspace paths without leaking 
   assert.ok("error" in readLogInput(root, "../../etc/hosts"));
 });
 
+test("readLogInput refuses a symlink that escapes the workspace", async () => {
+  const root = await ws();
+  const outside = await mkdtemp(path.join(tmpdir(), "adv-triage-out-"));
+  await writeFile(path.join(outside, "secret.log"), "OUTSIDE-SECRET", "utf8");
+  await (await import("node:fs/promises")).symlink(path.join(outside, "secret.log"), path.join(root, "link.log"));
+  const res = readLogInput(root, "link.log");
+  assert.ok("error" in res);
+  assert.ok(!JSON.stringify(res).includes("OUTSIDE-SECRET"));
+});
+
 test("readLogInput truncates a large log and flags it; does not touch readTracker", async () => {
   const root = await ws();
   await mkdir(path.join(root, "logs"), { recursive: true });

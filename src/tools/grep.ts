@@ -5,7 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { Tool, ToolInvocation, ToolResult } from "./types.js";
 import { parseArgs } from "./types.js";
-import { resolveInWorkspace, displayPath } from "../workspace/paths.js";
+import { resolveReadPathInWorkspace, displayPath } from "../workspace/paths.js";
 import { isSensitivePath, SENSITIVE_GLOB_EXCLUDES } from "../workspace/sensitive.js";
 
 const execFileAsync = promisify(execFile);
@@ -39,7 +39,17 @@ export const grepTool: Tool = {
             isError: true,
           };
         }
-        const abs = resolveInWorkspace(ctx.workspaceRoot, args.path);
+        // Symlink-safe: an explicit symlink target can't point the search outside
+        // the workspace (recursive scans already skip symlinks during traversal).
+        let abs: string;
+        try {
+          abs = resolveReadPathInWorkspace(ctx.workspaceRoot, args.path);
+        } catch (err) {
+          return { output: (err as Error).message, isError: true };
+        }
+        if (isSensitivePath(displayPath(ctx.workspaceRoot, abs))) {
+          return { output: `Searching ${args.path} is blocked: it resolves to a sensitive path.`, isError: true };
+        }
         const rgArgs = ["--line-number", "--no-heading", "--color=never"];
         // Always exclude secret files so a broad search (e.g. path ".") can't
         // pull .env / .deepcoder contents into the model context.
