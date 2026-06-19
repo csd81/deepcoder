@@ -1,0 +1,21 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "cache-invalidation",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "cache.py"
+  ],
+  "expectedChangedPaths": [
+    "cache.py"
+  ],
+  "forbiddenChangedPaths": [
+    "tests/test_cache.py"
+  ],
+  "requiredTestPaths": []
+}

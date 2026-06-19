@@ -1,5 +1,10 @@
 import "dotenv/config";
 import { loadFileConfig, type McpServerConfig, type CheckConfig } from "./fileConfig.js";
+import { DEFAULT_SANDBOX, type SandboxConfig, type SandboxMode } from "../sandbox/types.js";
+
+const SANDBOX_MODES: SandboxMode[] = [
+  "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
+];
 
 export type ApprovalMode = "ask" | "auto" | "readonly";
 export type CheckpointMode = "off" | "manual" | "auto";
@@ -50,6 +55,11 @@ export interface Config {
    * tools are discovered but denied until a later phase enables them.
    */
   mcpExecuteEnabled: boolean;
+  /**
+   * Sandbox policy for risky tool executions (run_bash, configured checks).
+   * Precedence: CLI `--sandbox` > `DEEPCODER_SANDBOX` env > config file > default `fast`.
+   */
+  sandbox: SandboxConfig;
 }
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -79,10 +89,21 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
 
-export function loadConfig(overrides: Partial<Config> = {}): Config {
+export type ConfigOverrides = Partial<Omit<Config, "sandbox">> & { sandbox?: Partial<SandboxConfig> };
+
+export function loadConfig(overrides: ConfigOverrides = {}): Config {
+  const { sandbox: sandboxOverride, ...rest } = overrides;
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";
   const workspaceRoot = overrides.workspaceRoot ?? process.cwd();
   const file = loadFileConfig(workspaceRoot);
+
+  // Sandbox: default < config file < env < CLI override (applied last via overrides).
+  const envMode = (process.env.DEEPCODER_SANDBOX || "").toLowerCase();
+  const sandbox: SandboxConfig = {
+    ...DEFAULT_SANDBOX,
+    ...(file.sandbox ?? {}),
+    ...(SANDBOX_MODES.includes(envMode as SandboxMode) ? { mode: envMode as SandboxMode } : {}),
+  };
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
   // Validate the provider BEFORE requiring a key, so a typo'd provider reports
@@ -125,6 +146,9 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     mcpServers: file.mcpServers ?? {},
     checks: file.checks ?? {},
     mcpExecuteEnabled: false, // Phase 4A: execute-mode MCP tools are denied
-    ...overrides,
+    ...rest,
+    // A CLI partial (e.g. {mode}) layers on top of the file/env-resolved sandbox
+    // rather than replacing it wholesale.
+    sandbox: { ...sandbox, ...(sandboxOverride ?? {}) },
   };
 }

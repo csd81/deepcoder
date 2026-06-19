@@ -64,10 +64,47 @@ See `plans/phase5-verification-workflows-plan.md`.
   (20 Node + 20 Python, `--lang` filter) numbered by increasing difficulty; `--selftest` /
   `--fake-solve fixed|noop` give a full no-model acceptance path. Documents a tiered iteration loop
   (Tier 0 unit → Tier 5 SWE smoke).
+- [~] **6C hard local-bench cases** (`evals/local-bench/`, branch `phase6c-hard-cases`): the 40
+  base cases became too easy (40/40 solved in one attempt), so the harness now *measures* harder
+  behavior — `expectedChangedPaths` / `forbiddenChangedPaths` / `requiredTestPaths` / `category` /
+  `difficulty` / `issueHintsLevel`, four new quality flags (`missing_expected_change`,
+  `forbidden_path_changed`, `missing_required_test`, `repro_invalid`), report grouping by
+  difficulty/category, and an independent **`oracle/` overlay** (the local equivalent of SWE-bench's
+  hidden FAIL_TO_PASS — an agent-authored repro test is measured but never self-grades). First **5
+  hard cases** (issue-derived-test, cache-invalidation, path-traversal, async-race,
+  config-precedence) with no-model acceptance (`--selftest` + `--fake-solve fixed|noop`). The live
+  5-case run is a separate explicit decision (decision rule: 5/5-in-one-attempt ⇒ still too easy).
+  - **6D retune:** the first live run was 4/5 — all bugs fixed first-attempt; the one miss was a
+    correct fix blocked by an over-rigid test-placement rule. Loosened the gate (agent tests may live
+    under any allowed `tests/` prefix; `repro_invalid` still requires red→green), expanded to **10
+    hard cases** (added multi-file-call-chain, error-preservation, red-herring-files, cli-contract,
+    parser-quotes — symptom-only issue text, discovery required), and the report now separates
+    `bug-fixed by oracle` (correctness) from `quality-blocked` (correct-but-flagged).
+  - **6E repo-scale** (`plans/phase6e-repo-scale-local-bench-plan.md`): the live 10-hard run was
+    10/10 one-shot, so added 5 **multi-file mini-repo** cases (`repo-hard-*`: auth-token-refresh,
+    job-queue-retry, markdown-frontmatter, plugin-config-precedence, router-middleware-order) with
+    4–8 files + decoys, requiring call-path tracing and (mostly) a coordinated source-fix + added
+    test. New harness fields `minChangedPaths`/`maxChangedPaths`/`requiredChangedPathGroups` (flags
+    `too_few_changed_paths`/`too_many_changed_paths`/`missing_required_path_group`). No-model
+    acceptance green (55 cases). Live `repo-hard` run is a separate decision.
 - [ ] follow-ups: wire the read-only `reviewer` subagent as an LLM quality gate; consider a
-  non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding).
+  non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding); expand the
+  hard set toward the full "Hard 20" once the first 5 discriminate.
+
+## Phase 7 — Extensibility & isolation
+
+- [x] **7A fast tool-level sandboxing** (`src/sandbox/`, `plans/phase7a-fast-tool-sandboxing-plan.md`):
+  only risky executions (`run_bash`, configured checks) run in a sandbox; the deepcoder process +
+  file tools stay local. `SandboxConfig` in `.deepcoder/config.json` + `DEEPCODER_SANDBOX` env +
+  `--sandbox` flag (precedence CLI > env > file > default `fast`). `fast` → **bubblewrap** when
+  available else local; bwrap binds workspace rw, system dirs ro, private `/tmp`, clears env (no
+  API-key leak), never mounts home/docker-sock. `/sandbox` status + toggles; `npm run sandbox:smoke`.
+  Docker/podman/runsc + sandbox-expansion prompts deferred.
+- [ ] **7B lifecycle hooks** (`plans/phase7b-lifecycle-hooks-plan.md`) — reuse the sandbox runner.
+- [ ] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`).
 
 ## Non-goals (for now)
 
 - IDE/GUI integration — this is a terminal-first tool
-- Full OS sandboxing — the command classifier is a guardrail, not a jail
+- Full per-session OS sandboxing — tool-level sandboxing (Phase 7A) isolates risky commands; the
+  command classifier remains a guardrail, and a whole-session jail is still out of scope

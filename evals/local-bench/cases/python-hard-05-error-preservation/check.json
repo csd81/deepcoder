@@ -1,0 +1,21 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "error-preservation",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [
+    "from e"
+  ],
+  "allowedPaths": [
+    "client.py"
+  ],
+  "expectedChangedPaths": [
+    "client.py"
+  ],
+  "forbiddenChangedPaths": [],
+  "requiredTestPaths": []
+}

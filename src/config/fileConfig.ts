@@ -17,10 +17,13 @@ export interface CheckConfig {
   timeoutMs?: number;
 }
 
+import type { SandboxConfig } from "../sandbox/types.js";
+
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
   mcpServers?: Record<string, McpServerConfig>;
   checks?: Record<string, CheckConfig>;
+  sandbox?: Partial<SandboxConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -34,6 +37,15 @@ const CHECK_NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const checkSchema = z.object({
   command: z.string().min(1),
   timeoutMs: z.number().int().positive().max(600_000).optional(),
+});
+
+const sandboxSchema = z.object({
+  mode: z.enum(["off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc"]).optional(),
+  network: z.enum(["on", "off"]).optional(),
+  workspaceWrite: z.boolean().optional(),
+  extraMounts: z.array(z.object({ path: z.string().min(1), mode: z.enum(["ro", "rw"]) })).optional(),
+  timeoutMs: z.number().int().positive().max(600_000).optional(),
+  fallback: z.enum(["ask", "local", "fail"]).optional(),
 });
 
 /**
@@ -87,7 +99,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     }
   }
 
-  return { mcpServers, checks };
+  const rawSandbox = (parsed as { sandbox?: unknown }).sandbox;
+  let sandbox: Partial<SandboxConfig> | undefined;
+  if (rawSandbox && typeof rawSandbox === "object") {
+    const result = sandboxSchema.safeParse(rawSandbox);
+    if (result.success) sandbox = result.data;
+    else warn(`ignoring "sandbox": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
+  return { mcpServers, checks, sandbox };
 }
 
 function warn(msg: string): void {

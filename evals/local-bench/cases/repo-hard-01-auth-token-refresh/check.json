@@ -1,0 +1,26 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 90000,
+  "solveAttempts": 3,
+  "category": "auth-token-refresh",
+  "difficulty": "repo-hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "src/",
+    "tests/"
+  ],
+  "expectedChangedPaths": [
+    "src/http/session.py"
+  ],
+  "requiredTestPaths": [
+    "tests/"
+  ],
+  "minChangedPaths": 2,
+  "requiredChangedPathGroups": [
+    ["src/auth/", "src/http/"],
+    ["tests/"]
+  ]
+}

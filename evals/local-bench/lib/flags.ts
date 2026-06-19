@@ -20,10 +20,29 @@ export interface QualityInput {
   allowedPaths: string[];
   /** Patch byte size above which the change is "huge" (default 20 KB). */
   hugePatchBytes?: number;
+  /** Paths the fix MUST touch — a missing one flags `missing_expected_change`. Empty = no constraint. */
+  expectedChangedPaths?: string[];
+  /** Paths that must NOT change — touching one flags `forbidden_path_changed`. Empty = no constraint. */
+  forbiddenChangedPaths?: string[];
+  /** Regression-test paths the agent must add/update — none changed flags `missing_required_test`. Empty = no constraint. */
+  requiredTestPaths?: string[];
+  /** True when the agent's own regression test did NOT go red on the buggy baseline (runner-computed). */
+  reproInvalid?: boolean;
+  /** Minimum changed paths; fewer flags `too_few_changed_paths`. 0/undefined = no constraint. */
+  minChangedPaths?: number;
+  /** Maximum changed paths; more flags `too_many_changed_paths`. 0/undefined = no constraint. */
+  maxChangedPaths?: number;
+  /** Each group must contribute ≥1 changed path, else `missing_required_path_group`. Empty = no constraint. */
+  requiredChangedPathGroups?: string[][];
 }
 
 const TEST_PATH_RE = /(^|\/)(tests?\/|test_|conftest\.py$)|(\.test\.|_test\.|\.spec\.)/i;
 const DEFAULT_HUGE_BYTES = 20_000;
+
+/** True iff `p` equals `a` or sits under it (directory prefix). */
+function underPath(p: string, a: string): boolean {
+  return p === a || p.startsWith(a.replace(/\/+$/, "") + "/");
+}
 
 /** Files added/modified in a unified diff, from its `+++ b/<path>` headers. */
 export function changedPathsFromPatch(patch: string): string[] {
@@ -59,14 +78,42 @@ export function computeQualityFlags(input: QualityInput): string[] {
     if (Buffer.byteLength(added, "utf8") > hugeBytes) flags.add("huge_patch");
 
     if (input.allowedPaths.length > 0) {
-      const allowed = (p: string) =>
-        input.allowedPaths.some(
-          (a) => p === a || p.startsWith(a.replace(/\/+$/, "") + "/"),
-        );
-      if (changed.some((p) => !allowed(p))) flags.add("unrelated_files");
+      if (changed.some((p) => !input.allowedPaths.some((a) => underPath(p, a)))) {
+        flags.add("unrelated_files");
+      }
     }
 
     if (changed.every((p) => TEST_PATH_RE.test(p))) flags.add("test_only");
+
+    // A required path the fix was expected to touch but didn't.
+    const expected = input.expectedChangedPaths ?? [];
+    if (expected.length > 0 && expected.some((e) => !changed.some((p) => underPath(p, e)))) {
+      flags.add("missing_expected_change");
+    }
+
+    // A path the fix must not touch (caller-only / public-test hack).
+    const forbidden = input.forbiddenChangedPaths ?? [];
+    if (forbidden.length > 0 && changed.some((p) => forbidden.some((f) => underPath(p, f)))) {
+      flags.add("forbidden_path_changed");
+    }
+
+    // A regression test the agent was required to add/update but didn't.
+    const requiredTests = input.requiredTestPaths ?? [];
+    if (requiredTests.length > 0 && !requiredTests.some((t) => changed.some((p) => underPath(p, t)))) {
+      flags.add("missing_required_test");
+    }
+
+    // Repo-scale coordination: count + grouping constraints (Phase 6E).
+    const min = input.minChangedPaths ?? 0;
+    if (min > 0 && changed.length < min) flags.add("too_few_changed_paths");
+    const max = input.maxChangedPaths ?? 0;
+    if (max > 0 && changed.length > max) flags.add("too_many_changed_paths");
+
+    // Each declared group must contribute at least one changed path.
+    const groups = input.requiredChangedPathGroups ?? [];
+    if (groups.some((g) => !g.some((a) => changed.some((p) => underPath(p, a))))) {
+      flags.add("missing_required_path_group");
+    }
 
     for (const pat of input.forbiddenPatterns) {
       if (safeMatch(pat, added)) flags.add("forbidden_pattern");
@@ -75,6 +122,10 @@ export function computeQualityFlags(input: QualityInput): string[] {
       if (!safeMatch(pat, added)) flags.add("missing_required_pattern");
     }
   }
+
+  // The agent's own regression test did not capture the bug (didn't go red on
+  // the buggy baseline). Runner-computed; grading falls back to the oracle.
+  if (input.reproInvalid) flags.add("repro_invalid");
 
   // A non-empty patch hash repeated across attempts == the agent re-proposed the
   // same edit (stuck), even if a later attempt "passed".

@@ -1,0 +1,28 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 90000,
+  "solveAttempts": 3,
+  "category": "job-queue-retry",
+  "difficulty": "repo-hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [
+    "except Exception"
+  ],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "src/",
+    "tests/"
+  ],
+  "expectedChangedPaths": [
+    "src/jobs/retry.py"
+  ],
+  "requiredTestPaths": [
+    "tests/"
+  ],
+  "minChangedPaths": 2,
+  "requiredChangedPathGroups": [
+    ["src/jobs/"],
+    ["tests/"]
+  ]
+}

@@ -12,6 +12,8 @@ import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
+import { resolveBackend } from "../sandbox/index.js";
+import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
 import { runSolveCommand } from "./solveRunner.js";
@@ -280,6 +282,7 @@ export async function handleSlashCommand(
           workspaceRoot: config.workspaceRoot,
           signal: controller.signal,
           onData: (chunk) => stdout.write(chunk), // already redacted by the runner
+          sandbox: config.sandbox,
         });
         const status = run.timedOut
           ? chalk.red("timed out")
@@ -296,6 +299,35 @@ export async function handleSlashCommand(
       } finally {
         process.removeListener("SIGINT", onSigint);
       }
+      return { consumed: true };
+    }
+
+    case "sandbox": {
+      const sb = config.sandbox;
+      const parts = arg.trim().split(/\s+/).filter(Boolean);
+      const sub = parts[0]?.toLowerCase();
+      const MODES: SandboxMode[] = ["off", "fast", "local", "bubblewrap"];
+      if (sub && MODES.includes(sub as SandboxMode)) {
+        sb.mode = sub as SandboxMode; // shared with session.config.sandbox → applies next run
+        console.log(chalk.dim(`sandbox mode → ${sb.mode}`));
+      } else if (sub === "network" && (parts[1] === "on" || parts[1] === "off")) {
+        sb.network = parts[1];
+        console.log(chalk.dim(`sandbox network → ${sb.network}`));
+      } else if (sub) {
+        console.log(chalk.dim("usage: /sandbox [off|fast|local|bubblewrap | network on|off]"));
+      }
+      const backend = resolveBackend(sb.mode);
+      const note = (sb.mode === "fast" || sb.mode === "bubblewrap") && backend === "local"
+        ? chalk.yellow(" (bwrap unavailable — running locally)")
+        : "";
+      console.log(
+        `mode: ${sb.mode}\n` +
+          `backend: ${backend}${note}\n` +
+          `network: ${sb.network}\n` +
+          `fallback: ${sb.fallback}\n` +
+          `workspaceWrite: ${sb.workspaceWrite}\n` +
+          `workspace: ${config.workspaceRoot}`,
+      );
       return { consumed: true };
     }
 
@@ -369,6 +401,7 @@ export async function handleSlashCommand(
           "/review <scope>  run a read-only reviewer subagent over files/topic",
           "/research <q>    run a read-only researcher subagent to explain the codebase",
           "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
+          "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",
           "/solve <chk> <t> edit→run check→retry until it passes or budget runs out",

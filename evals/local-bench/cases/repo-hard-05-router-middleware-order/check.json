@@ -1,0 +1,20 @@
+{
+  "name": "unit",
+  "command": "node tests/router.test.mjs",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "router-middleware-order",
+  "difficulty": "repo-hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "src/"
+  ],
+  "expectedChangedPaths": [
+    "src/router/router.mjs"
+  ],
+  "requiredChangedPathGroups": [
+    ["src/router/"]
+  ]
+}

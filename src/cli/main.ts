@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, type ApprovalMode } from "../config/config.js";
+import type { SandboxMode } from "../sandbox/types.js";
 import { createProvider } from "../providers/factory.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { runOneShot, runRepl, systemMessage, type Session } from "./repl.js";
@@ -32,6 +33,7 @@ program
   .option("--check <name>", "configured check to verify with in --solve mode")
   .option("--solve-attempts <n>", "max attempts in --solve mode (default 3)")
   .option("--telemetry <path>", "write a solve telemetry JSON to this path (headless eval)")
+  .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
   .action(
     async (
       promptParts: string[],
@@ -45,6 +47,7 @@ program
         check?: string;
         solveAttempts?: string;
         telemetry?: string;
+        sandbox?: string;
       },
     ) => {
     const baseConfig = loadConfig({
@@ -57,6 +60,7 @@ program
         ? { solveMaxAttempts: Math.max(1, Math.trunc(Number(opts.solveAttempts))) }
         : {}),
       ...(opts.telemetry ? { solveTelemetry: opts.telemetry } : {}),
+      ...(opts.sandbox ? { sandbox: { mode: opts.sandbox as SandboxMode } } : {}),
     });
 
     if (opts.listSessions) {

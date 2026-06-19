@@ -19,9 +19,21 @@ export interface ResultRow {
   patch_bytes: number;
   timed_out: boolean;
   changed_files: string[];
+  /** Optional case metadata (hard cases set these; the original 40 omit them). */
+  category?: string;
+  difficulty?: string;
+  issue_hints_level?: string;
+  /** Derived: the independent oracle accepted the fix (== tests_passed). */
+  bug_fixed_by_oracle?: boolean;
+  /** Derived: the fix was correct but a quality flag blocked it (tests_passed && !quality_passed). */
+  quality_blocked?: boolean;
 }
 
-const COLS = ["empty", "huge", "unrelated", "test_only", "forbidden", "required", "repeated", "timeout"] as const;
+const COLS = [
+  "empty", "huge", "unrelated", "test_only", "forbidden", "required",
+  "repeated", "timeout", "exp", "fpath", "reqtest", "repro",
+  "few", "many", "group",
+] as const;
 
 function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
   if (col === "timeout") return row.timed_out ? "Y" : ".";
@@ -34,8 +46,31 @@ function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
     forbidden: has("forbidden_pattern"),
     required: has("missing_required_pattern"),
     repeated: has("repeated_patch"),
+    exp: has("missing_expected_change"),
+    fpath: has("forbidden_path_changed"),
+    reqtest: has("missing_required_test"),
+    repro: has("repro_invalid"),
+    few: has("too_few_changed_paths"),
+    many: has("too_many_changed_paths"),
+    group: has("missing_required_path_group"),
   };
   return map[col] ? "Y" : ".";
+}
+
+/** solved/total broken down by a row key (e.g. difficulty or category). */
+function groupBreakdown(scored: ResultRow[], key: (r: ResultRow) => string | undefined): string[] {
+  const groups = new Map<string, { solved: number; total: number }>();
+  for (const r of scored) {
+    const k = key(r);
+    if (!k) continue;
+    const g = groups.get(k) ?? { solved: 0, total: 0 };
+    g.total++;
+    if (r.solved) g.solved++;
+    groups.set(k, g);
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([k, g]) => `  ${k.padEnd(24)} ${g.solved}/${g.total}`);
 }
 
 export function formatReport(rows: ResultRow[]): string {
@@ -70,15 +105,31 @@ export function formatReport(rows: ResultRow[]): string {
   lines.push(`cases scored:          ${n}${rows.length !== n ? ` (+${rows.length - n} skipped)` : ""}`);
   lines.push(`solved (tests+quality): ${solved}/${n}`);
   lines.push(`tests passed:          ${testsPassed}/${n}`);
-  lines.push(`passed but FLAGGED:    ${passedButFlagged}/${n}   <- bad-but-green patches (flask lesson)`);
+  lines.push(`bug-fixed by oracle:   ${testsPassed}/${n}   (correctness only — the independent oracle accepted the fix)`);
+  lines.push(`quality-blocked:       ${passedButFlagged}/${n}   <- correct-but-flagged: oracle passed, a quality rule blocked it (flask lesson)`);
   lines.push(`timeouts:              ${timeouts}/${n}`);
   if (attemptsToSolve.length) {
     const avg = (attemptsToSolve.reduce((a, b) => a + b, 0) / attemptsToSolve.length).toFixed(1);
     lines.push(`attempts-to-solve:     [${attemptsToSolve.join(", ")}] (avg ${avg})`);
   }
+
+  // Difficulty / category breakdowns (only when any row carries the metadata).
+  const byDifficulty = groupBreakdown(scored, (r) => r.difficulty);
+  if (byDifficulty.length) {
+    lines.push("\nby difficulty (solved/total):");
+    lines.push(...byDifficulty);
+  }
+  const byCategory = groupBreakdown(scored, (r) => r.category);
+  if (byCategory.length) {
+    lines.push("\nby category (solved/total):");
+    lines.push(...byCategory);
+  }
+
   lines.push(
     "\nlegend: slv=solved · tst=tests_passed · qual=quality_passed · att=attempts · " +
-      "flag cols Y=tripped (empty/huge/unrelated/test_only/forbidden/required/repeated/timeout)",
+      "flag cols Y=tripped (empty/huge/unrelated/test_only/forbidden/required/repeated/timeout/" +
+      "exp=missing_expected/fpath=forbidden_path/reqtest=missing_test/repro=repro_invalid/" +
+      "few=too_few_paths/many=too_many_paths/group=missing_path_group)",
   );
   return lines.join("\n");
 }

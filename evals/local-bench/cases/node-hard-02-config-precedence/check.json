@@ -1,0 +1,21 @@
+{
+  "name": "unit",
+  "command": "node test.mjs",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "config-precedence",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "config.mjs"
+  ],
+  "expectedChangedPaths": [
+    "config.mjs"
+  ],
+  "forbiddenChangedPaths": [
+    "test.mjs"
+  ],
+  "requiredTestPaths": []
+}
