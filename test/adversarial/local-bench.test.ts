@@ -8,6 +8,7 @@ import {
   verdict,
   addedLines,
   changedPathsFromPatch,
+  classifyOracleFailure,
 } from "../../evals/local-bench/lib/flags.js";
 import {
   loadCase,
@@ -388,6 +389,36 @@ test("loadCase parses the new fields and defaults them when absent (back-compat)
   assert.deepEqual(d.check.expectedChangedPaths, []);
   assert.deepEqual(d.check.requiredTestPaths, []);
   assert.equal(d.oracleDir, undefined);
+});
+
+test("Phase 6F: forbidden_patch_pattern flags a disallowed construct in the patch's added lines", () => {
+  const base = { attempts: [], forbiddenPatterns: [], requiredPatterns: [], allowedPaths: [] as string[] };
+  const bad = computeQualityFlags({
+    patch: "+++ b/src/retry.js\n+  setTimeout(retry, 1000);\n",
+    forbiddenPatchPatterns: ["setTimeout\\("],
+    ...base,
+  });
+  assert.ok(bad.includes("forbidden_patch_pattern"));
+  assert.equal(verdict(true, bad).solved, false, "a forbidden construct must block solved even when tests pass");
+
+  const ok = computeQualityFlags({
+    patch: "+++ b/src/retry.js\n+  await sleep(1000);\n",
+    forbiddenPatchPatterns: ["setTimeout\\("],
+    ...base,
+  });
+  assert.ok(!ok.includes("forbidden_patch_pattern"));
+});
+
+test("Phase 6F: classifyOracleFailure maps oracle output to a category (first hint wins; unknown otherwise)", () => {
+  const hints = [
+    { pattern: "preserves existing tokens", category: "backcompat_broken" },
+    { pattern: "does not retry permanent", category: "partial_fix" },
+  ];
+  assert.equal(classifyOracleFailure(hints, "FAIL: preserves existing tokens"), "backcompat_broken");
+  assert.equal(classifyOracleFailure(hints, "AssertionError: does not retry permanent errors"), "partial_fix");
+  assert.equal(classifyOracleFailure(hints, "some unrelated failure"), "unknown");
+  assert.equal(classifyOracleFailure([], "anything"), "unknown");
+  assert.equal(classifyOracleFailure(undefined, "anything"), "unknown");
 });
 
 test("report groups solved/total by difficulty and category", () => {

@@ -33,8 +33,14 @@ export interface CheckSpec {
   issueHintsLevel: IssueHintsLevel;
   /** Free-form category, e.g. "issue-derived-test", "async-race". */
   category: string;
-  /** "easy" (default) | "hard". */
+  /** "easy" (default) | "hard" | "repo-hard" | "xhard". */
   difficulty: string;
+  /** Phase 6F: regexes the patch must NOT contain (added lines) → `forbidden_patch_pattern`. */
+  forbiddenPatchPatterns: string[];
+  /** Phase 6F: prose behavior requirements — report metadata for the later reviewer gate (not enforced). */
+  requiredBehaviorNotes: string[];
+  /** Phase 6F: map oracle-output patterns → failure category (classifies a failed oracle run). */
+  oracleFailureHints: import("./flags.js").OracleFailureHint[];
 }
 
 export interface CaseManifest {
@@ -92,6 +98,9 @@ export async function loadCase(dir: string): Promise<CaseManifest> {
     issueHintsLevel: asHintsLevel(c.issueHintsLevel),
     category: typeof c.category === "string" && c.category ? c.category : "uncategorized",
     difficulty: typeof c.difficulty === "string" && c.difficulty ? c.difficulty : "easy",
+    forbiddenPatchPatterns: asStringArray(c.forbiddenPatchPatterns),
+    requiredBehaviorNotes: asStringArray(c.requiredBehaviorNotes),
+    oracleFailureHints: asHints(c.oracleFailureHints),
   };
   const issue = await readFile(path.join(dir, "issue.md"), "utf8");
   const expected = (await exists(path.join(dir, "expected.md")))
@@ -151,6 +160,16 @@ function asStringArray(v: unknown): string[] {
 function asStringMatrix(v: unknown): string[][] {
   if (!Array.isArray(v)) return [];
   return v.map(asStringArray).filter((g) => g.length > 0);
+}
+
+function asHints(v: unknown): import("./flags.js").OracleFailureHint[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((e) => {
+    const o = e as { pattern?: unknown; category?: unknown };
+    return typeof o?.pattern === "string" && typeof o?.category === "string"
+      ? [{ pattern: o.pattern, category: o.category }]
+      : [];
+  });
 }
 
 function asHintsLevel(v: unknown): IssueHintsLevel {

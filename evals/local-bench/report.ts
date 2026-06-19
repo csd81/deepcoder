@@ -27,12 +27,14 @@ export interface ResultRow {
   bug_fixed_by_oracle?: boolean;
   /** Derived: the fix was correct but a quality flag blocked it (tests_passed && !quality_passed). */
   quality_blocked?: boolean;
+  /** Phase 6F: when the oracle failed, the inferred failure category (else null). */
+  oracle_failure_category?: string | null;
 }
 
 const COLS = [
   "empty", "huge", "unrelated", "test_only", "forbidden", "required",
   "repeated", "timeout", "exp", "fpath", "reqtest", "repro",
-  "few", "many", "group",
+  "few", "many", "group", "fpatch",
 ] as const;
 
 function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
@@ -53,6 +55,7 @@ function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
     few: has("too_few_changed_paths"),
     many: has("too_many_changed_paths"),
     group: has("missing_required_path_group"),
+    fpatch: has("forbidden_patch_pattern"),
   };
   return map[col] ? "Y" : ".";
 }
@@ -125,11 +128,25 @@ export function formatReport(rows: ResultRow[]): string {
     lines.push(...byCategory);
   }
 
+  // Phase 6F: WHY the oracle failed, when classification is available.
+  const failCats = new Map<string, number>();
+  for (const r of scored) {
+    if (!r.tests_passed && r.oracle_failure_category) {
+      failCats.set(r.oracle_failure_category, (failCats.get(r.oracle_failure_category) ?? 0) + 1);
+    }
+  }
+  if (failCats.size) {
+    lines.push("\noracle failures by category:");
+    for (const [cat, n] of [...failCats.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      lines.push(`  ${cat.padEnd(20)} ${n}`);
+    }
+  }
+
   lines.push(
     "\nlegend: slv=solved · tst=tests_passed · qual=quality_passed · att=attempts · " +
       "flag cols Y=tripped (empty/huge/unrelated/test_only/forbidden/required/repeated/timeout/" +
       "exp=missing_expected/fpath=forbidden_path/reqtest=missing_test/repro=repro_invalid/" +
-      "few=too_few_paths/many=too_many_paths/group=missing_path_group)",
+      "few=too_few_paths/many=too_many_paths/group=missing_path_group/fpatch=forbidden_patch_pattern)",
   );
   return lines.join("\n");
 }

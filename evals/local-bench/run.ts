@@ -27,7 +27,7 @@ import {
   writeCheckConfig,
   type CaseManifest,
 } from "./lib/cases.js";
-import { computeQualityFlags, verdict } from "./lib/flags.js";
+import { computeQualityFlags, verdict, classifyOracleFailure } from "./lib/flags.js";
 import { formatReport, type ResultRow } from "./report.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -49,7 +49,7 @@ const opt = (f: string) => {
 };
 
 type Check = CaseManifest["check"];
-interface CheckRun { code: number | null; timedOut: boolean }
+interface CheckRun { code: number | null; timedOut: boolean; output: string }
 
 function runCheck(ws: string, check: Check): CheckRun {
   const r = spawnSync("/bin/bash", ["-c", check.command], {
@@ -60,7 +60,7 @@ function runCheck(ws: string, check: Check): CheckRun {
     maxBuffer: 16 * 1024 * 1024,
   });
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || r.signal === "SIGKILL";
-  return { code: r.status, timedOut };
+  return { code: r.status, timedOut, output: redactSecrets((r.stdout ?? "") + (r.stderr ?? "")) };
 }
 
 function git(ws: string, args: string[]) {
@@ -217,8 +217,13 @@ async function scoreCase(
     forbiddenChangedPaths: m.check.forbiddenChangedPaths,
     requiredTestPaths: m.check.requiredTestPaths,
     reproInvalid,
+    forbiddenPatchPatterns: m.check.forbiddenPatchPatterns,
   });
   const v = verdict(finalCheck.code === 0, flags);
+  // Phase 6F: when the graded oracle fails, classify WHY (from the case's hints).
+  const oracleFailureCategory = v.tests_passed
+    ? null
+    : classifyOracleFailure(m.check.oracleFailureHints, finalCheck.output);
 
   // Redacted artifacts so a failure is inspectable without re-running.
   await writeFile(path.join(runDir, "patch.diff"), redactSecrets(patch), "utf8");
@@ -245,6 +250,7 @@ async function scoreCase(
     // Derived signals: separate "the fix was correct" from "a policy blocked it".
     bug_fixed_by_oracle: v.tests_passed,
     quality_blocked: v.tests_passed && !v.quality_passed,
+    oracle_failure_category: oracleFailureCategory,
   };
   await writeFile(path.join(runDir, "result.json"), JSON.stringify(row, null, 2), "utf8");
   if (!keepWorkdir) await rm(ws, { recursive: true, force: true });

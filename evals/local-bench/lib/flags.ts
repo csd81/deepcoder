@@ -28,6 +28,8 @@ export interface QualityInput {
   requiredTestPaths?: string[];
   /** True when the agent's own regression test did NOT go red on the buggy baseline (runner-computed). */
   reproInvalid?: boolean;
+  /** Phase 6F: regex (strings) the patch must NOT contain (added lines) → `forbidden_patch_pattern`. */
+  forbiddenPatchPatterns?: string[];
   /** Minimum changed paths; fewer flags `too_few_changed_paths`. 0/undefined = no constraint. */
   minChangedPaths?: number;
   /** Maximum changed paths; more flags `too_many_changed_paths`. 0/undefined = no constraint. */
@@ -118,6 +120,9 @@ export function computeQualityFlags(input: QualityInput): string[] {
     for (const pat of input.forbiddenPatterns) {
       if (safeMatch(pat, added)) flags.add("forbidden_pattern");
     }
+    for (const pat of input.forbiddenPatchPatterns ?? []) {
+      if (safeMatch(pat, added)) flags.add("forbidden_patch_pattern");
+    }
     for (const pat of input.requiredPatterns) {
       if (!safeMatch(pat, added)) flags.add("missing_required_pattern");
     }
@@ -145,6 +150,30 @@ export function verdict(testsPassed: boolean, qualityFlags: string[]): {
 } {
   const quality_passed = qualityFlags.length === 0;
   return { tests_passed: testsPassed, quality_passed, solved: testsPassed && quality_passed };
+}
+
+/** Phase 6F: a hint mapping a substring/regex in oracle output to a failure category. */
+export interface OracleFailureHint {
+  pattern: string;
+  category: string;
+}
+
+/** 6F failure taxonomy (for reference / validation). "unknown" = unclassified. */
+export const ORACLE_FAILURE_CATEGORIES = [
+  "wrong_location", "partial_fix", "invariant_broken", "backcompat_broken",
+  "edge_case_missing", "test_only_fix", "overfit", "unknown",
+] as const;
+
+/**
+ * Classify a failing oracle run into a category from the case's hints: the first
+ * hint whose pattern matches the (already-redacted) oracle output wins; "unknown"
+ * if none match. Pure + deterministic so it's unit-testable.
+ */
+export function classifyOracleFailure(hints: OracleFailureHint[] | undefined, output: string): string {
+  for (const h of hints ?? []) {
+    if (h.pattern && safeMatch(h.pattern, output)) return h.category;
+  }
+  return "unknown";
 }
 
 /** A malformed case regex must never crash the runner — treat it as "no match". */

@@ -87,6 +87,11 @@ See `plans/phase5-verification-workflows-plan.md`.
     test. New harness fields `minChangedPaths`/`maxChangedPaths`/`requiredChangedPathGroups` (flags
     `too_few_changed_paths`/`too_many_changed_paths`/`missing_required_path_group`). No-model
     acceptance green (55 cases). Live `repo-hard` run is a separate decision.
+- [~] **6F correctness-hard bench** (`plans/phase6f-correctness-hard-local-bench-plan.md`): harness
+  v1 shipped — `forbiddenPatchPatterns`→`forbidden_patch_pattern`, `oracleFailureHints`→
+  `oracle_failure_category` classification (wrong_location/partial_fix/invariant_broken/…), and
+  `requiredBehaviorNotes` recorded as metadata for the later reviewer gate; report shows oracle
+  failures by category. The 10–20-file correctness-hard cases are deferred to follow-up iterations.
 - [ ] follow-ups: wire the read-only `reviewer` subagent as an LLM quality gate; consider a
   non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding); expand the
   hard set toward the full "Hard 20" once the first 5 discriminate.
