@@ -109,7 +109,11 @@ See `plans/phase5-verification-workflows-plan.md`.
   **non-TTY never auto-applies** (writes a `.deepcoder/isolation-*.patch` artifact); gitignored paths
   excluded; cleanup confined to the temp worktree; auto-checkpoint disabled during isolated runs.
   `/isolation status|diff|apply|discard|path`. v1 git-only (copy backend deferred). Composes with 7A.
-- [ ] **7B lifecycle hooks** (`plans/phase7b-lifecycle-hooks-plan.md`) — reuse the sandbox runner.
+- [~] **7B lifecycle hooks** — MVP shipped (`plans/phase7b-mvp-pretooluse-plan.md`): **PreToolUse**
+  hooks (`src/hooks/`) run after the permission policy allows/approves a tool, before execute, and
+  may deny (exit 2 / `{"decision":"deny"}`); never override a policy/headless deny; sandboxed
+  (network off), fail-open, redacted; disabled by default; `/hooks` status. Deferred: Post*/Session*/
+  UserPromptSubmit events, context injection, runtime enable/disable, project-trust mechanism.
 - [ ] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`).
 
 ## Non-goals (for now)
