@@ -44,6 +44,13 @@ export interface AgentDeps {
    * `decision: "deny"` blocks the tool; anything else proceeds. Undefined = no hooks.
    */
   onPreToolUse?(toolName: string, invocation: ToolInvocation, ctx: ToolContext): Promise<import("../hooks/types.js").HookOutcome | undefined>;
+  /**
+   * Post-tool lifecycle hook (Phase 7B). Fired after a tool produces a result,
+   * with `failed` reflecting `result.isError` (PostToolUse vs PostToolFailure).
+   * Advisory only — it may surface warnings but can never block or undo a tool
+   * that already ran. Returned warnings are reported via `onNotice`.
+   */
+  onPostTool?(failed: boolean, toolName: string, invocation: ToolInvocation, result: ToolResult): Promise<string[] | undefined>;
 }
 
 /**
@@ -178,6 +185,16 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       deps.onToolResult?.(call.name, result);
       pushToolResult(messages, call.id, call.name, result.output);
       await deps.onPersist?.();
+
+      // Post-tool hooks are advisory: they observe the result but can't undo it.
+      if (deps.onPostTool) {
+        try {
+          const warnings = await deps.onPostTool(!!result.isError, call.name, invocation, result);
+          for (const w of warnings ?? []) deps.onNotice?.(`hook: ${w}`);
+        } catch {
+          // an advisory post-hook must never break the loop
+        }
+      }
     }
   }
 

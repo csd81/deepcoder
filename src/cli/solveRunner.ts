@@ -8,6 +8,20 @@ import { runSolveLoop } from "../solve/solver.js";
 import type { SolveOptions, SolveResult } from "../solve/types.js";
 import { Git } from "../workspace/git.js";
 import { redactSecrets } from "../workspace/redact.js";
+import { hookCtx, hooksFor } from "./repl.js";
+import { runAdvisoryHooks } from "../hooks/runner.js";
+import type { HookEvent } from "../hooks/types.js";
+
+/** Build an advisory solve hook for `event`; null if no such hooks are enabled. */
+function solveHook(session: Session, event: HookEvent, key: string) {
+  return async (payload: Record<string, unknown>): Promise<string[]> => {
+    const list = hooksFor(session, event);
+    if (!list) return [];
+    const out = await runAdvisoryHooks(event, list, [key], payload, hookCtx(session));
+    for (const w of out.warnings) stdout.write(chalk.yellow(`\nhook: ${w}\n`));
+    return out.context;
+  };
+}
 
 /**
  * Drive the closed-loop solver for one task and render progress + a final
@@ -65,6 +79,8 @@ export async function runSolveCommand(
         checkStreaming = true;
         stdout.write(chalk.dim(chunk));
       },
+      onPostCheck: (info) => solveHook(session, "PostCheck", opts.checkName)({ check: info }),
+      onSolveAttemptEnd: (info) => solveHook(session, "SolveAttemptEnd", opts.checkName)({ solve: info }),
     });
 
     if (session.config.solveTelemetry) {

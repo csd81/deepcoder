@@ -114,11 +114,17 @@ See `plans/phase5-verification-workflows-plan.md`.
   **non-TTY never auto-applies** (writes a `.deepcoder/isolation-*.patch` artifact); gitignored paths
   excluded; cleanup confined to the temp worktree; auto-checkpoint disabled during isolated runs.
   `/isolation status|diff|apply|discard|path`. v1 git-only (copy backend deferred). Composes with 7A.
-- [~] **7B lifecycle hooks** — MVP shipped (`plans/phase7b-mvp-pretooluse-plan.md`): **PreToolUse**
-  hooks (`src/hooks/`) run after the permission policy allows/approves a tool, before execute, and
-  may deny (exit 2 / `{"decision":"deny"}`); never override a policy/headless deny; sandboxed
-  (network off), fail-open, redacted; disabled by default; `/hooks` status. Deferred: Post*/Session*/
-  UserPromptSubmit events, context injection, runtime enable/disable, project-trust mechanism.
+- [x] **7B lifecycle hooks** — full V1 event set shipped (`plans/phase7b-lifecycle-hooks-plan.md`):
+  **PreToolUse** is the one *blocking* event (deny via exit 2 / `{"decision":"deny"}`; never overrides
+  a policy/headless deny). All other V1 events are *advisory* (`runAdvisoryHooks`): **PostToolUse**/
+  **PostToolFailure** (agentLoop, surfaced via `onNotice`), **SessionStart**/**UserPromptSubmit**/
+  **SessionEnd** (repl), and **PostCheck**/**SolveAttemptEnd** (solver). Advisory hooks may WARN
+  (any message / nonzero exit) and, for the allowlist `SessionStart|UserPromptSubmit|PostCheck|
+  SolveAttemptEnd`, inject **context** that is folded into the system prompt / user turn / retry
+  prompt. All hooks: sandboxed (network forced off), bounded timeout, fed the event payload on stdin,
+  fail-open, output redacted; disabled by default; `/hooks [enable|disable]` lists every event and
+  toggles for the session. Deferred: HTTP/MCP/LLM hooks, exec-form, the project-trust mechanism
+  (arbitrary-code-exec gate — design before enabling project hooks by default).
 - [x] **7E isolation dependency provisioning** (`src/workspaceIsolation/provision.ts`,
   `plans/phase7e-isolation-dependency-provisioning-plan.md`): a worktree of HEAD has no gitignored
   deps, so JS/py checks couldn't run in it (hand-symlinked all session). Now symlinks an allowlist

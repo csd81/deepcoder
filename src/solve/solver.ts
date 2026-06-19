@@ -23,6 +23,14 @@ export interface SolveDeps {
    * so the solver core stays free of git/SWE logic. Failures are swallowed.
    */
   snapshotPatch?: () => Promise<{ hash: string; bytes: number } | null>;
+  /**
+   * Advisory lifecycle hooks (Phase 7B), injected by the caller so the solver
+   * core stays free of hook/sandbox wiring. Each returns context strings to fold
+   * into the next retry prompt (and surfaces its own warnings). Failures are
+   * swallowed. PostCheck fires after each check; SolveAttemptEnd after each attempt.
+   */
+  onPostCheck?: (info: { name: string; exitCode: number | null; timedOut: boolean; runId: string }) => Promise<string[]>;
+  onSolveAttemptEnd?: (info: { attempt: number; maxAttempts: number; checkPassed: boolean; checkRunId: string }) => Promise<string[]>;
 }
 
 /**
@@ -109,6 +117,20 @@ export async function runSolveLoop(
       runId: run.id,
     });
 
+    // Advisory hooks (Phase 7B). Their injected context (if any) is folded into
+    // the retry prompt below; failures never affect the solve.
+    const hookContext: string[] = [];
+    const fireHook = async (fn?: () => Promise<string[]>) => {
+      if (!fn) return;
+      try {
+        hookContext.push(...(await fn()));
+      } catch {
+        /* advisory hooks must never break the solve */
+      }
+    };
+    await fireHook(deps.onPostCheck && (() => deps.onPostCheck!({ name: opts.checkName, exitCode: run.exitCode, timedOut: run.timedOut, runId: run.id })));
+    await fireHook(deps.onSolveAttemptEnd && (() => deps.onSolveAttemptEnd!({ attempt: i, maxAttempts: opts.maxAttempts, checkPassed: passed, checkRunId: run.id })));
+
     if (passed) {
       attempts.push({
         index: i,
@@ -135,7 +157,9 @@ export async function runSolveLoop(
     });
 
     if (i < opts.maxAttempts) {
-      session.messages.push({ role: "user", content: buildRetryPrompt(failureSummary, i) });
+      const retry = buildRetryPrompt(failureSummary, i);
+      const withContext = hookContext.length ? `${retry}\n\n[hook context]\n${hookContext.join("\n")}` : retry;
+      session.messages.push({ role: "user", content: withContext });
       deps.onProgress?.({ type: "retrying", index: i });
     }
   }

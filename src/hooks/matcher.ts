@@ -1,32 +1,40 @@
 import type { HookConfig, PreToolUseInput } from "./types.js";
 
 /**
- * Filter hooks whose matcher (regex, tested against input.tool OR input.command)
- * match. A hook with no matcher matches all inputs. An invalid regex is silently
- * skipped (never throws).
+ * Core matcher: keep hooks whose matcher matches ANY of the given keys. A hook
+ * with no matcher matches everything. `*` (or empty) matches all. `a|b` is an
+ * exact-alternative list. Otherwise the matcher is a JavaScript regex. An
+ * invalid regex is silently skipped (fail-open — never throws).
  */
-export function matchHooks(hooks: HookConfig[], input: PreToolUseInput): HookConfig[] {
+export function matchHooksByKeys(hooks: HookConfig[], keys: (string | undefined)[]): HookConfig[] {
+  const present = keys.filter((k): k is string => k !== undefined);
   const result: HookConfig[] = [];
   for (const h of hooks) {
-    if (!h.matcher) {
+    if (!h.matcher || h.matcher === "*") {
       result.push(h);
+      continue;
+    }
+    // Exact-alternative form "a|b|c" — match a whole key exactly.
+    if (/^[\w$.|-]+$/.test(h.matcher) && h.matcher.includes("|")) {
+      const alts = new Set(h.matcher.split("|"));
+      if (present.some((k) => alts.has(k))) result.push(h);
       continue;
     }
     let re: RegExp;
     try {
       re = new RegExp(h.matcher);
     } catch {
-      // Invalid regex — skip this hook silently (fail-open).
-      continue;
+      continue; // invalid regex — skip (fail-open)
     }
-    if (re.test(input.tool)) {
-      result.push(h);
-      continue;
-    }
-    if (input.command !== undefined && re.test(input.command)) {
-      result.push(h);
-      continue;
-    }
+    if (present.some((k) => re.test(k))) result.push(h);
   }
   return result;
+}
+
+/**
+ * Filter PreToolUse hooks whose matcher matches the tool name OR the command.
+ * Kept as the stable entry point for the blocking pre-tool path.
+ */
+export function matchHooks(hooks: HookConfig[], input: PreToolUseInput): HookConfig[] {
+  return matchHooksByKeys(hooks, [input.tool, input.command]);
 }

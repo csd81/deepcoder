@@ -8,7 +8,8 @@ import type { ModelProvider, AgentMessage } from "../providers/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext, ToolInvocation, ToolPreview, ToolResult, Todo } from "../tools/types.js";
 import { runAgentLoop, type AgentDeps } from "../agent/agentLoop.js";
-import { runPreToolUseHooks } from "../hooks/runner.js";
+import { runPreToolUseHooks, runAdvisoryHooks, type HookRunContext } from "../hooks/runner.js";
+import type { HookEvent } from "../hooks/types.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { promptForApproval } from "../permissions/prompt.js";
@@ -65,6 +66,52 @@ function preToolUseHook(session: Session): AgentDeps["onPreToolUse"] {
       { workspaceRoot: root, sandbox: session.config.sandbox, signal: ctx.signal },
     );
   };
+}
+
+export function hookCtx(session: Session): HookRunContext {
+  return {
+    workspaceRoot: session.executionRoot ?? session.config.workspaceRoot,
+    sandbox: session.config.sandbox,
+  };
+}
+
+/** Hooks configured for `event`, or null when hooks are disabled / none configured. */
+export function hooksFor(session: Session, event: HookEvent) {
+  const hooks = session.config.hooks;
+  const list = hooks?.events?.[event];
+  if (!hooks?.enabled || !list || list.length === 0) return null;
+  return list;
+}
+
+/**
+ * Build the post-tool advisory hook callback (Phase 7B). PostToolUse fires after
+ * a successful tool, PostToolFailure after a failed one; both are advisory.
+ */
+function postToolHook(session: Session): AgentDeps["onPostTool"] {
+  if (!session.config.hooks?.enabled) return undefined;
+  if (!hooksFor(session, "PostToolUse") && !hooksFor(session, "PostToolFailure")) return undefined;
+  return async (failed, toolName, invocation) => {
+    const event: HookEvent = failed ? "PostToolFailure" : "PostToolUse";
+    const list = hooksFor(session, event);
+    if (!list) return undefined;
+    const out = await runAdvisoryHooks(
+      event,
+      list,
+      [toolName, invocation.command],
+      { tool: { name: toolName, command: invocation.command } },
+      hookCtx(session),
+    );
+    return out.warnings;
+  };
+}
+
+/** Fire a session-level advisory event (no matcher keys); returns injected context. */
+async function fireSessionEvent(session: Session, event: HookEvent, payload: Record<string, unknown> = {}): Promise<string[]> {
+  const list = hooksFor(session, event);
+  if (!list) return [];
+  const out = await runAdvisoryHooks(event, list, [], payload, hookCtx(session));
+  for (const w of out.warnings) stdout.write(chalk.yellow(`\nhook: ${w}\n`));
+  return out.context;
 }
 
 export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
@@ -135,6 +182,7 @@ async function runTask(session: Session): Promise<void> {
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
     approve: (inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview),
     onPreToolUse: preToolUseHook(session),
+    onPostTool: postToolHook(session),
     onPersist: () => session.store.save(snapshot(session)),
     onAssistantTextDelta: (chunk) => {
       if (!streaming) {
@@ -250,6 +298,9 @@ export async function runRepl(session: Session): Promise<void> {
       chalk.dim("Type a task, or /help for commands.\n"),
   );
 
+  // SessionStart hooks (Phase 7B): injected context is appended to the system prompt.
+  await injectSessionStartContext(session);
+
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
     while (true) {
@@ -266,7 +317,10 @@ export async function runRepl(session: Session): Promise<void> {
         continue;
       }
 
-      session.messages.push({ role: "user", content: input });
+      // UserPromptSubmit hooks (Phase 7B): may warn and inject context for this turn.
+      const extra = await fireSessionEvent(session, "UserPromptSubmit", { prompt: input });
+      const content = extra.length ? `${input}\n\n[hook context]\n${extra.join("\n")}` : input;
+      session.messages.push({ role: "user", content });
       await session.store.save(snapshot(session));
       try {
         await runTask(session);
@@ -275,7 +329,18 @@ export async function runRepl(session: Session): Promise<void> {
       }
     }
   } finally {
+    await fireSessionEvent(session, "SessionEnd");
     rl.close();
     await session.mcp?.closeAll();
+  }
+}
+
+/** Append SessionStart hook context to the system message (best-effort). */
+async function injectSessionStartContext(session: Session): Promise<void> {
+  const extra = await fireSessionEvent(session, "SessionStart");
+  if (extra.length === 0) return;
+  const sys = session.messages[0];
+  if (sys?.role === "system") {
+    sys.content += `\n\n## Session hook context (non-authoritative)\n${extra.join("\n")}`;
   }
 }

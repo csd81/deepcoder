@@ -6,6 +6,7 @@ import { resolveReadPathInWorkspace, displayPath } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { renderTodos } from "../tools/todoWrite.js";
+import type { HookEvent } from "../hooks/types.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
@@ -472,15 +473,36 @@ export async function handleSlashCommand(
 
     case "hooks": {
       const h = config.hooks;
-      const pre = h?.events?.PreToolUse ?? [];
-      console.log(
-        `enabled: ${h?.enabled ? "yes" : "no"}\n` +
-          `PreToolUse hooks: ${pre.length}` +
-          (pre.length
-            ? "\n" + pre.map((k) => `  - ${k.name}${k.matcher ? ` (matcher: ${k.matcher})` : " (all tools)"}`).join("\n")
-            : "") +
-          (h?.enabled ? "" : chalk.dim("\n(hooks are disabled; set hooks.enabled in .deepcoder/config.json)")),
-      );
+      const sub = arg.trim().toLowerCase();
+      // Runtime enable/disable (Phase 7B). Persists for this session only.
+      if (sub === "enable" || sub === "disable") {
+        h.enabled = sub === "enable";
+        console.log(chalk.dim(`hooks ${h.enabled ? "enabled" : "disabled"} for this session.`));
+        return { consumed: true };
+      }
+      const order: HookEvent[] = [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolFailure",
+        "PostCheck",
+        "SolveAttemptEnd",
+        "SessionEnd",
+      ];
+      const lines: string[] = [`enabled: ${h?.enabled ? "yes" : "no"}`];
+      let total = 0;
+      for (const ev of order) {
+        const list = h?.events?.[ev] ?? [];
+        if (list.length === 0) continue;
+        total += list.length;
+        lines.push(`${ev}:`);
+        for (const k of list) lines.push(`  - ${k.name}${k.matcher ? ` (matcher: ${k.matcher})` : " (all)"}`);
+      }
+      if (total === 0) lines.push(chalk.dim("(no hooks configured in .deepcoder/config.json)"));
+      if (!h?.enabled) lines.push(chalk.dim("(disabled — /hooks enable, or set hooks.enabled in config)"));
+      lines.push(chalk.dim("PreToolUse may block; all other events are advisory (warn / inject context)."));
+      console.log(lines.join("\n"));
       return { consumed: true };
     }
 
@@ -597,7 +619,7 @@ export async function handleSlashCommand(
           "/research <q>    run a read-only researcher subagent to explain the codebase",
           "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
-          "/hooks           show configured PreToolUse lifecycle hooks (Phase 7B)",
+          "/hooks [enable|disable]  show lifecycle hooks; toggle them for this session (Phase 7B)",
           "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
           "/memory [sub]    show | remember <fact> | forget <pattern>  (Phase 8B)",
           "/index [code|symbols [name]|impact <file>|tests <file>]  index/symbols/impact/test-targeting (8C)",
