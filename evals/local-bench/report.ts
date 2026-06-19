@@ -29,6 +29,14 @@ export interface ResultRow {
   quality_blocked?: boolean;
   /** Phase 6F: when the oracle failed, the inferred failure category (else null). */
   oracle_failure_category?: string | null;
+  /** Phase 8D: preflight was performed before attempt 1. */
+  preflight_performed?: boolean;
+  /** Number of explorer tool calls during preflight. */
+  preflight_explorer_turns?: number;
+  /** Number of files cited in the preflight brief. */
+  preflight_files_cited?: number;
+  /** Bytes of advisory brief injected by preflight. */
+  preflight_context_bytes?: number;
 }
 
 const COLS = [
@@ -79,15 +87,21 @@ function groupBreakdown(scored: ResultRow[], key: (r: ResultRow) => string | und
 export function formatReport(rows: ResultRow[]): string {
   const lines: string[] = [];
   const scored = rows.filter((r) => !r.skipped);
-  lines.push(
-    `${"case".padEnd(34)} ${"slv"} ${"tst"} ${"qual"} ${"att"} ${"bytes".padStart(6)}  ${COLS.join(" ")}`,
-  );
-  lines.push("-".repeat(96));
+  const hasPreflight = scored.some((r) => r.preflight_performed);
+  const preflightCols = hasPreflight
+    ? ["pf", "pft", "pff", "pfb"]
+    : [];
+  const header = `${"case".padEnd(34)} ${"slv"} ${"tst"} ${"qual"} ${"att"} ${"bytes".padStart(6)}  ${COLS.join(" ")}${preflightCols.length ? "  " + preflightCols.join(" ") : ""}`;
+  lines.push(header);
+  lines.push("-".repeat(header.length));
   for (const r of rows) {
     if (r.skipped) {
       lines.push(`${r.id.padEnd(34)} ${"SKIP (malformed / buggy already passes)"}`);
       continue;
     }
+    const preflightCells = hasPreflight
+      ? `  ${r.preflight_performed ? "Y" : "."}  ${String(r.preflight_explorer_turns ?? 0).padStart(2)}  ${String(r.preflight_files_cited ?? 0).padStart(2)}  ${String(r.preflight_context_bytes ?? 0).padStart(4)}`
+      : "";
     lines.push(
       `${r.id.padEnd(34)} ` +
         `${r.solved ? "Y" : "."}   ` +
@@ -95,10 +109,11 @@ export function formatReport(rows: ResultRow[]): string {
         `${r.quality_passed ? "Y" : "."}    ` +
         `${String(r.attempts).padStart(3)} ` +
         `${String(r.patch_bytes).padStart(6)}  ` +
-        COLS.map((c) => flagCell(r, c).padEnd(c.length)).join(" "),
+        COLS.map((c) => flagCell(r, c).padEnd(c.length)).join(" ") +
+        preflightCells,
     );
   }
-  lines.push("-".repeat(96));
+  lines.push("-".repeat(header.length));
   const n = scored.length;
   const solved = scored.filter((r) => r.solved).length;
   const testsPassed = scored.filter((r) => r.tests_passed).length;
