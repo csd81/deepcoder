@@ -6,6 +6,12 @@ import { DEFAULT_SANDBOX, type SandboxConfig } from "../../src/sandbox/types.js"
 import { loadConfig } from "../../src/config/config.js";
 import { runBashTool } from "../../src/tools/runBash.js";
 import type { ToolContext } from "../../src/tools/types.js";
+import { runCheck } from "../../src/checks/runner.js";
+import { handleSlashCommand } from "../../src/cli/slashCommands.js";
+import type { Session } from "../../src/cli/repl.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const cfg = (over: Partial<SandboxConfig> = {}): SandboxConfig => ({ ...DEFAULT_SANDBOX, ...over });
 
@@ -86,6 +92,60 @@ test("wrapCommand: explicit bubblewrap with fallback=fail refuses unsafe local f
       /bwrap|bubblewrap|sandbox/i,
     );
   } finally {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    _resetBwrapCache();
+  }
+});
+
+test("wrapCommand: a deferred explicit mode (docker) with fallback=fail must NOT silently run local", () => {
+  // Bug #1: docker/podman/runsc/sandbox-exec are configurable but unimplemented.
+  // With fail-closed semantics they must refuse, not degrade to unsandboxed local.
+  assert.throws(
+    () => wrapCommand({ command: "echo UNSANDBOXED", workspaceRoot: "/repo" }, cfg({ mode: "docker", fallback: "fail" })),
+    /docker|sandbox|not.*(available|supported|implemented)/i,
+  );
+  // But without fail-closed, degrading to local (unsandboxed) is acceptable.
+  const lax = wrapCommand({ command: "echo ok", workspaceRoot: "/repo" }, cfg({ mode: "docker", fallback: "local" }));
+  assert.equal(lax.sandboxed, false);
+});
+
+test("runCheck: a no-newline output flood stays bounded in the live stream (no unbounded buffering)", async () => {
+  // Bug #2: linePending grows until a newline; a single endless line is a local DoS.
+  const ws = await mkdtemp(path.join(tmpdir(), "sb-flood-"));
+  let emitted = 0;
+  try {
+    const r = await runCheck(
+      "flood",
+      { command: `node -e "process.stdout.write('x'.repeat(2000000))"`, timeoutMs: 30_000 },
+      { workspaceRoot: ws, signal: new AbortController().signal, onData: (c) => { emitted += c.length; } },
+    );
+    assert.equal(r.exitCode, 0);
+    assert.ok(emitted <= 600_000, `live output must be bounded; emitted ${emitted} bytes for a 2MB no-newline flood`);
+  } finally {
+    await rm(ws, { recursive: true, force: true });
+  }
+});
+
+test("/sandbox status surfaces fail-closed config instead of claiming it runs locally", async () => {
+  // Bug #3: status computed resolveBackend(mode) without fallback, so a
+  // fail-closed config was shown as "running locally".
+  const logs: string[] = [];
+  const orig = console.log;
+  console.log = (...a: unknown[]) => { logs.push(a.map(String).join(" ")); };
+  const oldPath = process.env.PATH;
+  process.env.PATH = "/definitely/no/bwrap/here";
+  _resetBwrapCache();
+  try {
+    const session = {
+      config: { sandbox: cfg({ mode: "bubblewrap", fallback: "fail" }), workspaceRoot: "/repo" },
+    } as unknown as Session;
+    await handleSlashCommand("/sandbox", session, async () => {});
+    const out = logs.join("\n");
+    assert.match(out, /fail/i, "fail-closed status must be surfaced");
+    assert.doesNotMatch(out, /running locally/i, "must not claim it runs locally when it would fail closed");
+  } finally {
+    console.log = orig;
     if (oldPath === undefined) delete process.env.PATH;
     else process.env.PATH = oldPath;
     _resetBwrapCache();

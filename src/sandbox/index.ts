@@ -43,7 +43,14 @@ export function resolveBackend(mode: SandboxMode, fallback?: SandboxFallback): R
       }
       return "local";
     default:
-      return "local"; // docker/podman/runsc/sandbox-exec deferred to a later phase
+      // docker/podman/runsc/sandbox-exec deferred to a later phase
+      if (fallback === "fail") {
+        throw new Error(
+          `Sandbox mode "${mode}" is not yet implemented — cannot sandbox. ` +
+            'Set sandbox.mode to "fast", "local", or "off" to proceed without isolation.',
+        );
+      }
+      return "local";
   }
 }
 

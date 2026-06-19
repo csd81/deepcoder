@@ -54,8 +54,27 @@ export async function runCheck(name: string, check: CheckConfig, opts: RunCheckO
   // Redact the LIVE stream on line boundaries so a secret split across chunks
   // isn't emitted un-redacted (the persisted log is redacted wholesale too).
   let linePending = "";
+  let linePendingOverflow = false;
+  const LINE_PENDING_MAX = 512 * 1024; // 512 KB cap to prevent unbounded buffering
   const emit = (chunk: string) => {
+    if (linePendingOverflow) {
+      // Once we've overflowed, keep looking for a newline to reset, but don't
+      // accumulate more data (prevents unbounded buffering / local DoS).
+      const nl = chunk.indexOf("\n");
+      if (nl !== -1) {
+        linePending = chunk.slice(nl + 1);
+        linePendingOverflow = false;
+        opts.onData?.(redactSecrets(chunk.slice(0, nl + 1)));
+      }
+      return;
+    }
     linePending += chunk;
+    if (linePending.length > LINE_PENDING_MAX) {
+      opts.onData?.(redactSecrets(linePending.slice(0, LINE_PENDING_MAX)));
+      linePending = "";
+      linePendingOverflow = true;
+      return;
+    }
     const nl = linePending.lastIndexOf("\n");
     if (nl !== -1) {
       opts.onData?.(redactSecrets(linePending.slice(0, nl + 1)));

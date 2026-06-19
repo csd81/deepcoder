@@ -316,10 +316,17 @@ export async function handleSlashCommand(
       } else if (sub) {
         console.log(chalk.dim("usage: /sandbox [off|fast|local|bubblewrap | network on|off]"));
       }
-      const backend = resolveBackend(sb.mode);
-      const note = (sb.mode === "fast" || sb.mode === "bubblewrap") && backend === "local"
-        ? chalk.yellow(" (bwrap unavailable — running locally)")
-        : "";
+      let backend: string;
+      let note = "";
+      try {
+        backend = resolveBackend(sb.mode, sb.fallback);
+        if ((sb.mode === "fast" || sb.mode === "bubblewrap") && backend === "local") {
+          note = chalk.yellow(" (bwrap unavailable — running locally)");
+        }
+      } catch (e) {
+        backend = (e as Error).message;
+        note = chalk.red(" (fail-closed — will refuse to run)");
+      }
       console.log(
         `mode: ${sb.mode}\n` +
           `backend: ${backend}${note}\n` +
