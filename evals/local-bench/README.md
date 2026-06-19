@@ -27,8 +27,26 @@ npm run eval:local -- --case node-18-public-check-trap
 npm run eval:local:report                     # re-print the newest run's summary
 ```
 Flags: `--lang node|python` · `--case <id>` · `--cases a,b` · `--max-cases N` · `--keep-workdir` ·
-`--no-report` · `--selftest` · `--fake-solve <fixed|noop>`. Artifacts (redacted) per run land under
-`runs/<ts>/<case>/`: `result.json`, `patch.diff`, `telemetry.jsonl`, `stdout.log` (gitignored).
+`--no-report` · `--selftest` · `--fake-solve <fixed|noop>` · `--preflight`. Artifacts (redacted) per run
+land under `runs/<ts>/<case>/`: `result.json`, `patch.diff`, `telemetry.jsonl`, `stdout.log` (gitignored).
+
+### Preflight comparison (Phase 8D, opt-in)
+
+`--preflight` runs the context preflight (deterministic plan + read-only explorer subagent) before
+solve attempt 1, injecting a compact advisory brief. It only changes behaviour on **live** runs (the
+explorer needs a model); `--selftest` and `--fake-solve` are unaffected. The report adds four columns
+when any row used preflight: `pf` (performed), `pft` (explorer tool calls), `pff` (files cited),
+`pfb` (brief bytes injected), sourced from the solve telemetry.
+
+```bash
+# Run the same case set with and without preflight, then compare:
+npm run eval:local -- --lang node                 # baseline
+npm run eval:local -- --lang node --preflight     # with preflight
+```
+
+**Decision rule:** preflight is worth keeping on only if, versus the baseline, it reduces wasted
+reads/searches, reduces attempts, improves the solve rate (especially on `*-hard-*` / `repo-hard-*`),
+or yields a better first-edit location. If it only adds latency, keep it opt-in (default off).
 
 ## Case format — `cases/<id>/`
 ```

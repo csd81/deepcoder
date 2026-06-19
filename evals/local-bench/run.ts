@@ -47,6 +47,7 @@ const opt = (f: string) => {
   const i = argv.indexOf(f);
   return i !== -1 ? argv[i + 1] : undefined;
 };
+const preflight = has("--preflight");
 
 type Check = CaseManifest["check"];
 interface CheckRun { code: number | null; timedOut: boolean; output: string }
@@ -102,12 +103,20 @@ function sha(s: string): string {
 
 interface Attempt { patchHash?: string | null; patchBytes?: number | null; checkTimedOut?: boolean }
 
-function solveReal(ws: string, m: CaseManifest, telemetryPath: string): string {
-  const r = spawnSync(
-    process.execPath,
-    [CLI, "--mode", "auto", "--solve", "--check", m.check.name, "--solve-attempts",
-      String(m.check.solveAttempts), "--telemetry", telemetryPath, m.issue],
-    {
+interface TelemetryRecord {
+  attempts: Attempt[];
+  preflightPerformed?: boolean;
+  preflightExplorerTurns?: number;
+  preflightFilesCited?: number;
+  preflightContextBytes?: number;
+}
+
+function solveReal(ws: string, m: CaseManifest, telemetryPath: string, preflight?: boolean): string {
+  const args = [CLI, "--mode", "auto", "--solve", "--check", m.check.name, "--solve-attempts",
+    String(m.check.solveAttempts), "--telemetry", telemetryPath];
+  if (preflight) args.push("--preflight");
+  args.push(m.issue);
+  const r = spawnSync(process.execPath, args, {
       cwd: ws,
       encoding: "utf8",
       input: "", // empty stdin -> EOF -> headless approval auto-denies (issue #2)
@@ -120,7 +129,7 @@ function solveReal(ws: string, m: CaseManifest, telemetryPath: string): string {
   return (r.stdout ?? "") + (r.stderr ?? "");
 }
 
-async function readTelemetry(p: string): Promise<{ attempts: Attempt[] } | null> {
+async function readTelemetry(p: string): Promise<TelemetryRecord | null> {
   if (!existsSync(p)) return null;
   try {
     return JSON.parse(await readFile(p, "utf8"));
@@ -185,7 +194,7 @@ async function scoreCase(
   } else if (fakeSolve === "noop") {
     stdout = "[fake-solve noop] made no change";
   } else {
-    stdout = solveReal(ws, m, telemetryPath);
+    stdout = solveReal(ws, m, telemetryPath, preflight);
   }
 
   // Capture the agent's patch BEFORE the oracle is applied, so the oracle never
@@ -251,6 +260,11 @@ async function scoreCase(
     bug_fixed_by_oracle: v.tests_passed,
     quality_blocked: v.tests_passed && !v.quality_passed,
     oracle_failure_category: oracleFailureCategory,
+    // Phase 8D: preflight telemetry (only present when --preflight was used).
+    preflight_performed: tel?.preflightPerformed ?? false,
+    preflight_explorer_turns: tel?.preflightExplorerTurns ?? 0,
+    preflight_files_cited: tel?.preflightFilesCited ?? 0,
+    preflight_context_bytes: tel?.preflightContextBytes ?? 0,
   };
   await writeFile(path.join(runDir, "result.json"), JSON.stringify(row, null, 2), "utf8");
   if (!keepWorkdir) await rm(ws, { recursive: true, force: true });
