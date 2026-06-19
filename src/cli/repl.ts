@@ -1,5 +1,7 @@
 import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import chalk from "chalk";
 import type { ApprovalMode, Config } from "../config/config.js";
 import type { ModelProvider, AgentMessage } from "../providers/types.js";
@@ -67,10 +69,22 @@ function preToolUseHook(session: Session): AgentDeps["onPreToolUse"] {
 
 export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
   const { text } = loadInstructions(config.workspaceRoot);
+  // Project memory (8B): the control plane is the real workspace root, so memory
+  // persists/loads there even under workspace isolation.
+  const memory = loadStartupMemorySync(config.workspaceRoot);
   return {
     role: "system",
-    content: buildSystemPrompt({ workspaceRoot: config.workspaceRoot, mode, instructions: text, solve: config.solve }),
+    content: buildSystemPrompt({ workspaceRoot: config.workspaceRoot, mode, instructions: text, solve: config.solve, memory }),
   };
+}
+
+/** Synchronous MEMORY.md read for the system prompt (best-effort; "" when none). */
+function loadStartupMemorySync(workspaceRoot: string): string {
+  try {
+    return readFileSync(path.join(workspaceRoot, ".deepcoder", "memory", "MEMORY.md"), "utf8");
+  } catch {
+    return "";
+  }
 }
 
 function snapshot(session: Session): SessionSnapshot {

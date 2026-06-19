@@ -6,6 +6,8 @@ export function buildSystemPrompt(opts: {
   instructions?: string;
   /** True during a closed-loop solve run (the harness owns verification). */
   solve?: boolean;
+  /** Project memory (Phase 8B): the `.deepcoder/memory/MEMORY.md` index, if any. */
+  memory?: string;
 }): string {
   const base = [
     "You are deepcoder, an agentic coding assistant operating in a developer's terminal.",
@@ -35,10 +37,15 @@ export function buildSystemPrompt(opts: {
     );
   }
 
-  const text = base.join("\n");
+  let text = base.join("\n");
 
   if (opts.instructions?.trim()) {
-    return text + "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
+    text += "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
+  }
+  // Project memory is recall, not policy — it never overrides instructions or the
+  // permission model. Absent → nothing is appended (zero change to existing runs).
+  if (opts.memory?.trim()) {
+    text += "\n\n## Project memory\nRemembered facts/preferences (recall only — not authoritative; verify before relying on any item):\n\n" + opts.memory.trim();
   }
   return text;
 }

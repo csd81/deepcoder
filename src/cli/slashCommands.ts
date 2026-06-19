@@ -14,6 +14,7 @@ import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { resolveBackend } from "../sandbox/index.js";
 import { discoverSkills } from "../skills/discovery.js";
+import { loadStartupMemory, listTopics, remember, forget } from "../memory/store.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
@@ -339,6 +340,49 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "memory": {
+      const [sub, ...restParts] = arg.split(/\s+/);
+      const subArg = restParts.join(" ").trim();
+      const root = config.workspaceRoot;
+      if (sub === "remember") {
+        if (!subArg) {
+          console.log(chalk.dim("usage: /memory remember <fact>"));
+          return { consumed: true };
+        }
+        const res = await remember(root, subArg);
+        console.log(res.ok ? chalk.dim(`remembered → ${res.file}`) : chalk.red(`not stored: ${res.reason}`));
+      } else if (sub === "forget") {
+        if (!subArg) {
+          console.log(chalk.dim("usage: /memory forget <pattern>"));
+          return { consumed: true };
+        }
+        const preview = await forget(root, subArg, { apply: false });
+        if (preview.length === 0) {
+          console.log(chalk.dim("no matching memory lines."));
+          return { consumed: true };
+        }
+        console.log(`will remove ${preview.length} line(s):`);
+        for (const m of preview) console.log(chalk.red(`  - ${m.text.trim()}`));
+        if (await confirm("Remove these memory lines?")) {
+          await forget(root, subArg, { apply: true });
+          console.log(chalk.dim("removed."));
+        } else {
+          console.log(chalk.dim("kept."));
+        }
+      } else {
+        // show
+        const mem = await loadStartupMemory(root);
+        const topics = await listTopics(root);
+        if (!mem && topics.length === 0) {
+          console.log(chalk.dim("No memory yet. Add with /memory remember <fact> (writes .deepcoder/memory/MEMORY.md)."));
+        } else {
+          if (mem) console.log(mem.trim());
+          if (topics.length) console.log(chalk.dim(`\ntopic files: ${topics.join(", ")}`));
+        }
+      }
+      return { consumed: true };
+    }
+
     case "skills": {
       // 7C1: discover + list. `reload` is a no-op marker (discovery is on-demand).
       const skills = await discoverSkills(config.workspaceRoot);
@@ -488,6 +532,7 @@ export async function handleSlashCommand(
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
           "/hooks           show configured PreToolUse lifecycle hooks (Phase 7B)",
           "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
+          "/memory [sub]    show | remember <fact> | forget <pattern>  (Phase 8B)",
           "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",

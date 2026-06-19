@@ -131,6 +131,14 @@ See `plans/phase5-verification-workflows-plan.md`.
   disclosure catalog, and `/skills` listing. Deferred: the `activate_skill` tool, system-prompt
   catalog injection, session persistence, trust-approval flow, and script-backed skills (7C2).
 
+## Phase 8 — Context intelligence (in progress)
+
+- [~] **8B inspectable local memory** (`src/memory/`, `plans/phase8b-inspectable-local-memory-plan.md`):
+  plain-markdown `.deepcoder/memory/MEMORY.md` store — `loadStartupMemory` (bounded) is injected into
+  the system prompt as non-authoritative recall *only when the file exists* (zero change otherwise);
+  `/memory show|remember|forget` (remember refuses secret-looking content; forget previews then
+  applies). Deferred: auto-memory candidate generation, inbox, config block, session extraction.
+
 ## Non-goals (for now)
 
 - IDE/GUI integration — this is a terminal-first tool
