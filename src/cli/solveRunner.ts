@@ -26,7 +26,7 @@ export async function runSolveCommand(
   // Telemetry (headless eval only): hash the working-tree patch each attempt so
   // we can detect repeated/empty edits. Git stays out of the solver core.
   const wantTelemetry = !!session.config.solveTelemetry;
-  const git = wantTelemetry ? new Git(session.config.workspaceRoot) : null;
+  const git = wantTelemetry ? new Git(session.executionRoot ?? session.config.workspaceRoot) : null;
   const isRepo = git ? await git.isRepo() : false;
   const snapshotPatch = wantTelemetry
     ? async () => {

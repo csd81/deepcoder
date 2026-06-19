@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import chalk from "chalk";
+import { stdin, stdout } from "node:process";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { loadConfig, type ApprovalMode } from "../config/config.js";
 import type { SandboxMode } from "../sandbox/types.js";
+import type { WorkspaceIsolationMode } from "../workspaceIsolation/types.js";
+import { createIsolatedWorkspace, WorkspaceIsolationError } from "../workspaceIsolation/index.js";
+import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { runOneShot, runRepl, systemMessage, type Session } from "./repl.js";
@@ -34,6 +40,8 @@ program
   .option("--solve-attempts <n>", "max attempts in --solve mode (default 3)")
   .option("--telemetry <path>", "write a solve telemetry JSON to this path (headless eval)")
   .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
+  .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
+  .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
   .action(
     async (
       promptParts: string[],
@@ -48,6 +56,8 @@ program
         solveAttempts?: string;
         telemetry?: string;
         sandbox?: string;
+        workspaceIsolation?: string;
+        workspaceIsolationIncludeDirty?: boolean;
       },
     ) => {
     const baseConfig = loadConfig({
@@ -61,6 +71,14 @@ program
         : {}),
       ...(opts.telemetry ? { solveTelemetry: opts.telemetry } : {}),
       ...(opts.sandbox ? { sandbox: { mode: opts.sandbox as SandboxMode } } : {}),
+      ...(opts.workspaceIsolation || opts.workspaceIsolationIncludeDirty
+        ? {
+            workspaceIsolation: {
+              ...(opts.workspaceIsolation ? { mode: opts.workspaceIsolation as WorkspaceIsolationMode } : {}),
+              ...(opts.workspaceIsolationIncludeDirty ? { includeDirty: true } : {}),
+            },
+          }
+        : {}),
     });
 
     if (opts.listSessions) {
@@ -71,10 +89,15 @@ program
     }
 
     const session = await buildSession(baseConfig, opts.resume);
+    await setupIsolation(session);
 
     const prompt = promptParts.join(" ").trim();
-    if (prompt) await runOneShot(session, prompt);
-    else await runRepl(session);
+    try {
+      if (prompt) await runOneShot(session, prompt);
+      else await runRepl(session);
+    } finally {
+      await finalizeIsolation(session);
+    }
   });
 
 async function buildSession(
@@ -121,6 +144,7 @@ async function buildSession(
       store: new SessionStore(config.workspaceRoot, id, saved.createdAt),
       messages,
       mode: saved.mode,
+      executionRoot: config.workspaceRoot,
       todos: saved.todos,
       readTracker: new Set(saved.readTracker),
       writeTracker: new Set(saved.writeTracker ?? []),
@@ -137,6 +161,7 @@ async function buildSession(
     store: new SessionStore(config.workspaceRoot, newSessionId()),
     messages: [systemMessage(config, config.approvalMode)],
     mode: config.approvalMode,
+    executionRoot: config.workspaceRoot,
     todos: [],
     readTracker: new Set<string>(),
     writeTracker: new Set<string>(),
@@ -144,6 +169,87 @@ async function buildSession(
     mcp,
     recorder,
   };
+}
+
+/**
+ * If workspace isolation is enabled, create a disposable git worktree and point
+ * the session's EXECUTION root at it (file tools + checks). The control plane
+ * (config, sessions, MCP) stays on config.workspaceRoot. A setup failure (non-git
+ * / dirty tree) aborts the run rather than silently editing the live repo.
+ */
+async function setupIsolation(session: Session): Promise<void> {
+  const iso = session.config.workspaceIsolation;
+  if (iso.mode === "off") return;
+  try {
+    const ws = await createIsolatedWorkspace(session.config.workspaceRoot, iso);
+    session.isolation = ws;
+    session.executionRoot = ws.isolatedRoot;
+    stdout.write(
+      chalk.cyan(`workspace isolation: ${iso.mode}\n`) +
+        chalk.dim(`isolated workspace: ${ws.isolatedRoot}\nthe real repo changes only if you apply the patch\n`),
+    );
+  } catch (err) {
+    if (err instanceof WorkspaceIsolationError) {
+      throw new Error(`Workspace isolation: ${err.message}`);
+    }
+    throw err;
+  }
+}
+
+/**
+ * After an isolated run, present the patch and either apply it (interactive
+ * confirm) or, in non-TTY/headless mode, write a patch artifact and refuse to
+ * auto-apply — so CI never silently mutates the live tree. Then clean up unless
+ * configured to keep the workspace.
+ */
+async function finalizeIsolation(session: Session): Promise<void> {
+  const ws = session.isolation;
+  if (!ws) return;
+  const iso = session.config.workspaceIsolation;
+  let applied = false;
+  try {
+    const changed = await ws.changedFiles();
+    if (changed.length === 0) {
+      stdout.write(chalk.dim("\nworkspace isolation: no changes were made.\n"));
+      return;
+    }
+    stdout.write(chalk.bold(`\nworkspace isolation — ${changed.length} changed file(s):\n`));
+    for (const f of changed) stdout.write(`  ${f}\n`);
+
+    if (!stdin.isTTY) {
+      // Headless: never auto-apply. Persist a patch artifact under the REAL root.
+      const artifact = path.join(session.config.workspaceRoot, ".deepcoder", `isolation-${session.store.id}.patch`);
+      await writeFile(artifact, await ws.diff(), "utf8");
+      stdout.write(
+        chalk.yellow(`\nnot applied (headless). patch written to:\n  ${artifact}\n`) +
+          chalk.dim(`apply with: git apply --whitespace=nowarn "${artifact}"\n`),
+      );
+      return;
+    }
+
+    const ok = await confirm("Apply this patch to the real workspace?");
+    if (!ok) {
+      stdout.write(chalk.dim("discarded — the real workspace is unchanged.\n"));
+      return;
+    }
+    try {
+      await ws.applyPatchToRealRoot({ force: false });
+      applied = true;
+      stdout.write(chalk.green("applied to the real workspace.\n"));
+    } catch (err) {
+      stdout.write(
+        chalk.red(`\napply failed: ${(err as Error).message}\n`) +
+          chalk.dim("the real workspace is unchanged; keeping the isolated workspace for inspection.\n"),
+      );
+    }
+  } finally {
+    const keep = applied ? iso.keepOnSuccess : iso.keepOnFailure;
+    if (iso.mode === "keep" || keep) {
+      stdout.write(chalk.dim(`isolated workspace kept at: ${ws.isolatedRoot}\n`));
+    } else {
+      await ws.cleanup();
+    }
+  }
 }
 
 /** Connect configured MCP servers and register their tools. Returns undefined

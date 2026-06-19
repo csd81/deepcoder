@@ -279,7 +279,7 @@ export async function handleSlashCommand(
       process.once("SIGINT", onSigint);
       try {
         const run = await runCheck(name, check, {
-          workspaceRoot: config.workspaceRoot,
+          workspaceRoot: session.executionRoot ?? config.workspaceRoot, // isolated worktree when isolation is active
           signal: controller.signal,
           onData: (chunk) => stdout.write(chunk), // already redacted by the runner
           sandbox: config.sandbox,
@@ -335,6 +335,48 @@ export async function handleSlashCommand(
           `workspaceWrite: ${sb.workspaceWrite}\n` +
           `workspace: ${config.workspaceRoot}`,
       );
+      return { consumed: true };
+    }
+
+    case "isolation": {
+      const ws = session.isolation;
+      const sub = arg.trim().toLowerCase();
+      if (!ws) {
+        console.log(
+          chalk.dim(
+            `workspace isolation: off (mode ${session.config.workspaceIsolation.mode})\n` +
+              "start a run with --workspace-isolation patch to isolate file edits.",
+          ),
+        );
+        return { consumed: true };
+      }
+      if (sub === "path") {
+        console.log(ws.isolatedRoot);
+      } else if (sub === "diff") {
+        console.log((await ws.diff()) || chalk.dim("(no changes)"));
+      } else if (sub === "apply") {
+        try {
+          await ws.applyPatchToRealRoot({ force: false });
+          console.log(chalk.green("applied isolated changes to the real workspace."));
+        } catch (err) {
+          console.log(chalk.red(`apply failed: ${(err as Error).message}`));
+        }
+      } else if (sub === "discard") {
+        await ws.cleanup();
+        session.isolation = undefined;
+        session.executionRoot = config.workspaceRoot;
+        console.log(chalk.dim("discarded isolated workspace; edits now target the real workspace."));
+      } else {
+        const changed = await ws.changedFiles();
+        console.log(
+          `mode: ${session.config.workspaceIsolation.mode}\n` +
+            `backend: ${ws.backend}\n` +
+            `isolated: ${ws.isolatedRoot}\n` +
+            `real: ${ws.realRoot}\n` +
+            `changed files: ${changed.length}${changed.length ? `\n  ${changed.join("\n  ")}` : ""}\n` +
+            chalk.dim("usage: /isolation [status|diff|apply|discard|path]"),
+        );
+      }
       return { consumed: true };
     }
 
@@ -409,6 +451,7 @@ export async function handleSlashCommand(
           "/research <q>    run a read-only researcher subagent to explain the codebase",
           "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
+          "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",
           "/solve <chk> <t> edit→run check→retry until it passes or budget runs out",

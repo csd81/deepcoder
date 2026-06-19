@@ -1,10 +1,16 @@
 import "dotenv/config";
 import { loadFileConfig, type McpServerConfig, type CheckConfig } from "./fileConfig.js";
 import { DEFAULT_SANDBOX, type SandboxConfig, type SandboxMode } from "../sandbox/types.js";
+import {
+  DEFAULT_WORKSPACE_ISOLATION,
+  type WorkspaceIsolationConfig,
+  type WorkspaceIsolationMode,
+} from "../workspaceIsolation/types.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
 ];
+const WS_ISOLATION_MODES: WorkspaceIsolationMode[] = ["off", "patch", "keep"];
 
 export type ApprovalMode = "ask" | "auto" | "readonly";
 export type CheckpointMode = "off" | "manual" | "auto";
@@ -60,6 +66,12 @@ export interface Config {
    * Precedence: CLI `--sandbox` > `DEEPCODER_SANDBOX` env > config file > default `fast`.
    */
   sandbox: SandboxConfig;
+  /**
+   * Workspace isolation policy. When not "off", agent file edits + checks run in
+   * a disposable git worktree (execution plane); config/sessions stay on the real
+   * root (control plane). Precedence: `--workspace-isolation` > env > file > off.
+   */
+  workspaceIsolation: WorkspaceIsolationConfig;
 }
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -89,10 +101,13 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
 
-export type ConfigOverrides = Partial<Omit<Config, "sandbox">> & { sandbox?: Partial<SandboxConfig> };
+export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation">> & {
+  sandbox?: Partial<SandboxConfig>;
+  workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
+};
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
-  const { sandbox: sandboxOverride, ...rest } = overrides;
+  const { sandbox: sandboxOverride, workspaceIsolation: wsIsoOverride, ...rest } = overrides;
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";
   const workspaceRoot = overrides.workspaceRoot ?? process.cwd();
   const file = loadFileConfig(workspaceRoot);
@@ -103,6 +118,13 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...DEFAULT_SANDBOX,
     ...(file.sandbox ?? {}),
     ...(SANDBOX_MODES.includes(envMode as SandboxMode) ? { mode: envMode as SandboxMode } : {}),
+  };
+
+  const envIso = (process.env.DEEPCODER_WORKSPACE_ISOLATION || "").toLowerCase();
+  const workspaceIsolation: WorkspaceIsolationConfig = {
+    ...DEFAULT_WORKSPACE_ISOLATION,
+    ...(file.workspaceIsolation ?? {}),
+    ...(WS_ISOLATION_MODES.includes(envIso as WorkspaceIsolationMode) ? { mode: envIso as WorkspaceIsolationMode } : {}),
   };
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
@@ -150,5 +172,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     // A CLI partial (e.g. {mode}) layers on top of the file/env-resolved sandbox
     // rather than replacing it wholesale.
     sandbox: { ...sandbox, ...(sandboxOverride ?? {}) },
+    workspaceIsolation: { ...workspaceIsolation, ...(wsIsoOverride ?? {}) },
   };
 }

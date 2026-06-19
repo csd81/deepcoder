@@ -52,7 +52,7 @@ export async function runSolveLoop(
     };
   }
 
-  const root = session.config.workspaceRoot;
+  const root = session.executionRoot ?? session.config.workspaceRoot; // isolated worktree when isolation is active
   // Attempt 1 starts from the task; later attempts append retry evidence.
   session.messages.push({ role: "user", content: task });
 

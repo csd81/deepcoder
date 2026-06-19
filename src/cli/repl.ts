@@ -24,6 +24,14 @@ export interface Session {
   store: SessionStore;
   messages: AgentMessage[];
   mode: ApprovalMode;
+  /**
+   * Execution root override for file tools, run_bash, and checks. Defaults to
+   * config.workspaceRoot when unset; points at an isolated git worktree when
+   * workspace isolation is active (control plane stays on config.workspaceRoot).
+   */
+  executionRoot?: string;
+  /** Active isolated workspace (Phase 7D); undefined when isolation is off. */
+  isolation?: import("../workspaceIsolation/types.js").IsolatedWorkspace;
   todos: Todo[];
   readTracker: Set<string>;
   /** Absolute real paths the agent has mutated this session. */
@@ -64,14 +72,17 @@ async function runTask(session: Session): Promise<void> {
   const onSigint = () => controller.abort();
   process.once("SIGINT", onSigint);
 
+  // Disable checkpointing during an isolated run: the disposable worktree is
+  // itself the undo boundary, and the recorder is keyed to the real root.
+  const checkpointing = session.recorder && !session.isolation;
   const ctx: ToolContext = {
-    workspaceRoot: session.config.workspaceRoot,
+    workspaceRoot: session.executionRoot ?? session.config.workspaceRoot,
     signal: controller.signal,
     sandbox: session.config.sandbox,
     readTracker: session.readTracker,
     writeTracker: session.writeTracker,
-    capturePreImage: session.recorder ? (p) => session.recorder!.capture(p) : undefined,
-    recordPostWrite: session.recorder ? (p) => session.recorder!.recordPostWrite(p) : undefined,
+    capturePreImage: checkpointing ? (p) => session.recorder!.capture(p) : undefined,
+    recordPostWrite: checkpointing ? (p) => session.recorder!.recordPostWrite(p) : undefined,
     todos: session.todos,
     history: session.messages,
   };
@@ -122,7 +133,7 @@ async function runTask(session: Session): Promise<void> {
     process.removeListener("SIGINT", onSigint);
     // auto mode: finalize a checkpoint even if the run errored or was aborted,
     // so files the agent already wrote always have a rollback point.
-    if (session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {
+    if (!session.isolation && session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {
       try {
         const id = await session.recorder.finalize(completed ? "auto" : "auto:interrupted");
         if (id) stdout.write(chalk.dim(`Checkpoint ${id} saved (${completed ? "auto" : "auto:interrupted"}). /rollback ${id} to undo.\n`));

@@ -177,6 +177,43 @@ the sandbox.
   off|fast|local|bubblewrap` and `/sandbox network on|off` adjust it for the session.
 - Smoke test (only runs if `bwrap` is installed): `npm run sandbox:smoke`.
 
+## Workspace isolation (Phase 7D)
+
+Where sandboxing isolates **commands**, workspace isolation isolates **file
+mutations**: with it on, the agent edits a disposable git worktree of `HEAD`, and
+your real repo changes only when you apply the resulting patch. The two compose —
+`--workspace-isolation patch --sandbox fast` is the safest "try the agent" mode.
+
+```jsonc
+// .deepcoder/config.json
+{
+  "workspaceIsolation": {
+    "mode": "off",          // off | patch | keep
+    "backend": "auto",      // v1 is git-only (auto/git-worktree); copy deferred
+    "includeDirty": false,  // refuse isolation on an uncommitted tree unless true
+    "keepOnSuccess": false,
+    "keepOnFailure": true
+  }
+}
+```
+
+- **Control plane stays on the real root** (config, sessions, MCP, provider env,
+  project instructions); only the **execution root** (file tools, `run_bash`,
+  checks) moves to the worktree. So `--solve --check` still finds your configured
+  check even though `.deepcoder/` isn't in the worktree.
+- Precedence: `--workspace-isolation <mode>` > `DEEPCODER_WORKSPACE_ISOLATION` >
+  config > default `off`. `--workspace-isolation-include-dirty` opts past the
+  dirty-tree refusal (a `HEAD` worktree omits uncommitted edits → stale code).
+- After a run: changed files are listed and you confirm apply (`git apply --check`
+  first, so a live-tree change can't be clobbered). **Non-TTY/headless never
+  auto-applies** — it writes a `.deepcoder/isolation-*.patch` artifact instead.
+- Safety: agent file tools never get the real root; the patch excludes gitignored
+  paths (`.env`, `.deepcoder/`); a failed/rejected run leaves the real repo
+  untouched; cleanup is confined to the temp worktree. Auto-checkpointing is
+  disabled during an isolated run (the worktree is the undo boundary).
+- Slash commands: `/isolation status | diff | apply | discard | path`. v1 is
+  **git-only** (non-git workspaces are refused with a clear message).
+
 ## Context management (large/long sessions)
 
 - **Compaction** — when the conversation passes
@@ -336,6 +373,7 @@ src/
   subagents/    read-only review subagent (profiles, runner, result parsing)
   checks/       user-invoked verification runner (gated, bounded, quarantined)
   sandbox/      tool-level sandbox (bubblewrap/local) for run_bash + checks
+  workspaceIsolation/  disposable git worktree for agent edits + patch apply
   session/      session persistence + resume, checkpoints, check-run store
   workspace/    path confinement, git helpers, sensitive-path guard
   config/       env + .deepcoder/config.json loading

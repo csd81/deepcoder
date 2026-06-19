@@ -100,6 +100,15 @@ See `plans/phase5-verification-workflows-plan.md`.
   available else local; bwrap binds workspace rw, system dirs ro, private `/tmp`, clears env (no
   API-key leak), never mounts home/docker-sock. `/sandbox` status + toggles; `npm run sandbox:smoke`.
   Docker/podman/runsc + sandbox-expansion prompts deferred.
+- [x] **7D workspace isolation** (`src/workspaceIsolation/`, `plans/phase7d-workspace-isolation-plan.md`):
+  agent file edits run in a disposable git worktree of HEAD; the real repo changes only on explicit
+  patch apply. Control plane (config/sessions/MCP/instructions) stays on the real root; only the
+  execution root (file tools, run_bash, checks) moves — so `--solve --check` still resolves its
+  config. `--workspace-isolation off|patch|keep` + `--workspace-isolation-include-dirty` (+ env/file;
+  precedence CLI>env>file>off). Refuses non-git + dirty trees; `git apply --check` before apply;
+  **non-TTY never auto-applies** (writes a `.deepcoder/isolation-*.patch` artifact); gitignored paths
+  excluded; cleanup confined to the temp worktree; auto-checkpoint disabled during isolated runs.
+  `/isolation status|diff|apply|discard|path`. v1 git-only (copy backend deferred). Composes with 7A.
 - [ ] **7B lifecycle hooks** (`plans/phase7b-lifecycle-hooks-plan.md`) — reuse the sandbox runner.
 - [ ] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`).
 

@@ -18,12 +18,14 @@ export interface CheckConfig {
 }
 
 import type { SandboxConfig } from "../sandbox/types.js";
+import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
   mcpServers?: Record<string, McpServerConfig>;
   checks?: Record<string, CheckConfig>;
   sandbox?: Partial<SandboxConfig>;
+  workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -46,6 +48,15 @@ const sandboxSchema = z.object({
   extraMounts: z.array(z.object({ path: z.string().min(1), mode: z.enum(["ro", "rw"]) })).optional(),
   timeoutMs: z.number().int().positive().max(600_000).optional(),
   fallback: z.enum(["ask", "local", "fail"]).optional(),
+});
+
+const workspaceIsolationSchema = z.object({
+  mode: z.enum(["off", "patch", "keep"]).optional(),
+  backend: z.enum(["auto", "git-worktree", "copy"]).optional(),
+  keepOnSuccess: z.boolean().optional(),
+  keepOnFailure: z.boolean().optional(),
+  includeDirty: z.boolean().optional(),
+  exclude: z.array(z.string()).optional(),
 });
 
 /**
@@ -107,7 +118,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "sandbox": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
-  return { mcpServers, checks, sandbox };
+  const rawIso = (parsed as { workspaceIsolation?: unknown }).workspaceIsolation;
+  let workspaceIsolation: Partial<WorkspaceIsolationConfig> | undefined;
+  if (rawIso && typeof rawIso === "object") {
+    const result = workspaceIsolationSchema.safeParse(rawIso);
+    if (result.success) workspaceIsolation = result.data;
+    else warn(`ignoring "workspaceIsolation": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
+  return { mcpServers, checks, sandbox, workspaceIsolation };
 }
 
 function warn(msg: string): void {
