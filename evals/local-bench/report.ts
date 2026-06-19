@@ -19,9 +19,16 @@ export interface ResultRow {
   patch_bytes: number;
   timed_out: boolean;
   changed_files: string[];
+  /** Optional case metadata (hard cases set these; the original 40 omit them). */
+  category?: string;
+  difficulty?: string;
+  issue_hints_level?: string;
 }
 
-const COLS = ["empty", "huge", "unrelated", "test_only", "forbidden", "required", "repeated", "timeout"] as const;
+const COLS = [
+  "empty", "huge", "unrelated", "test_only", "forbidden", "required",
+  "repeated", "timeout", "exp", "fpath", "reqtest", "repro",
+] as const;
 
 function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
   if (col === "timeout") return row.timed_out ? "Y" : ".";
@@ -34,8 +41,28 @@ function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
     forbidden: has("forbidden_pattern"),
     required: has("missing_required_pattern"),
     repeated: has("repeated_patch"),
+    exp: has("missing_expected_change"),
+    fpath: has("forbidden_path_changed"),
+    reqtest: has("missing_required_test"),
+    repro: has("repro_invalid"),
   };
   return map[col] ? "Y" : ".";
+}
+
+/** solved/total broken down by a row key (e.g. difficulty or category). */
+function groupBreakdown(scored: ResultRow[], key: (r: ResultRow) => string | undefined): string[] {
+  const groups = new Map<string, { solved: number; total: number }>();
+  for (const r of scored) {
+    const k = key(r);
+    if (!k) continue;
+    const g = groups.get(k) ?? { solved: 0, total: 0 };
+    g.total++;
+    if (r.solved) g.solved++;
+    groups.set(k, g);
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([k, g]) => `  ${k.padEnd(24)} ${g.solved}/${g.total}`);
 }
 
 export function formatReport(rows: ResultRow[]): string {
@@ -76,9 +103,23 @@ export function formatReport(rows: ResultRow[]): string {
     const avg = (attemptsToSolve.reduce((a, b) => a + b, 0) / attemptsToSolve.length).toFixed(1);
     lines.push(`attempts-to-solve:     [${attemptsToSolve.join(", ")}] (avg ${avg})`);
   }
+
+  // Difficulty / category breakdowns (only when any row carries the metadata).
+  const byDifficulty = groupBreakdown(scored, (r) => r.difficulty);
+  if (byDifficulty.length) {
+    lines.push("\nby difficulty (solved/total):");
+    lines.push(...byDifficulty);
+  }
+  const byCategory = groupBreakdown(scored, (r) => r.category);
+  if (byCategory.length) {
+    lines.push("\nby category (solved/total):");
+    lines.push(...byCategory);
+  }
+
   lines.push(
     "\nlegend: slv=solved · tst=tests_passed · qual=quality_passed · att=attempts · " +
-      "flag cols Y=tripped (empty/huge/unrelated/test_only/forbidden/required/repeated/timeout)",
+      "flag cols Y=tripped (empty/huge/unrelated/test_only/forbidden/required/repeated/timeout/" +
+      "exp=missing_expected/fpath=forbidden_path/reqtest=missing_test/repro=repro_invalid)",
   );
   return lines.join("\n");
 }

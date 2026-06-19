@@ -64,8 +64,19 @@ See `plans/phase5-verification-workflows-plan.md`.
   (20 Node + 20 Python, `--lang` filter) numbered by increasing difficulty; `--selftest` /
   `--fake-solve fixed|noop` give a full no-model acceptance path. Documents a tiered iteration loop
   (Tier 0 unit → Tier 5 SWE smoke).
+- [~] **6C hard local-bench cases** (`evals/local-bench/`, branch `phase6c-hard-cases`): the 40
+  base cases became too easy (40/40 solved in one attempt), so the harness now *measures* harder
+  behavior — `expectedChangedPaths` / `forbiddenChangedPaths` / `requiredTestPaths` / `category` /
+  `difficulty` / `issueHintsLevel`, four new quality flags (`missing_expected_change`,
+  `forbidden_path_changed`, `missing_required_test`, `repro_invalid`), report grouping by
+  difficulty/category, and an independent **`oracle/` overlay** (the local equivalent of SWE-bench's
+  hidden FAIL_TO_PASS — an agent-authored repro test is measured but never self-grades). First **5
+  hard cases** (issue-derived-test, cache-invalidation, path-traversal, async-race,
+  config-precedence) with no-model acceptance (`--selftest` + `--fake-solve fixed|noop`). The live
+  5-case run is a separate explicit decision (decision rule: 5/5-in-one-attempt ⇒ still too easy).
 - [ ] follow-ups: wire the read-only `reviewer` subagent as an LLM quality gate; consider a
-  non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding).
+  non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding); expand the
+  hard set toward the full "Hard 20" once the first 5 discriminate.
 
 ## Non-goals (for now)
 

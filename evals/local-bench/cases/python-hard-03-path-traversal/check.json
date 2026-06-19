@@ -1,0 +1,23 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "security-validation",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [
+    "realpath|normpath|commonpath|abspath"
+  ],
+  "allowedPaths": [
+    "safe.py"
+  ],
+  "expectedChangedPaths": [
+    "safe.py"
+  ],
+  "forbiddenChangedPaths": [
+    "tests/test_safe.py"
+  ],
+  "requiredTestPaths": []
+}

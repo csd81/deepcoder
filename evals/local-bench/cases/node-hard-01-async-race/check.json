@@ -1,0 +1,21 @@
+{
+  "name": "unit",
+  "command": "node test.mjs",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "async-race",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "fetcher.mjs"
+  ],
+  "expectedChangedPaths": [
+    "fetcher.mjs"
+  ],
+  "forbiddenChangedPaths": [
+    "test.mjs"
+  ],
+  "requiredTestPaths": []
+}

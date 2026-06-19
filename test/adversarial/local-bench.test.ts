@@ -14,6 +14,7 @@ import {
   listCases,
   copyRepoInto,
   applyFixedOverlay,
+  applyOracleOverlay,
   writeCheckConfig,
 } from "../../evals/local-bench/lib/cases.js";
 import { formatReport, type ResultRow } from "../../evals/local-bench/report.js";
@@ -213,4 +214,150 @@ test("a case missing its command is rejected (malformed → runner can skip)", a
   await writeFile(path.join(caseDir, "issue.md"), "x", "utf8");
   await writeFile(path.join(caseDir, "check.json"), JSON.stringify({ name: "unit" }), "utf8");
   await assert.rejects(() => loadCase(caseDir), /non-empty "command"/);
+});
+
+// ── Phase 6C: hard-case harness fields + flags ──────────────────────────────
+
+const HARD_BASE = {
+  patch: "+++ b/src/lib.js\n+const x = 1;\n",
+  attempts: [],
+  forbiddenPatterns: [],
+  requiredPatterns: [],
+  allowedPaths: [] as string[],
+};
+
+test("missing_expected_change: an expected path not touched is flagged; touching it is clean", () => {
+  const missed = computeQualityFlags({ ...HARD_BASE, expectedChangedPaths: ["src/helper.js"] });
+  assert.ok(missed.includes("missing_expected_change"), "expected path src/helper.js was not touched");
+
+  const hit = computeQualityFlags({ ...HARD_BASE, expectedChangedPaths: ["src/lib.js"] });
+  assert.ok(!hit.includes("missing_expected_change"), "the expected path was touched");
+});
+
+test("forbidden_path_changed: editing a forbidden path is flagged (caller-only / test hack)", () => {
+  const flags = computeQualityFlags({
+    patch: "+++ b/tests/test_public.py\n+def test_x(): pass\n",
+    attempts: [],
+    forbiddenPatterns: [],
+    requiredPatterns: [],
+    allowedPaths: [],
+    forbiddenChangedPaths: ["tests/test_public.py"],
+  });
+  assert.ok(flags.includes("forbidden_path_changed"));
+});
+
+test("missing_required_test: no listed test added is flagged; adding one is clean", () => {
+  const codeOnly = computeQualityFlags({
+    patch: "+++ b/blueprints.py\n+raise ValueError('x')\n",
+    attempts: [],
+    forbiddenPatterns: [],
+    requiredPatterns: [],
+    allowedPaths: [],
+    requiredTestPaths: ["tests/test_regression.py"],
+  });
+  assert.ok(codeOnly.includes("missing_required_test"), "agent added code but no required test");
+
+  const withTest = computeQualityFlags({
+    patch: "+++ b/blueprints.py\n+raise ValueError('x')\n+++ b/tests/test_regression.py\n+def test_r(): pass\n",
+    attempts: [],
+    forbiddenPatterns: [],
+    requiredPatterns: [],
+    allowedPaths: [],
+    requiredTestPaths: ["tests/test_regression.py"],
+  });
+  assert.ok(!withTest.includes("missing_required_test"), "the required test was added");
+});
+
+test("repro_invalid: the runner-computed flag passes straight through to the verdict", () => {
+  const invalid = computeQualityFlags({ ...HARD_BASE, reproInvalid: true });
+  assert.ok(invalid.includes("repro_invalid"));
+  assert.equal(verdict(true, invalid).solved, false, "a green test with an invalid repro is not solved");
+
+  const valid = computeQualityFlags({ ...HARD_BASE, reproInvalid: false });
+  assert.ok(!valid.includes("repro_invalid"));
+});
+
+test("applyOracleOverlay restores the graded test even if the workspace overwrote it", async () => {
+  const caseDir = await mkdtemp(path.join(tmpdir(), "lb-oracle-case-"));
+  await mkdir(path.join(caseDir, "repo"), { recursive: true });
+  await writeFile(path.join(caseDir, "repo", "test.mjs"), "// weak public test\n", "utf8");
+  await mkdir(path.join(caseDir, "oracle"), { recursive: true });
+  await writeFile(path.join(caseDir, "oracle", "test.mjs"), "// STRONG oracle test\n", "utf8");
+  await writeFile(path.join(caseDir, "issue.md"), "fix it", "utf8");
+  await writeFile(
+    path.join(caseDir, "check.json"),
+    JSON.stringify({ name: "unit", command: "node test.mjs" }),
+    "utf8",
+  );
+
+  const m = await loadCase(caseDir);
+  assert.ok(m.oracleDir, "oracle/ should be detected");
+
+  const ws = await mkdtemp(path.join(tmpdir(), "lb-oracle-ws-"));
+  await copyRepoInto(m, ws);
+  // The agent tries to weaken/replace the graded test.
+  await writeFile(path.join(ws, "test.mjs"), "// agent overwrote the test to always pass\n", "utf8");
+
+  const applied = await applyOracleOverlay(m, ws);
+  assert.equal(applied, true);
+  assert.equal(
+    await readFile(path.join(ws, "test.mjs"), "utf8"),
+    "// STRONG oracle test\n",
+    "oracle must overwrite the agent's tampered test (agent cannot disable the oracle)",
+  );
+});
+
+test("loadCase parses the new fields and defaults them when absent (back-compat)", async () => {
+  const withFields = await mkdtemp(path.join(tmpdir(), "lb-fields-"));
+  await mkdir(path.join(withFields, "repo"), { recursive: true });
+  await writeFile(path.join(withFields, "issue.md"), "x", "utf8");
+  await writeFile(
+    path.join(withFields, "check.json"),
+    JSON.stringify({
+      command: "true",
+      category: "async-race",
+      difficulty: "hard",
+      issueHintsLevel: "vague",
+      expectedChangedPaths: ["a.js"],
+      forbiddenChangedPaths: ["test.mjs"],
+      requiredTestPaths: ["tests/t.py"],
+    }),
+    "utf8",
+  );
+  const m = await loadCase(withFields);
+  assert.equal(m.check.category, "async-race");
+  assert.equal(m.check.difficulty, "hard");
+  assert.equal(m.check.issueHintsLevel, "vague");
+  assert.deepEqual(m.check.expectedChangedPaths, ["a.js"]);
+  assert.deepEqual(m.check.forbiddenChangedPaths, ["test.mjs"]);
+  assert.deepEqual(m.check.requiredTestPaths, ["tests/t.py"]);
+
+  // Absent → safe defaults; the original 40 cases behave exactly as before.
+  const bare = await mkdtemp(path.join(tmpdir(), "lb-bare-"));
+  await mkdir(path.join(bare, "repo"), { recursive: true });
+  await writeFile(path.join(bare, "issue.md"), "x", "utf8");
+  await writeFile(path.join(bare, "check.json"), JSON.stringify({ command: "true" }), "utf8");
+  const d = await loadCase(bare);
+  assert.equal(d.check.difficulty, "easy");
+  assert.equal(d.check.issueHintsLevel, "direct");
+  assert.equal(d.check.category, "uncategorized");
+  assert.deepEqual(d.check.expectedChangedPaths, []);
+  assert.deepEqual(d.check.requiredTestPaths, []);
+  assert.equal(d.oracleDir, undefined);
+});
+
+test("report groups solved/total by difficulty and category", () => {
+  const rows: ResultRow[] = [
+    { id: "h1", tests_passed: true, quality_passed: true, solved: true, quality_flags: [], attempts: 1, patch_bytes: 10, timed_out: false, changed_files: ["x"], difficulty: "hard", category: "async-race" },
+    { id: "h2", tests_passed: true, quality_passed: false, solved: false, quality_flags: ["repro_invalid"], attempts: 1, patch_bytes: 10, timed_out: false, changed_files: ["y"], difficulty: "hard", category: "async-race" },
+    { id: "e1", tests_passed: true, quality_passed: true, solved: true, quality_flags: [], attempts: 1, patch_bytes: 10, timed_out: false, changed_files: ["z"], difficulty: "easy", category: "wrong-operator" },
+  ];
+  const out = formatReport(rows);
+  assert.match(out, /by difficulty/);
+  assert.match(out, /hard\s+1\/2/);
+  assert.match(out, /easy\s+1\/1/);
+  assert.match(out, /by category/);
+  assert.match(out, /async-race\s+1\/2/);
+  // repro_invalid surfaces in the flag legend/column
+  assert.match(out, /repro=repro_invalid/);
 });

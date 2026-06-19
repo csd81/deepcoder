@@ -7,6 +7,8 @@
 import { readFile, writeFile, mkdir, readdir, cp, stat } from "node:fs/promises";
 import path from "node:path";
 
+export type IssueHintsLevel = "direct" | "realistic" | "vague";
+
 export interface CheckSpec {
   name: string;
   command: string;
@@ -15,6 +17,18 @@ export interface CheckSpec {
   forbiddenPatterns: string[];
   requiredPatterns: string[];
   allowedPaths: string[];
+  /** Paths the fix is EXPECTED to touch (distinct from allowedPaths, which only bounds what MAY change). Empty = no constraint. */
+  expectedChangedPaths: string[];
+  /** Paths that must NOT change — catches caller-only or test-only hacks. Empty = no constraint. */
+  forbiddenChangedPaths: string[];
+  /** Test paths the agent must add/update a regression test at (issue-derived cases). Empty = no constraint. */
+  requiredTestPaths: string[];
+  /** Difficulty of the issue text (tracked + reported). */
+  issueHintsLevel: IssueHintsLevel;
+  /** Free-form category, e.g. "issue-derived-test", "async-race". */
+  category: string;
+  /** "easy" (default) | "hard". */
+  difficulty: string;
 }
 
 export interface CaseManifest {
@@ -25,6 +39,8 @@ export interface CaseManifest {
   check: CheckSpec;
   /** Absolute path to the optional fixed/ overlay, or undefined. */
   fixedDir?: string;
+  /** Absolute path to the optional oracle/ overlay (independent hidden test), or undefined. */
+  oracleDir?: string;
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -61,13 +77,20 @@ export async function loadCase(dir: string): Promise<CaseManifest> {
     forbiddenPatterns: asStringArray(c.forbiddenPatterns),
     requiredPatterns: asStringArray(c.requiredPatterns),
     allowedPaths: asStringArray(c.allowedPaths),
+    expectedChangedPaths: asStringArray(c.expectedChangedPaths),
+    forbiddenChangedPaths: asStringArray(c.forbiddenChangedPaths),
+    requiredTestPaths: asStringArray(c.requiredTestPaths),
+    issueHintsLevel: asHintsLevel(c.issueHintsLevel),
+    category: typeof c.category === "string" && c.category ? c.category : "uncategorized",
+    difficulty: typeof c.difficulty === "string" && c.difficulty ? c.difficulty : "easy",
   };
   const issue = await readFile(path.join(dir, "issue.md"), "utf8");
   const expected = (await exists(path.join(dir, "expected.md")))
     ? await readFile(path.join(dir, "expected.md"), "utf8")
     : "";
   const fixedDir = (await exists(path.join(dir, "fixed"))) ? path.join(dir, "fixed") : undefined;
-  return { id, dir, issue, expected, check, fixedDir };
+  const oracleDir = (await exists(path.join(dir, "oracle"))) ? path.join(dir, "oracle") : undefined;
+  return { id, dir, issue, expected, check, fixedDir, oracleDir };
 }
 
 /** Case ids under casesRoot (directories containing a check.json), sorted. */
@@ -95,6 +118,16 @@ export async function applyFixedOverlay(manifest: CaseManifest, dest: string): P
   return true;
 }
 
+/** Overlay the oracle/ files (independent, never-shown graded test) onto a
+ *  workspace. `force:true` means it RESTORES the canonical graded test even if
+ *  the agent overwrote that path — the agent cannot disable the oracle. Returns
+ *  false when the case ships no oracle/ (grading then uses the visible check). */
+export async function applyOracleOverlay(manifest: CaseManifest, dest: string): Promise<boolean> {
+  if (!manifest.oracleDir) return false;
+  await cp(manifest.oracleDir, dest, { recursive: true, force: true });
+  return true;
+}
+
 /** Materialize the visible check as .deepcoder/config.json (existing checks shape). */
 export async function writeCheckConfig(dest: string, check: CheckSpec): Promise<void> {
   await mkdir(path.join(dest, ".deepcoder"), { recursive: true });
@@ -104,4 +137,8 @@ export async function writeCheckConfig(dest: string, check: CheckSpec): Promise<
 
 function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+function asHintsLevel(v: unknown): IssueHintsLevel {
+  return v === "realistic" || v === "vague" ? v : "direct";
 }

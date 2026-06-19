@@ -1,0 +1,28 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "issue-derived-test",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [
+    "\\bassert\\b"
+  ],
+  "requiredPatterns": [
+    "raise ValueError"
+  ],
+  "allowedPaths": [
+    "blueprints.py",
+    "tests/test_regression.py"
+  ],
+  "expectedChangedPaths": [
+    "blueprints.py"
+  ],
+  "forbiddenChangedPaths": [
+    "tests/test_basic.py"
+  ],
+  "requiredTestPaths": [
+    "tests/test_regression.py"
+  ]
+}

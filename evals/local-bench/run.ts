@@ -11,7 +11,7 @@
 // → compute quality flags → write redacted artifacts → append results.jsonl.
 
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile, cp } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,6 +23,7 @@ import {
   listCases,
   copyRepoInto,
   applyFixedOverlay,
+  applyOracleOverlay,
   writeCheckConfig,
   type CaseManifest,
 } from "./lib/cases.js";
@@ -135,10 +136,14 @@ async function selfTest(cases: CaseManifest[]): Promise<number> {
       console.log(`BAD  ${m.id.padEnd(34)} (no fixed/ overlay to verify pass-on-fixed)`);
       continue;
     }
+    // Oracle cases are graded by the independent oracle overlay (the bare visible
+    // check may pass on the buggy repo); plain cases use the visible check directly.
     const buggy = await materialize(m, false);
+    if (m.oracleDir) await applyOracleOverlay(m, buggy);
     const failsOnBuggy = runCheck(buggy, m.check).code !== 0;
     await rm(buggy, { recursive: true, force: true });
     const fixed = await materialize(m, true);
+    if (m.oracleDir) await applyOracleOverlay(m, fixed);
     const passesOnFixed = runCheck(fixed, m.check).code === 0;
     await rm(fixed, { recursive: true, force: true });
     const wellFormed = failsOnBuggy && passesOnFixed;
@@ -155,12 +160,17 @@ async function scoreCase(
   fakeSolve: string | undefined,
   keepWorkdir: boolean,
 ): Promise<ResultRow> {
-  const ws = await materialize(m, false);
+  const hasOracle = !!m.oracleDir;
+  const ws = await materialize(m, false); // agent's workspace — NEVER seeded with the oracle
   gitBaseline(ws);
   await writeCheckConfig(ws, m.check);
 
-  // Sanity: the buggy repo must fail the check, else the case is malformed.
-  if (runCheck(ws, m.check).code === 0) {
+  // Sanity: prove the bug is real before spending a solve.
+  // - oracle case: the buggy repo WITH the independent oracle applied must FAIL
+  //   (the bare visible check may legitimately pass — the bug isn't visible-tested).
+  // - plain case: the buggy repo must FAIL the visible check (original behavior).
+  const realBug = hasOracle ? await oracleFailsOnBuggy(m) : runCheck(ws, m.check).code !== 0;
+  if (!realBug) {
     if (!keepWorkdir) await rm(ws, { recursive: true, force: true });
     return blankRow(m.id, { skipped: true });
   }
@@ -178,6 +188,8 @@ async function scoreCase(
     stdout = solveReal(ws, m, telemetryPath);
   }
 
+  // Capture the agent's patch BEFORE the oracle is applied, so the oracle never
+  // pollutes the recorded diff / quality flags.
   const patch = capturePatch(ws);
   const tel = fakeSolve ? null : await readTelemetry(telemetryPath);
   attempts = tel?.attempts ?? [
@@ -186,6 +198,13 @@ async function scoreCase(
       : { patchHash: sha(patch), patchBytes: Buffer.byteLength(patch) },
   ];
 
+  // If the case requires the agent to author a regression test, validate that the
+  // agent's test actually goes red on the buggy baseline (it must capture the bug).
+  const reproInvalid = await reproIsInvalid(m, ws, patch);
+
+  // Grade with the independent oracle when present (restores the canonical graded
+  // test even if the agent overwrote that path — the agent can't disable it).
+  if (hasOracle) await applyOracleOverlay(m, ws);
   const finalCheck = runCheck(ws, m.check);
   const timedOut = finalCheck.timedOut || attempts.some((a) => a.checkTimedOut);
   const flags = computeQualityFlags({
@@ -194,6 +213,10 @@ async function scoreCase(
     forbiddenPatterns: m.check.forbiddenPatterns,
     requiredPatterns: m.check.requiredPatterns,
     allowedPaths: m.check.allowedPaths,
+    expectedChangedPaths: m.check.expectedChangedPaths,
+    forbiddenChangedPaths: m.check.forbiddenChangedPaths,
+    requiredTestPaths: m.check.requiredTestPaths,
+    reproInvalid,
   });
   const v = verdict(finalCheck.code === 0, flags);
 
@@ -216,10 +239,46 @@ async function scoreCase(
     patch_bytes: Buffer.byteLength(patch),
     timed_out: timedOut,
     changed_files: changedFiles(patch),
+    category: m.check.category,
+    difficulty: m.check.difficulty,
+    issue_hints_level: m.check.issueHintsLevel,
   };
   await writeFile(path.join(runDir, "result.json"), JSON.stringify(row, null, 2), "utf8");
   if (!keepWorkdir) await rm(ws, { recursive: true, force: true });
   return row;
+}
+
+/** True iff the buggy repo, with the independent oracle applied, fails the check. */
+async function oracleFailsOnBuggy(m: CaseManifest): Promise<boolean> {
+  const probe = await materialize(m, false);
+  await applyOracleOverlay(m, probe);
+  const failed = runCheck(probe, m.check).code !== 0;
+  await rm(probe, { recursive: true, force: true });
+  return failed;
+}
+
+/** When the case requires an agent-authored regression test: copy the agent's
+ *  version of those test files onto a fresh buggy repo and confirm they go RED.
+ *  Returns true (repro_invalid) only when a test WAS added but does NOT capture
+ *  the bug (passes on buggy code). No required tests / none added → false
+ *  (`missing_required_test` covers the "added nothing" case). */
+async function reproIsInvalid(m: CaseManifest, solvedWs: string, patch: string): Promise<boolean> {
+  const required = m.check.requiredTestPaths;
+  if (required.length === 0) return false;
+  const changed = changedFiles(patch);
+  const addedTests = required.filter((t) =>
+    changed.some((p) => p === t || p.startsWith(t.replace(/\/+$/, "") + "/")),
+  );
+  if (addedTests.length === 0) return false; // nothing authored → not "invalid", just missing
+
+  const probe = await materialize(m, false);
+  for (const t of addedTests) {
+    await mkdir(path.dirname(path.join(probe, t)), { recursive: true });
+    await cp(path.join(solvedWs, t), path.join(probe, t), { recursive: true, force: true });
+  }
+  const red = runCheck(probe, m.check).code !== 0;
+  await rm(probe, { recursive: true, force: true });
+  return !red; // a test that stays GREEN on the buggy code did not capture the bug
 }
 
 function changedFiles(patch: string): string[] {
