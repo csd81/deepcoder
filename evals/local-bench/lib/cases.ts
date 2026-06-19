@@ -23,6 +23,12 @@ export interface CheckSpec {
   forbiddenChangedPaths: string[];
   /** Test paths the agent must add/update a regression test at (issue-derived cases). Empty = no constraint. */
   requiredTestPaths: string[];
+  /** Minimum number of changed paths the fix should touch (0 = no constraint). */
+  minChangedPaths: number;
+  /** Maximum number of changed paths the fix may touch (0 = no constraint). */
+  maxChangedPaths: number;
+  /** Each group: at least one path from the group must change (e.g. [["src/a","src/b"],["tests/"]]). Empty = no constraint. */
+  requiredChangedPathGroups: string[][];
   /** Difficulty of the issue text (tracked + reported). */
   issueHintsLevel: IssueHintsLevel;
   /** Free-form category, e.g. "issue-derived-test", "async-race". */
@@ -80,6 +86,9 @@ export async function loadCase(dir: string): Promise<CaseManifest> {
     expectedChangedPaths: asStringArray(c.expectedChangedPaths),
     forbiddenChangedPaths: asStringArray(c.forbiddenChangedPaths),
     requiredTestPaths: asStringArray(c.requiredTestPaths),
+    minChangedPaths: typeof c.minChangedPaths === "number" && c.minChangedPaths > 0 ? c.minChangedPaths : 0,
+    maxChangedPaths: typeof c.maxChangedPaths === "number" && c.maxChangedPaths > 0 ? c.maxChangedPaths : 0,
+    requiredChangedPathGroups: asStringMatrix(c.requiredChangedPathGroups),
     issueHintsLevel: asHintsLevel(c.issueHintsLevel),
     category: typeof c.category === "string" && c.category ? c.category : "uncategorized",
     difficulty: typeof c.difficulty === "string" && c.difficulty ? c.difficulty : "easy",
@@ -137,6 +146,11 @@ export async function writeCheckConfig(dest: string, check: CheckSpec): Promise<
 
 function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+function asStringMatrix(v: unknown): string[][] {
+  if (!Array.isArray(v)) return [];
+  return v.map(asStringArray).filter((g) => g.length > 0);
 }
 
 function asHintsLevel(v: unknown): IssueHintsLevel {

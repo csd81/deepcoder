@@ -1,0 +1,28 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 90000,
+  "solveAttempts": 3,
+  "category": "markdown-frontmatter",
+  "difficulty": "repo-hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [
+    "split\\(.*---"
+  ],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "src/",
+    "tests/"
+  ],
+  "expectedChangedPaths": [
+    "src/parser/frontmatter.py"
+  ],
+  "requiredTestPaths": [
+    "tests/"
+  ],
+  "minChangedPaths": 2,
+  "requiredChangedPathGroups": [
+    ["src/parser/"],
+    ["tests/"]
+  ]
+}

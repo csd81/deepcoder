@@ -65,8 +65,14 @@ Quality flags (all feed `quality_passed`; `solved = tests_passed && quality_pass
 - `forbidden_path_changed` — a path in `forbiddenChangedPaths` (must *not* change) was edited — catches caller-only / public-test hacks.
 - `missing_required_test` — `requiredTestPaths` declared but the agent added/updated no listed regression test.
 - `repro_invalid` — the agent's own regression test does **not** go red on the buggy baseline (it didn't capture the bug); grading then falls back to the oracle.
+- `too_few_changed_paths` / `too_many_changed_paths` — the patch changed fewer than `minChangedPaths` or more than `maxChangedPaths` files (repo-scale coordination bounds; 0 = no constraint).
+- `missing_required_path_group` — `requiredChangedPathGroups` is `[["src/a/","src/b/"],["tests/"]]`; **each group** must contribute at least one changed path (an OR within a group, AND across groups). Enforces "touch the right area *and* add a test" without demanding one exact file.
 
-`category` / `difficulty` (`easy` default | `hard`) / `issueHintsLevel` (`direct`|`realistic`|`vague`)
+Path-list fields (`allowedPaths`, `expected/forbiddenChangedPaths`, `requiredTestPaths`,
+`requiredChangedPathGroups`) match **exact path or directory prefix** — a trailing-`/` entry like
+`tests/` matches anything under it.
+
+`category` / `difficulty` (`easy` default | `hard` | `repo-hard`) / `issueHintsLevel` (`direct`|`realistic`|`vague`)
 are metadata: tracked per case and grouped in the report. The original 40 cases omit all the new
 fields and behave exactly as before.
 
@@ -146,6 +152,25 @@ no-model via `--selftest` + `--fake-solve fixed|noop`):
 - **10/10 but multi-attempt** → useful benchmark.
 - **some test failures** (`bug-fixed by oracle` < 10) → real solver/reasoning signal.
 - **quality-only failures** (`quality-blocked` > 0) → inspect whether the rule is fair or too rigid.
+
+## Repo-scale set (`repo-hard-*`, `difficulty: repo-hard`) — 5 cases
+A live run of the 10 hard cases came back **10/10 one-shot, 0 quality-blocked** — the harness is
+sound but the bugs were still small/single-file. The repo-scale set puts the bug inside a small
+**multi-file mini-repo** (4–8 source files + ≥2 plausible decoys) so the agent must trace a call
+path, avoid look-alikes, and often change a source file **and** add a regression test. Run all 5:
+`--cases repo-hard-01-auth-token-refresh,repo-hard-02-job-queue-retry,repo-hard-03-markdown-frontmatter-parser,repo-hard-04-plugin-config-precedence,repo-hard-05-router-middleware-order`.
+
+- `repo-hard-01-auth-token-refresh` — `Session` caches the auth header; after a refresh the next request still sends the old token. Decoys: `legacy_store.py`, `transport.py`. Multi-file (fix + test).
+- `repo-hard-02-job-queue-retry` — retry classifies by message text, not exception type; transient errors aren't retried, validation errors are. Forbids broad `except Exception`. Multi-file (fix + test).
+- `repo-hard-03-markdown-frontmatter-parser` — any two `---` lines (even inside a code fence) are taken as frontmatter. Decoys: `tokenize.py`, `fences.py`. Forbids naive `split("---")`. Multi-file (fix + test).
+- `repo-hard-04-plugin-config-precedence` — layer-merge order is wrong; env loses to file/project only when all sources combine. Multi-file (fix + test).
+- `repo-hard-05-router-middleware-order` — nested-router dispatch runs children before own middleware (inner-first). Decoys: `layer.mjs`, `middleware.mjs`, `mount.mjs`. Single-file fix; the oracle asserts exact order.
+
+Where the agent could "fix" the wrong place (a decoy, or the caller instead of the helper), the
+independent oracle stays **red** — a discovery failure shows up on *tests* (`bug-fixed by oracle`),
+not just as a quality flag. **Decision rule:** 5/5 one-shot ⇒ still too easy (import real bugs or
+return to SWE-bench); 5/5 with retries ⇒ useful; `<5/5` by oracle ⇒ best signal; `quality-blocked`
+⇒ inspect the rule. Acceptance stays no-model; the live run is a separate decision.
 
 ## Later
 Wire the read-only `reviewer` subagent (`src/subagents/runner.ts`) as an LLM quality gate

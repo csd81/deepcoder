@@ -32,6 +32,7 @@ export interface ResultRow {
 const COLS = [
   "empty", "huge", "unrelated", "test_only", "forbidden", "required",
   "repeated", "timeout", "exp", "fpath", "reqtest", "repro",
+  "few", "many", "group",
 ] as const;
 
 function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
@@ -49,6 +50,9 @@ function flagCell(row: ResultRow, col: (typeof COLS)[number]): string {
     fpath: has("forbidden_path_changed"),
     reqtest: has("missing_required_test"),
     repro: has("repro_invalid"),
+    few: has("too_few_changed_paths"),
+    many: has("too_many_changed_paths"),
+    group: has("missing_required_path_group"),
   };
   return map[col] ? "Y" : ".";
 }
@@ -124,7 +128,8 @@ export function formatReport(rows: ResultRow[]): string {
   lines.push(
     "\nlegend: slv=solved · tst=tests_passed · qual=quality_passed · att=attempts · " +
       "flag cols Y=tripped (empty/huge/unrelated/test_only/forbidden/required/repeated/timeout/" +
-      "exp=missing_expected/fpath=forbidden_path/reqtest=missing_test/repro=repro_invalid)",
+      "exp=missing_expected/fpath=forbidden_path/reqtest=missing_test/repro=repro_invalid/" +
+      "few=too_few_paths/many=too_many_paths/group=missing_path_group)",
   );
   return lines.join("\n");
 }

@@ -80,6 +80,13 @@ See `plans/phase5-verification-workflows-plan.md`.
     hard cases** (added multi-file-call-chain, error-preservation, red-herring-files, cli-contract,
     parser-quotes — symptom-only issue text, discovery required), and the report now separates
     `bug-fixed by oracle` (correctness) from `quality-blocked` (correct-but-flagged).
+  - **6E repo-scale** (`plans/phase6e-repo-scale-local-bench-plan.md`): the live 10-hard run was
+    10/10 one-shot, so added 5 **multi-file mini-repo** cases (`repo-hard-*`: auth-token-refresh,
+    job-queue-retry, markdown-frontmatter, plugin-config-precedence, router-middleware-order) with
+    4–8 files + decoys, requiring call-path tracing and (mostly) a coordinated source-fix + added
+    test. New harness fields `minChangedPaths`/`maxChangedPaths`/`requiredChangedPathGroups` (flags
+    `too_few_changed_paths`/`too_many_changed_paths`/`missing_required_path_group`). No-model
+    acceptance green (55 cases). Live `repo-hard` run is a separate decision.
 - [ ] follow-ups: wire the read-only `reviewer` subagent as an LLM quality gate; consider a
   non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding); expand the
   hard set toward the full "Hard 20" once the first 5 discriminate.

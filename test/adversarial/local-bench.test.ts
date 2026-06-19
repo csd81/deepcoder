@@ -300,6 +300,27 @@ test("repro_invalid: the runner-computed flag passes straight through to the ver
   assert.ok(!valid.includes("repro_invalid"));
 });
 
+test("repo-scale path-count + group constraints (Phase 6E)", () => {
+  const base = { attempts: [], forbiddenPatterns: [], requiredPatterns: [], allowedPaths: [] as string[] };
+  const patch = (paths: string[]) =>
+    paths.map((p) => `+++ b/${p}\n+x\n`).join("");
+
+  // too_few_changed_paths: minChangedPaths 2
+  assert.ok(computeQualityFlags({ patch: patch(["src/a.py"]), minChangedPaths: 2, ...base }).includes("too_few_changed_paths"));
+  assert.ok(!computeQualityFlags({ patch: patch(["src/a.py", "tests/t.py"]), minChangedPaths: 2, ...base }).includes("too_few_changed_paths"));
+
+  // too_many_changed_paths: maxChangedPaths 2
+  assert.ok(computeQualityFlags({ patch: patch(["a", "b", "c"]), maxChangedPaths: 2, ...base }).includes("too_many_changed_paths"));
+  assert.ok(!computeQualityFlags({ patch: patch(["a", "b"]), maxChangedPaths: 2, ...base }).includes("too_many_changed_paths"));
+
+  // missing_required_path_group: each group needs ≥1 changed path
+  const groups = [["src/auth/", "src/http/"], ["tests/"]];
+  // touched a source-area file but no test → second group unmet
+  assert.ok(computeQualityFlags({ patch: patch(["src/http/session.py"]), requiredChangedPathGroups: groups, ...base }).includes("missing_required_path_group"));
+  // touched both groups → clean
+  assert.ok(!computeQualityFlags({ patch: patch(["src/http/session.py", "tests/test_x.py"]), requiredChangedPathGroups: groups, ...base }).includes("missing_required_path_group"));
+});
+
 test("applyOracleOverlay restores the graded test even if the workspace overwrote it", async () => {
   const caseDir = await mkdtemp(path.join(tmpdir(), "lb-oracle-case-"));
   await mkdir(path.join(caseDir, "repo"), { recursive: true });

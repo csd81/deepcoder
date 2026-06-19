@@ -28,6 +28,12 @@ export interface QualityInput {
   requiredTestPaths?: string[];
   /** True when the agent's own regression test did NOT go red on the buggy baseline (runner-computed). */
   reproInvalid?: boolean;
+  /** Minimum changed paths; fewer flags `too_few_changed_paths`. 0/undefined = no constraint. */
+  minChangedPaths?: number;
+  /** Maximum changed paths; more flags `too_many_changed_paths`. 0/undefined = no constraint. */
+  maxChangedPaths?: number;
+  /** Each group must contribute ≥1 changed path, else `missing_required_path_group`. Empty = no constraint. */
+  requiredChangedPathGroups?: string[][];
 }
 
 const TEST_PATH_RE = /(^|\/)(tests?\/|test_|conftest\.py$)|(\.test\.|_test\.|\.spec\.)/i;
@@ -95,6 +101,18 @@ export function computeQualityFlags(input: QualityInput): string[] {
     const requiredTests = input.requiredTestPaths ?? [];
     if (requiredTests.length > 0 && !requiredTests.some((t) => changed.some((p) => underPath(p, t)))) {
       flags.add("missing_required_test");
+    }
+
+    // Repo-scale coordination: count + grouping constraints (Phase 6E).
+    const min = input.minChangedPaths ?? 0;
+    if (min > 0 && changed.length < min) flags.add("too_few_changed_paths");
+    const max = input.maxChangedPaths ?? 0;
+    if (max > 0 && changed.length > max) flags.add("too_many_changed_paths");
+
+    // Each declared group must contribute at least one changed path.
+    const groups = input.requiredChangedPathGroups ?? [];
+    if (groups.some((g) => !g.some((a) => changed.some((p) => underPath(p, a))))) {
+      flags.add("missing_required_path_group");
     }
 
     for (const pat of input.forbiddenPatterns) {
