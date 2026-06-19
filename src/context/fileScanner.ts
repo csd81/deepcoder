@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { isSensitivePath } from "../workspace/sensitive.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +24,9 @@ export async function scanFiles(root: string): Promise<string[]> {
   return files
     .filter((f) => !IGNORE_FILES.test(f))
     .filter((f) => !BINARY_EXT.has(path.extname(f).toLowerCase()))
+    // Never surface secret files (.env, credentials, keys, .npmrc, …) into the
+    // repo map / symbol index even if they aren't gitignored.
+    .filter((f) => !isSensitivePath(f))
     .sort();
 }
 

@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { spawn } from "node:child_process";
 import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
@@ -29,26 +29,68 @@ export const runBashTool: Tool = {
         const toRun = ctx.sandbox
           ? wrapCommand({ command: args.command, workspaceRoot: ctx.workspaceRoot }, ctx.sandbox).command
           : args.command;
+        const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
         return new Promise((resolve) => {
-          const onAbort = () => child.kill("SIGKILL");
-          const child = exec(
-            toRun,
-            { cwd: ctx.workspaceRoot, timeout: args.timeout_ms, maxBuffer: 8 * 1024 * 1024 },
-            (err, stdout, stderr) => {
-              ctx.signal.removeEventListener("abort", onAbort);
-              // Redact so secrets a command prints (e.g. `env`) can't reach the model.
-              const out = redactSecrets([stdout, stderr].filter(Boolean).join("\n").trim());
-              if (err && (err as { killed?: boolean }).killed) {
-                resolve({ output: `Command timed out after ${args.timeout_ms}ms.\n${out}`, isError: true });
-              } else if (err) {
-                const code = (err as { code?: number }).code ?? 1;
-                resolve({ output: `Exit code ${code}\n${out}`, isError: true });
-              } else {
-                resolve({ output: out || "(no output)" });
-              }
-            },
-          );
+          if (ctx.signal.aborted) {
+            resolve({ output: "Command aborted before it started.", isError: true });
+            return;
+          }
+          // Own process group (detached) so a timeout/abort can take down the
+          // whole shell tree — `exec`'s single-pid kill leaves orphaned children
+          // (e.g. a backgrounded grandchild) alive. Mirrors checks/runner.ts.
+          const child = spawn(toRun, { cwd: ctx.workspaceRoot, shell: true, detached: true });
+          let buf = "";
+          let truncated = false;
+          const append = (d: Buffer) => {
+            if (buf.length >= MAX_OUTPUT_BYTES) {
+              truncated = true;
+              return;
+            }
+            buf += d.toString("utf8");
+            if (buf.length >= MAX_OUTPUT_BYTES) {
+              buf = buf.slice(0, MAX_OUTPUT_BYTES);
+              truncated = true;
+            }
+          };
+          child.stdout?.on("data", append);
+          child.stderr?.on("data", append);
+
+          let timedOut = false;
+          let settled = false;
+          const killGroup = () => {
+            try {
+              if (child.pid) process.kill(-child.pid, "SIGKILL");
+            } catch {
+              child.kill("SIGKILL");
+            }
+          };
+          const timer = setTimeout(() => {
+            timedOut = true;
+            killGroup();
+          }, args.timeout_ms);
+          const onAbort = () => killGroup();
           ctx.signal.addEventListener("abort", onAbort, { once: true });
+
+          const finish = (code: number | null, spawnErr?: Error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            ctx.signal.removeEventListener("abort", onAbort);
+            // Redact so secrets a command prints (e.g. `env`) can't reach the model.
+            let out = redactSecrets(buf.trim());
+            if (truncated) out += "\n… (output truncated)";
+            if (timedOut) {
+              resolve({ output: `Command timed out after ${args.timeout_ms}ms.\n${out}`, isError: true });
+            } else if (spawnErr) {
+              resolve({ output: `Failed to run command: ${spawnErr.message}\n${out}`, isError: true });
+            } else if (code && code !== 0) {
+              resolve({ output: `Exit code ${code}\n${out}`, isError: true });
+            } else {
+              resolve({ output: out || "(no output)" });
+            }
+          };
+          child.on("error", (err) => finish(null, err));
+          child.on("close", (code) => finish(code));
         });
       },
     };

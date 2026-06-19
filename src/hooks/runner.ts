@@ -137,7 +137,9 @@ function runHookCommand(
   signal?: AbortSignal,
 ): Promise<CommandResult | null> {
   return new Promise((resolve) => {
-    const child = spawn(command, { shell: true, stdio: ["pipe", "pipe", "pipe"] });
+    // detached so the timeout/abort `process.kill(-child.pid)` below takes down
+    // the whole process group, not just the shell (grandchildren would survive).
+    const child = spawn(command, { shell: true, detached: true, stdio: ["pipe", "pipe", "pipe"] });
 
     let stdout = "";
     child.stdout?.on("data", (d: Buffer) => {

@@ -8,35 +8,48 @@ import { isSensitivePath } from "../workspace/sensitive.js";
 import { unifiedDiff } from "./diff.js";
 
 /**
- * Check whether the given workspace-relative path (or its nearest existing
- * ancestor) is a symlink whose target resolves to a sensitive path. Throws
- * InvalidArgumentsError if so. This catches attacks where a symlink like
- * "decoy -> .env" bypasses the lexical sensitivity check.
+ * Walk the symlink chain for the given workspace-relative path and throw if ANY
+ * hop — or the nearest existing ancestor — resolves to a sensitive path. This
+ * catches both a direct "decoy -> .env" symlink AND a multi-hop chain
+ * ("outer -> mid -> .env") that a single readlink would miss. realpath can't be
+ * used directly because the final target may not exist yet (a fresh write).
  */
 function checkSymlinkTargetSensitivity(workspaceRoot: string, relPath: string): void {
-  const lexical = resolveInWorkspace(workspaceRoot, relPath);
-  let probe = lexical;
-  while (true) {
+  let probe = resolveInWorkspace(workspaceRoot, relPath);
+  const seen = new Set<string>();
+  for (let i = 0; i < 64; i++) {
+    let stat;
     try {
-      const stat = lstatSync(probe);
-      if (stat.isSymbolicLink()) {
-        const target = readlinkSync(probe);
-        const resolvedTarget = path.resolve(path.dirname(probe), target);
-        const relTarget = displayPath(workspaceRoot, resolvedTarget);
-        if (isSensitivePath(relTarget)) {
-          throw new InvalidArgumentsError(
-            "write_file",
-            `${relPath} is a symlink to ${relTarget}, which is a protected/secret path and cannot be written.`,
-          );
-        }
-      }
-      break;
-    } catch (err) {
-      if (err instanceof InvalidArgumentsError) throw err;
+      stat = lstatSync(probe);
+    } catch {
+      // probe doesn't exist — walk up to the nearest existing ancestor, which may
+      // itself be a symlink to a sensitive dir (e.g. "linkdir -> .git").
       const parent = path.dirname(probe);
-      if (parent === probe) break; // reached filesystem root
+      if (parent === probe) return; // filesystem root
       probe = parent;
+      continue;
     }
+    if (!stat.isSymbolicLink()) {
+      const rel = displayPath(workspaceRoot, probe);
+      if (isSensitivePath(rel)) {
+        throw new InvalidArgumentsError(
+          "write_file",
+          `${relPath} resolves to ${rel}, which is a protected/secret path and cannot be written.`,
+        );
+      }
+      return;
+    }
+    if (seen.has(probe)) return; // symlink cycle — give up (write will fail anyway)
+    seen.add(probe);
+    const resolvedTarget = path.resolve(path.dirname(probe), readlinkSync(probe));
+    const relTarget = displayPath(workspaceRoot, resolvedTarget);
+    if (isSensitivePath(relTarget)) {
+      throw new InvalidArgumentsError(
+        "write_file",
+        `${relPath} is a symlink to ${relTarget}, which is a protected/secret path and cannot be written.`,
+      );
+    }
+    probe = resolvedTarget;
   }
 }
 

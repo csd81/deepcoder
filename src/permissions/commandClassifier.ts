@@ -43,6 +43,11 @@ export function classifyCommand(command: string): ApprovalDecision {
   // 2. Redirects and backgrounding are never auto-allowed (side effects / escape).
   const hasRedirect = />/.test(cmd) || /(^|\s)<(?!\()/.test(cmd);
   const hasBackground = /&(?!&)/.test(cmd);
+  // Variable/arithmetic expansion (`$VAR`, `${VAR}`, `$((...))`) is never
+  // auto-allowed: `echo $MY_SECRET` would otherwise be classified read-only and
+  // exfiltrate an environment secret. Command substitution (`$(`) is already
+  // denied above; any remaining `$` is an expansion → downgrade to `ask`.
+  const hasExpansion = /\$/.test(cmd);
 
   // 3. Split into segments on sequence/pipe/background operators.
   const segments = cmd.split(/\s*(?:&&|\|\||;|\||&|\n)\s*/).map((s) => s.trim()).filter(Boolean);
@@ -53,7 +58,7 @@ export function classifyCommand(command: string): ApprovalDecision {
   if (segments.some(isDangerousSegment)) return "deny";
 
   const allSafe = segments.every(isReadOnlySegment);
-  if (allSafe && !hasRedirect && !hasBackground) return "allow";
+  if (allSafe && !hasRedirect && !hasBackground && !hasExpansion) return "allow";
 
   // 4. Everything else we don't trust enough to auto-run.
   return "ask";
