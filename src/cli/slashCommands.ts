@@ -17,6 +17,7 @@ import { discoverSkills } from "../skills/discovery.js";
 import { loadStartupMemory, listTopics, remember, forget } from "../memory/store.js";
 import { buildRepoIndex } from "../index/scanner.js";
 import { impactedBy } from "../index/impact.js";
+import { relevantTests } from "../index/testTargeting.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
@@ -360,6 +361,21 @@ export async function handleSlashCommand(
         }
         return { consumed: true };
       }
+      if (sub === "tests") {
+        if (!query) {
+          console.log(chalk.dim("usage: /index tests <workspace-relative-file>"));
+          return { consumed: true };
+        }
+        const idx = await buildRepoIndex(root, { imports: true });
+        const hits = relevantTests(idx, query.replace(/\\/g, "/"));
+        if (hits.length === 0) {
+          console.log(chalk.dim(`no tests obviously relevant to "${query}"`));
+        } else {
+          console.log(`${hits.length} likely-relevant test(s) for ${query}:`);
+          for (const f of hits.slice(0, 200)) console.log(chalk.dim(`  ${f}`));
+        }
+        return { consumed: true };
+      }
       if (sub === "impact") {
         if (!query) {
           console.log(chalk.dim("usage: /index impact <workspace-relative-file>"));
@@ -386,7 +402,7 @@ export async function handleSlashCommand(
           console.log(chalk.dim(`  ${f.path}${f.lang ? ` (${f.lang})` : ""}`));
         }
       } else {
-        console.log(chalk.dim("(/index code · /index symbols [name] · /index impact <file>)"));
+        console.log(chalk.dim("(/index code · symbols [name] · impact <file> · tests <file>)"));
       }
       return { consumed: true };
     }
@@ -584,7 +600,7 @@ export async function handleSlashCommand(
           "/hooks           show configured PreToolUse lifecycle hooks (Phase 7B)",
           "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
           "/memory [sub]    show | remember <fact> | forget <pattern>  (Phase 8B)",
-          "/index [code|symbols [name]|impact <file>]  index + symbol defs + impact graph (8C)",
+          "/index [code|symbols [name]|impact <file>|tests <file>]  index/symbols/impact/test-targeting (8C)",
           "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",
