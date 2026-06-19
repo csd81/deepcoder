@@ -1,10 +1,44 @@
-import { promises as fs } from "node:fs";
+import { promises as fs, readlinkSync, lstatSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import type { Tool, ToolInvocation, ToolContext } from "./types.js";
 import { parseArgs, InvalidArgumentsError } from "./types.js";
 import { resolveInWorkspace, resolveRealPathInWorkspace, displayPath } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { unifiedDiff } from "./diff.js";
+
+/**
+ * Check whether the given workspace-relative path (or its nearest existing
+ * ancestor) is a symlink whose target resolves to a sensitive path. Throws
+ * InvalidArgumentsError if so. This catches attacks where a symlink like
+ * "decoy -> .env" bypasses the lexical sensitivity check.
+ */
+function checkSymlinkTargetSensitivity(workspaceRoot: string, relPath: string): void {
+  const lexical = resolveInWorkspace(workspaceRoot, relPath);
+  let probe = lexical;
+  while (true) {
+    try {
+      const stat = lstatSync(probe);
+      if (stat.isSymbolicLink()) {
+        const target = readlinkSync(probe);
+        const resolvedTarget = path.resolve(path.dirname(probe), target);
+        const relTarget = displayPath(workspaceRoot, resolvedTarget);
+        if (isSensitivePath(relTarget)) {
+          throw new InvalidArgumentsError(
+            "edit_file",
+            `${relPath} is a symlink to ${relTarget}, which is a protected/secret path and cannot be edited.`,
+          );
+        }
+      }
+      break;
+    } catch (err) {
+      if (err instanceof InvalidArgumentsError) throw err;
+      const parent = path.dirname(probe);
+      if (parent === probe) break; // reached filesystem root
+      probe = parent;
+    }
+  }
+}
 
 const schema = z.object({
   path: z.string().describe("File to edit, relative to the workspace root."),
@@ -33,6 +67,9 @@ export const editFileTool: Tool = {
     // Resolve the SAME real target for read, preview, and write so a symlinked
     // in-workspace path can't be previewed as one file and written to another.
     function resolveTarget(ctx: ToolContext): { real: string; lexical: string } {
+      // Re-check sensitivity on the symlink target (one level). A symlink like
+      // "decoy -> .env" bypasses the lexical check above.
+      checkSymlinkTargetSensitivity(ctx.workspaceRoot, args.path);
       return {
         real: resolveRealPathInWorkspace(ctx.workspaceRoot, args.path),
         lexical: resolveInWorkspace(ctx.workspaceRoot, args.path),
@@ -90,6 +127,7 @@ export const editFileTool: Tool = {
           return { output: `Edited ${args.path} (${count} replacement${count === 1 ? "" : "s"}).` };
         } catch (err) {
           if (err instanceof EditError) return { output: err.message, isError: true };
+          if (err instanceof InvalidArgumentsError) return { output: err.message, isError: true };
           if (err instanceof Error && err.message.includes("outside the workspace")) {
             return { output: err.message, isError: true };
           }
