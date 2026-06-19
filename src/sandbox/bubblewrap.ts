@@ -4,11 +4,19 @@ import type { SandboxConfig, WrapRequest } from "./types.js";
 
 let cachedAvailable: boolean | undefined;
 
-/** True iff `bwrap` is on PATH and runnable. Cached after the first probe. */
+/** True iff `bwrap` is on PATH and can actually create a sandbox. Cached after the first probe. */
 export function bwrapAvailable(): boolean {
   if (cachedAvailable !== undefined) return cachedAvailable;
   try {
+    // First check the binary exists.
     execFileSync("bwrap", ["--version"], { stdio: "ignore" });
+    // Then do a real sandbox probe: run `true` inside a minimal sandbox.
+    // This catches systems where bwrap exists but user namespaces are disabled
+    // (e.g. Docker containers without --privileged).
+    execFileSync("bwrap", ["--ro-bind", "/", "/", "--", "true"], {
+      stdio: "ignore",
+      timeout: 10_000,
+    });
     cachedAvailable = true;
   } catch {
     cachedAvailable = false;

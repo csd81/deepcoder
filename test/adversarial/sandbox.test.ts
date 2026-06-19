@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveBackend, wrapCommand, bwrapAvailable } from "../../src/sandbox/index.js";
-import { buildBwrapCommand } from "../../src/sandbox/bubblewrap.js";
+import { _resetBwrapCache, buildBwrapCommand } from "../../src/sandbox/bubblewrap.js";
 import { DEFAULT_SANDBOX, type SandboxConfig } from "../../src/sandbox/types.js";
 import { loadConfig } from "../../src/config/config.js";
 import { runBashTool } from "../../src/tools/runBash.js";
@@ -72,6 +72,23 @@ test("wrapCommand: fast wraps with bwrap when available (else falls back, unsand
   } else {
     assert.equal(w.sandboxed, false);
     assert.equal(w.command, "echo hi");
+  }
+});
+
+test("wrapCommand: explicit bubblewrap with fallback=fail refuses unsafe local fallback when bwrap is unavailable", () => {
+  const oldPath = process.env.PATH;
+  process.env.PATH = "/definitely/no/bwrap/here";
+  _resetBwrapCache();
+  try {
+    assert.equal(bwrapAvailable(), false);
+    assert.throws(
+      () => wrapCommand({ command: "echo should-not-run-locally", workspaceRoot: "/repo" }, cfg({ mode: "bubblewrap", fallback: "fail" })),
+      /bwrap|bubblewrap|sandbox/i,
+    );
+  } finally {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    _resetBwrapCache();
   }
 });
 
