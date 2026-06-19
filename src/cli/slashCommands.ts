@@ -17,8 +17,10 @@ import { resolveBackend } from "../sandbox/index.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { loadStartupMemory, listTopics, remember, forget } from "../memory/store.js";
 import { buildRepoIndex } from "../index/scanner.js";
-import { impactedBy } from "../index/impact.js";
+import { impactedBy, reverseGraph } from "../index/impact.js";
 import { relevantTests } from "../index/testTargeting.js";
+import { findReferences } from "../index/references.js";
+import { saveIndex, loadIndex } from "../index/store.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
@@ -349,6 +351,83 @@ export async function handleSlashCommand(
       const root = session.executionRoot ?? config.workspaceRoot;
       const [sub, ...subRest] = arg.trim().split(/\s+/);
       const query = subRest.join(" ").trim();
+      if (sub === "status") {
+        const saved = await loadIndex(root);
+        if (!saved) {
+          console.log(chalk.dim("no saved index — run /index rebuild to build and persist one."));
+        } else {
+          const c = saved.index.counts;
+          console.log(
+            `saved index — built ${saved.createdAt}\n` +
+              `  ${saved.index.files.length} files · code ${c.code} · test ${c.test} · config ${c.config} · docs ${c.docs} · generated ${c.generated} · other ${c.other}\n` +
+              `  ${saved.index.symbols.length} symbols · ${saved.index.imports.length} import edges`,
+          );
+        }
+        return { consumed: true };
+      }
+      if (sub === "rebuild") {
+        const idx = await buildRepoIndex(root, { symbols: true, imports: true });
+        await saveIndex(root, idx);
+        const c = idx.counts;
+        console.log(
+          `rebuilt and saved index: ${idx.files.length} files (code ${c.code} · test ${c.test}), ` +
+            `${idx.symbols.length} symbols, ${idx.imports.length} import edges.`,
+        );
+        return { consumed: true };
+      }
+      if (sub === "references" || sub === "refs") {
+        if (!query) {
+          console.log(chalk.dim("usage: /index references <symbol> [pathPrefix]"));
+          return { consumed: true };
+        }
+        const [symbol, ...hintParts] = query.split(/\s+/);
+        const idx = await buildRepoIndex(root, { symbols: true });
+        const res = await findReferences(root, idx, symbol, { pathHint: hintParts.join(" ").trim() || undefined });
+        console.log(`"${res.symbol}" — ${res.definitions.length} definition(s), ${res.references.length} reference(s)${res.truncated ? " (truncated)" : ""}`);
+        for (const d of res.definitions) console.log(chalk.dim(`  def ${d.kind} ${d.file}:${d.line}`));
+        for (const r of res.references.slice(0, 200)) console.log(chalk.dim(`  ${r.file}:${r.line}: ${r.text}`));
+        return { consumed: true };
+      }
+      if (sub === "explain") {
+        if (!query) {
+          console.log(chalk.dim("usage: /index explain <workspace-relative-file>"));
+          return { consumed: true };
+        }
+        const file = query.replace(/\\/g, "/");
+        const idx = await buildRepoIndex(root, { symbols: true, imports: true });
+        const entry = idx.files.find((f) => f.path === file);
+        if (!entry) {
+          console.log(chalk.dim(`"${file}" is not indexed (ignored, missing, or outside the workspace).`));
+          return { consumed: true };
+        }
+        const defs = idx.symbols.filter((s) => s.file === file);
+        const importsFrom = idx.imports.filter((e) => e.from === file).map((e) => e.to);
+        const importers = [...(reverseGraph(idx.imports).get(file) ?? [])].sort();
+        const tests = relevantTests(idx, file);
+        console.log(
+          `${file} — kind ${entry.kind}${entry.lang ? `, lang ${entry.lang}` : ""}\n` +
+            `  defines ${defs.length} symbol(s)${defs.length ? ": " + defs.slice(0, 30).map((s) => s.name).join(", ") : ""}\n` +
+            `  imports ${importsFrom.length} in-repo file(s)${importsFrom.length ? ": " + importsFrom.slice(0, 20).join(", ") : ""}\n` +
+            `  imported by ${importers.length} file(s)${importers.length ? ": " + importers.slice(0, 20).join(", ") : ""}\n` +
+            `  ${tests.length} likely-relevant test(s)${tests.length ? ": " + tests.slice(0, 20).join(", ") : ""}`,
+        );
+        return { consumed: true };
+      }
+      if (sub === "search") {
+        if (!query) {
+          console.log(chalk.dim("usage: /index search <substring>"));
+          return { consumed: true };
+        }
+        const needle = query.toLowerCase();
+        const idx = await buildRepoIndex(root);
+        const hits = idx.files.filter((f) => f.path.toLowerCase().includes(needle));
+        if (hits.length === 0) console.log(chalk.dim(`no indexed path matching "${query}"`));
+        else {
+          console.log(`${hits.length} path(s) matching "${query}"${hits.length > 200 ? " (showing 200)" : ""}:`);
+          for (const f of hits.slice(0, 200)) console.log(chalk.dim(`  ${f.path} [${f.kind}]`));
+        }
+        return { consumed: true };
+      }
       if (sub === "symbols" || sub === "sym") {
         const idx = await buildRepoIndex(root, { symbols: true });
         const hits = query
@@ -403,7 +482,7 @@ export async function handleSlashCommand(
           console.log(chalk.dim(`  ${f.path}${f.lang ? ` (${f.lang})` : ""}`));
         }
       } else {
-        console.log(chalk.dim("(/index code · symbols [name] · impact <file> · tests <file>)"));
+        console.log(chalk.dim("(/index status · rebuild · code · symbols [name] · references <sym> · impact <file> · tests <file> · explain <file> · search <q>)"));
       }
       return { consumed: true };
     }

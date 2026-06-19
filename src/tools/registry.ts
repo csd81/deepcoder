@@ -10,6 +10,7 @@ import { writeFileTool } from "./writeFile.js";
 import { runBashTool } from "./runBash.js";
 import { todoWriteTool } from "./todoWrite.js";
 import { repoMapTool, findSymbolsTool, listRecentContextTool } from "./contextTools.js";
+import { repoIndexTool, findReferencesTool, impactGraphTool, targetTestsTool } from "./repoIndexTools.js";
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
@@ -59,6 +60,10 @@ const NATIVE_TOOLS: Tool[] = [
   repoMapTool,
   findSymbolsTool,
   listRecentContextTool,
+  repoIndexTool,
+  findReferencesTool,
+  impactGraphTool,
+  targetTestsTool,
 ];
 
 /** The full native tool set. */

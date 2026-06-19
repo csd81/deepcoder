@@ -139,15 +139,18 @@ See `plans/phase5-verification-workflows-plan.md`.
 
 ## Phase 8 — Context intelligence (in progress)
 
-- [~] **8C repo index** (`src/index/`, `plans/phase8c-repo-index-impact-graph-plan.md`): v1 foundation —
-  an ignore-aware scanner (.gitignore + .deepcoderignore + defaults) + file classification
-  (code/test/config/docs/generated/other, with a language tag), exposed via `/index` (counts;
-  `/index code` lists code files). Deferred: TS/JS+Python symbol extraction, the impact graph,
-  symbol-DEFINITION extraction (TS/JS exports/functions/classes + Python def/class, with line
-  numbers) via `/index symbols [name]`, plus relative-import edges + a reverse-import **impact
-  graph** (`/index impact <file>` → files transitively impacted; resolves deepcoder's `.js`→`.ts`
-  ESM style). Deferred: identifier references, test targeting,
-  and the model-callable repo_index/find_references/impact_graph tools.
+- [x] **8C repo index** (`src/index/`, `plans/phase8c-repo-index-impact-graph-plan.md`): an
+  ignore-aware scanner (.gitignore + .deepcoderignore + defaults) + file classification
+  (code/test/config/docs/generated/other, language-tagged); TS/JS+Python symbol-definition
+  extraction; relative-import edges + a reverse-import **impact graph**; **test targeting**
+  (reverse-import impact ∪ naming convention); lexical **identifier references** (`findReferences`,
+  bounded, regex-metachar-safe); and an atomic, corruption-recovering JSON **store** under
+  `.deepcoder/index/`. Exposed two ways: `/index status|rebuild|code|symbols [name]|references
+  <sym>|impact <file>|tests <file>|explain <file>|search <q>`, and four **model-callable read-only
+  tools** — `repo_index`, `find_references`, `impact_graph`, `target_tests` (suggests tests, never
+  runs them; each builds the index fresh so results reflect this session's edits). Deferred:
+  incremental in-place update on edit_file/write_file (rebuild covers correctness; tools build
+  fresh), package/workspace boundaries, and retiring the legacy repo_map/find_symbols onto the index.
 - [~] **8B inspectable local memory** (`src/memory/`, `plans/phase8b-inspectable-local-memory-plan.md`):
   plain-markdown `.deepcoder/memory/MEMORY.md` store — `loadStartupMemory` (bounded) is injected into
   the system prompt as non-authoritative recall *only when the file exists* (zero change otherwise);
