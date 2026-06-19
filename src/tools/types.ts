@@ -29,6 +29,12 @@ export interface ToolContext {
   workspaceRoot: string;
   signal: AbortSignal;
   /**
+   * Sandbox policy for execute-kind tools (run_bash). When set and resolvable to
+   * a backend, the command is isolated before it runs. Absent → run locally
+   * (existing behavior); read-only/file tools ignore this.
+   */
+  sandbox?: import("../sandbox/types.js").SandboxConfig;
+  /**
    * Absolute paths the session has already read. Created once per session and
    * shared across every tool execution, so mutation tools can require a file
    * to have been read before they overwrite it.

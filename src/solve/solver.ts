@@ -79,6 +79,7 @@ export async function runSolveLoop(
         workspaceRoot: root,
         signal: deps.signal,
         onData: deps.onCheckData,
+        sandbox: session.config.sandbox,
       });
     } catch (err) {
       if (err instanceof CheckRefusedError) {

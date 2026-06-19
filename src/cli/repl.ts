@@ -67,6 +67,7 @@ async function runTask(session: Session): Promise<void> {
   const ctx: ToolContext = {
     workspaceRoot: session.config.workspaceRoot,
     signal: controller.signal,
+    sandbox: session.config.sandbox,
     readTracker: session.readTracker,
     writeTracker: session.writeTracker,
     capturePreImage: session.recorder ? (p) => session.recorder!.capture(p) : undefined,

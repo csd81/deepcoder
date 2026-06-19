@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
 import { redactSecrets } from "../workspace/redact.js";
+import { wrapCommand } from "../sandbox/index.js";
 
 const schema = z.object({
   command: z.string().describe("The bash command to run, executed from the workspace root."),
@@ -23,10 +24,15 @@ export const runBashTool: Tool = {
       command: args.command,
       describe: () => `$ ${args.command}`,
       execute(ctx) {
+        // Isolate the command when a sandbox is configured (run_bash is an
+        // execute-kind tool — exactly what tool-level sandboxing targets).
+        const toRun = ctx.sandbox
+          ? wrapCommand({ command: args.command, workspaceRoot: ctx.workspaceRoot }, ctx.sandbox).command
+          : args.command;
         return new Promise((resolve) => {
           const onAbort = () => child.kill("SIGKILL");
           const child = exec(
-            args.command,
+            toRun,
             { cwd: ctx.workspaceRoot, timeout: args.timeout_ms, maxBuffer: 8 * 1024 * 1024 },
             (err, stdout, stderr) => {
               ctx.signal.removeEventListener("abort", onAbort);

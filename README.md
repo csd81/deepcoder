@@ -143,6 +143,40 @@ Other guardrails:
   is default-secure; model text claiming "pre-approval" cannot override it,
   because the permission policy is code, not prompt.
 
+## Sandboxing (Phase 7A)
+
+Risky tool executions — `run_bash` and configured `/check`/`/solve` commands —
+run inside a fast OS sandbox; the deepcoder process, file tools, config, and
+session stay local. File tools keep their existing path confinement (they are not
+sandboxed). The classifier still runs **first**: a denied command never reaches
+the sandbox.
+
+```jsonc
+// .deepcoder/config.json
+{
+  "sandbox": {
+    "mode": "fast",        // off | fast | bubblewrap | local (docker/podman/runsc later)
+    "network": "on",       // "off" adds network isolation
+    "workspaceWrite": true, // the workspace is the ONLY writable mount
+    "extraMounts": [],      // default read-only
+    "timeoutMs": 120000
+  }
+}
+```
+
+- **`fast`** (default) resolves to **bubblewrap** (`bwrap`) on Linux when present,
+  otherwise runs locally with a one-time warning. Precedence:
+  `--sandbox <mode>` > `DEEPCODER_SANDBOX` > config file > default `fast`.
+- The **bubblewrap** backend binds the workspace read-write, system dirs
+  (`/usr`,`/bin`,`/lib`,`/lib64`,`/etc`,`/sbin`) read-only, a private `/tmp`
+  tmpfs, a fresh `/proc`/`/dev`, and **clears the environment** (re-setting only
+  `PATH`/`HOME`→tmpfs/`LANG`/`TERM`/…) so API keys in the parent env are never
+  visible to a sandboxed command. The **home directory and Docker socket are
+  never mounted**; extra mounts default read-only.
+- `/sandbox` shows status (mode, resolved backend, network, workspace); `/sandbox
+  off|fast|local|bubblewrap` and `/sandbox network on|off` adjust it for the session.
+- Smoke test (only runs if `bwrap` is installed): `npm run sandbox:smoke`.
+
 ## Context management (large/long sessions)
 
 - **Compaction** — when the conversation passes
@@ -301,6 +335,7 @@ src/
   mcp/          MCP client, schema adapter, tool registry (read-only)
   subagents/    read-only review subagent (profiles, runner, result parsing)
   checks/       user-invoked verification runner (gated, bounded, quarantined)
+  sandbox/      tool-level sandbox (bubblewrap/local) for run_bash + checks
   session/      session persistence + resume, checkpoints, check-run store
   workspace/    path confinement, git helpers, sensitive-path guard
   config/       env + .deepcoder/config.json loading

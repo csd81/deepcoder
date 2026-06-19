@@ -91,7 +91,20 @@ See `plans/phase5-verification-workflows-plan.md`.
   non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding); expand the
   hard set toward the full "Hard 20" once the first 5 discriminate.
 
+## Phase 7 — Extensibility & isolation
+
+- [x] **7A fast tool-level sandboxing** (`src/sandbox/`, `plans/phase7a-fast-tool-sandboxing-plan.md`):
+  only risky executions (`run_bash`, configured checks) run in a sandbox; the deepcoder process +
+  file tools stay local. `SandboxConfig` in `.deepcoder/config.json` + `DEEPCODER_SANDBOX` env +
+  `--sandbox` flag (precedence CLI > env > file > default `fast`). `fast` → **bubblewrap** when
+  available else local; bwrap binds workspace rw, system dirs ro, private `/tmp`, clears env (no
+  API-key leak), never mounts home/docker-sock. `/sandbox` status + toggles; `npm run sandbox:smoke`.
+  Docker/podman/runsc + sandbox-expansion prompts deferred.
+- [ ] **7B lifecycle hooks** (`plans/phase7b-lifecycle-hooks-plan.md`) — reuse the sandbox runner.
+- [ ] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`).
+
 ## Non-goals (for now)
 
 - IDE/GUI integration — this is a terminal-first tool
-- Full OS sandboxing — the command classifier is a guardrail, not a jail
+- Full per-session OS sandboxing — tool-level sandboxing (Phase 7A) isolates risky commands; the
+  command classifier remains a guardrail, and a whole-session jail is still out of scope

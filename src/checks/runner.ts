@@ -9,6 +9,8 @@ import {
   type CheckRun,
 } from "../session/checkRuns.js";
 import type { CheckConfig } from "../config/fileConfig.js";
+import { wrapCommand } from "../sandbox/index.js";
+import type { SandboxConfig } from "../sandbox/types.js";
 
 /** Thrown when a configured check command is denied by the command classifier. */
 export class CheckRefusedError extends Error {
@@ -23,6 +25,8 @@ export interface RunCheckOptions {
   signal: AbortSignal;
   /** Live output sink (e.g. terminal). Receives raw chunks as they arrive. */
   onData?(chunk: string): void;
+  /** When set, the check command is isolated through this sandbox policy. */
+  sandbox?: SandboxConfig;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -82,8 +86,13 @@ export async function runCheck(name: string, check: CheckConfig, opts: RunCheckO
       resolve({ exitCode: null, signal: "SIGABRT", timedOut: false });
       return;
     }
+    // Isolate the check command when a sandbox policy is supplied (the original
+    // command is still what gets logged below — the wrapper carries no secrets).
+    const toRun = opts.sandbox
+      ? wrapCommand({ command: check.command, workspaceRoot: opts.workspaceRoot }, opts.sandbox).command
+      : check.command;
     // Own process group so a timeout/abort can take down the whole shell tree.
-    const child = spawn(check.command, {
+    const child = spawn(toRun, {
       cwd: opts.workspaceRoot,
       shell: true,
       detached: true,
