@@ -24,6 +24,12 @@ export interface IndexedSymbol {
   line: number;
 }
 
+/** A resolved in-repo import edge: `from` imports `to` (both workspace-relative). */
+export interface ImportEdge {
+  from: string;
+  to: string;
+}
+
 export interface RepoIndex {
   root: string;
   files: IndexedFile[];
@@ -31,4 +37,6 @@ export interface RepoIndex {
   counts: Record<FileKind, number>;
   /** Symbol definitions (populated only when scanned with { symbols: true }). */
   symbols: IndexedSymbol[];
+  /** Resolved in-repo import edges (populated only when scanned with { imports: true }). */
+  imports: ImportEdge[];
 }

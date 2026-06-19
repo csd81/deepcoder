@@ -138,7 +138,9 @@ See `plans/phase5-verification-workflows-plan.md`.
   (code/test/config/docs/generated/other, with a language tag), exposed via `/index` (counts;
   `/index code` lists code files). Deferred: TS/JS+Python symbol extraction, the impact graph,
   symbol-DEFINITION extraction (TS/JS exports/functions/classes + Python def/class, with line
-  numbers) via `/index symbols [name]`. Deferred: references, the impact graph, test targeting,
+  numbers) via `/index symbols [name]`, plus relative-import edges + a reverse-import **impact
+  graph** (`/index impact <file>` → files transitively impacted; resolves deepcoder's `.js`→`.ts`
+  ESM style). Deferred: identifier references, test targeting,
   and the model-callable repo_index/find_references/impact_graph tools.
 - [~] **8B inspectable local memory** (`src/memory/`, `plans/phase8b-inspectable-local-memory-plan.md`):
   plain-markdown `.deepcoder/memory/MEMORY.md` store — `loadStartupMemory` (bounded) is injected into
