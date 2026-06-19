@@ -6,6 +6,7 @@ import type { ModelProvider, AgentMessage } from "../providers/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext, ToolInvocation, ToolPreview, ToolResult, Todo } from "../tools/types.js";
 import { runAgentLoop, type AgentDeps } from "../agent/agentLoop.js";
+import { runPreToolUseHooks } from "../hooks/runner.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { promptForApproval } from "../permissions/prompt.js";
@@ -42,6 +43,26 @@ export interface Session {
   recorder?: CheckpointRecorder;
   /** Subagent run records — persisted for audit, NEVER sent to the model. */
   reviews: SubagentRunRecord[];
+}
+
+/**
+ * Build the PreToolUse hook callback from config (Phase 7B). Returns undefined
+ * when hooks are disabled or none are configured, so the agent loop behaves
+ * exactly as before. Hook commands run via the sandbox (network off) keyed to the
+ * execution root.
+ */
+function preToolUseHook(session: Session): AgentDeps["onPreToolUse"] {
+  const hooks = session.config.hooks;
+  const list = hooks?.events?.PreToolUse;
+  if (!hooks?.enabled || !list || list.length === 0) return undefined;
+  const root = session.executionRoot ?? session.config.workspaceRoot;
+  return async (toolName, invocation, ctx) => {
+    return runPreToolUseHooks(
+      list,
+      { tool: toolName, command: invocation.command, affectedPaths: invocation.affectedPaths },
+      { workspaceRoot: root, sandbox: session.config.sandbox, signal: ctx.signal },
+    );
+  };
 }
 
 export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
@@ -99,6 +120,7 @@ async function runTask(session: Session): Promise<void> {
     compactAt: session.config.compactAt,
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
     approve: (inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview),
+    onPreToolUse: preToolUseHook(session),
     onPersist: () => session.store.save(snapshot(session)),
     onAssistantTextDelta: (chunk) => {
       if (!streaming) {

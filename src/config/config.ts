@@ -6,6 +6,7 @@ import {
   type WorkspaceIsolationConfig,
   type WorkspaceIsolationMode,
 } from "../workspaceIsolation/types.js";
+import { DEFAULT_HOOKS, type HooksConfig } from "../hooks/types.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
@@ -72,6 +73,11 @@ export interface Config {
    * root (control plane). Precedence: `--workspace-isolation` > env > file > off.
    */
   workspaceIsolation: WorkspaceIsolationConfig;
+  /**
+   * Lifecycle hooks configuration. Disabled by default. When enabled, matching
+   * hooks run before each tool use (PreToolUse) and can deny the action.
+   */
+  hooks: HooksConfig;
 }
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -101,9 +107,10 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
 
-export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation">> & {
+export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks">> & {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
+  hooks?: Partial<HooksConfig>;
 };
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
@@ -125,6 +132,12 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...DEFAULT_WORKSPACE_ISOLATION,
     ...(file.workspaceIsolation ?? {}),
     ...(WS_ISOLATION_MODES.includes(envIso as WorkspaceIsolationMode) ? { mode: envIso as WorkspaceIsolationMode } : {}),
+  };
+
+  // Hooks: default < config file < CLI override (applied last via overrides).
+  const hooks: HooksConfig = {
+    ...DEFAULT_HOOKS,
+    ...(file.hooks ?? {}),
   };
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
@@ -173,5 +186,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     // rather than replacing it wholesale.
     sandbox: { ...sandbox, ...(sandboxOverride ?? {}) },
     workspaceIsolation: { ...workspaceIsolation, ...(wsIsoOverride ?? {}) },
+    hooks: { ...hooks, ...(overrides.hooks ?? {}) },
   };
 }

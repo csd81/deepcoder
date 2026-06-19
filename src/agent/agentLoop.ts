@@ -37,6 +37,13 @@ export interface AgentDeps {
   onPersist?(): void | Promise<void>;
   /** Approval callback for `ask` decisions. Returns true to proceed. */
   approve(invocation: ToolInvocation, preview?: ToolPreview): Promise<boolean>;
+  /**
+   * PreToolUse lifecycle hook (Phase 7B). Consulted AFTER the permission policy
+   * allows/approves a tool but BEFORE it executes — so a hook can add a deny but
+   * can never override a policy `deny` (those tools never reach here). A
+   * `decision: "deny"` blocks the tool; anything else proceeds. Undefined = no hooks.
+   */
+  onPreToolUse?(toolName: string, invocation: ToolInvocation, ctx: ToolContext): Promise<import("../hooks/types.js").HookOutcome | undefined>;
 }
 
 /**
@@ -132,6 +139,23 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         const approved = await deps.approve(invocation, preview);
         if (!approved) {
           pushToolResult(messages, call.id, call.name, "User rejected this action. It was not run.");
+          await deps.onPersist?.();
+          continue;
+        }
+      }
+
+      // PreToolUse hooks fire only after the policy allowed/approved the tool, so
+      // a hook deny is additive (it can never resurrect a policy-denied tool).
+      if (deps.onPreToolUse) {
+        const outcome = await deps.onPreToolUse(call.name, invocation, ctx);
+        if (outcome?.decision === "deny") {
+          deps.onToolCall?.(call.name, invocation.describe());
+          pushToolResult(
+            messages,
+            call.id,
+            call.name,
+            `Blocked by hook: ${outcome.reason ?? "denied"}. This action was not run.`,
+          );
           await deps.onPersist?.();
           continue;
         }

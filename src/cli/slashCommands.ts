@@ -338,6 +338,20 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "hooks": {
+      const h = config.hooks;
+      const pre = h?.events?.PreToolUse ?? [];
+      console.log(
+        `enabled: ${h?.enabled ? "yes" : "no"}\n` +
+          `PreToolUse hooks: ${pre.length}` +
+          (pre.length
+            ? "\n" + pre.map((k) => `  - ${k.name}${k.matcher ? ` (matcher: ${k.matcher})` : " (all tools)"}`).join("\n")
+            : "") +
+          (h?.enabled ? "" : chalk.dim("\n(hooks are disabled; set hooks.enabled in .deepcoder/config.json)")),
+      );
+      return { consumed: true };
+    }
+
     case "isolation": {
       const ws = session.isolation;
       const sub = arg.trim().toLowerCase();
@@ -451,6 +465,7 @@ export async function handleSlashCommand(
           "/research <q>    run a read-only researcher subagent to explain the codebase",
           "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
+          "/hooks           show configured PreToolUse lifecycle hooks (Phase 7B)",
           "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",
