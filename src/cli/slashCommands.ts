@@ -15,6 +15,7 @@ import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { resolveBackend } from "../sandbox/index.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { loadStartupMemory, listTopics, remember, forget } from "../memory/store.js";
+import { buildRepoIndex } from "../index/scanner.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
@@ -340,6 +341,24 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "index": {
+      // 8C v1: ignore-aware scan + file classification (inspectable counts).
+      const idx = await buildRepoIndex(session.executionRoot ?? config.workspaceRoot);
+      const c = idx.counts;
+      console.log(
+        `indexed ${idx.files.length} file(s):\n` +
+          `  code ${c.code} · test ${c.test} · config ${c.config} · docs ${c.docs} · generated ${c.generated} · other ${c.other}`,
+      );
+      if (arg.trim() === "--code" || arg.trim() === "code") {
+        for (const f of idx.files.filter((f) => f.kind === "code").slice(0, 200)) {
+          console.log(chalk.dim(`  ${f.path}${f.lang ? ` (${f.lang})` : ""}`));
+        }
+      } else {
+        console.log(chalk.dim("(/index code to list code files; symbols + impact graph land in a follow-up)"));
+      }
+      return { consumed: true };
+    }
+
     case "memory": {
       const [sub, ...restParts] = arg.split(/\s+/);
       const subArg = restParts.join(" ").trim();
@@ -533,6 +552,7 @@ export async function handleSlashCommand(
           "/hooks           show configured PreToolUse lifecycle hooks (Phase 7B)",
           "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
           "/memory [sub]    show | remember <fact> | forget <pattern>  (Phase 8B)",
+          "/index [code]    scan + classify workspace files (Phase 8C)",
           "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",
