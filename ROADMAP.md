@@ -140,6 +140,22 @@ See `plans/phase5-verification-workflows-plan.md`.
 
 ## Phase 8 — Context intelligence (in progress)
 
+- [x] **8A instruction graph** (`src/context/instructionGraph.ts` + `contextFiles.ts` +
+  `importProcessor.ts` + `instructionConflicts.ts` + `instructionRenderer.ts`,
+  `plans/phase8a-instruction-graph-plan.md`): an inspectable, hierarchical replacement for the
+  first-match instructions loader. Discovers supported files across tools (`AGENTS[.override].md`,
+  `CLAUDE[.local].md`, `GEMINI.md`, `.deepcoder/instructions.md`, `.deepcoder/rules/*.md`) via a
+  global (`~/.deepcoder`) + workspace-root→cwd walk, applies them in a deterministic precedence
+  order, expands **safe `@file.md` imports** (relative-only, inside-workspace, non-sensitive,
+  depth/size-bounded, cycle-detected), surfaces **conflicts** (pkg manager / test runner /
+  indentation / generated-files policy) as warnings, and renders one **bounded, attributed**
+  startup block. **JIT** path-local instructions load once when a file under a nested dir is read
+  (driven off the read-tracker; injected ephemerally like todo context, never mutating history).
+  Inspect with `/instructions [show|sources|conflicts|reload]`. Off by default — gate
+  `DEEPCODER_INSTRUCTION_GRAPH=1` or `context.instructionGraph` in `.deepcoder/config.json`;
+  when off, the legacy first-match loader runs byte-for-byte unchanged. Deferred: make it default
+  after a live/local-bench shakedown; persist JIT source ids across `--resume`; richer conflict
+  dimensions.
 - [x] **8C repo index** (`src/index/`, `plans/phase8c-repo-index-impact-graph-plan.md`): an
   ignore-aware scanner (.gitignore + .deepcoderignore + defaults) + file classification
   (code/test/config/docs/generated/other, language-tagged); TS/JS+Python symbol-definition

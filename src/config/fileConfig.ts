@@ -20,6 +20,7 @@ export interface CheckConfig {
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
+import type { ContextConfig } from "./config.js";
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
@@ -28,6 +29,7 @@ export interface FileConfig {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
+  context?: Partial<ContextConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -77,6 +79,13 @@ const hooksSchema = z.object({
       PreToolUse: z.array(hookConfigSchema).optional(),
     })
     .optional(),
+});
+
+const contextSchema = z.object({
+  instructionGraph: z.boolean().optional(),
+  instructionImports: z.boolean().optional(),
+  instructionImportMaxDepth: z.number().int().min(0).max(16).optional(),
+  instructionImportMaxBytes: z.number().int().min(0).optional(),
 });
 
 /**
@@ -154,7 +163,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "hooks": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks };
+  const rawContext = (parsed as { context?: unknown }).context;
+  let context: Partial<ContextConfig> | undefined;
+  if (rawContext && typeof rawContext === "object") {
+    const result = contextSchema.safeParse(rawContext);
+    if (result.success) context = result.data;
+    else warn(`ignoring "context": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context };
 }
 
 function warn(msg: string): void {

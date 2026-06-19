@@ -12,6 +12,12 @@ import { runPreToolUseHooks, runAdvisoryHooks, type HookRunContext } from "../ho
 import type { HookEvent } from "../hooks/types.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
 import { loadInstructions } from "../context/projectInstructions.js";
+import {
+  buildInstructionGraph,
+  pathLocalSources,
+  commitJitSource,
+  type InstructionGraph,
+} from "../context/instructionGraph.js";
 import { promptForApproval } from "../permissions/prompt.js";
 import { handleSlashCommand } from "./slashCommands.js";
 import { runSolveCommand } from "./solveRunner.js";
@@ -46,6 +52,12 @@ export interface Session {
   recorder?: CheckpointRecorder;
   /** Subagent run records — persisted for audit, NEVER sent to the model. */
   reviews: SubagentRunRecord[];
+  /**
+   * Phase 8A instruction graph (only when config.context.instructionGraph). The
+   * live graph is mutated as JIT path-local sources load; `/instructions` and
+   * the JIT injector read it. Undefined under the legacy first-match loader.
+   */
+  instructionGraph?: import("../context/instructionGraph.js").InstructionGraph;
 }
 
 /**
@@ -105,6 +117,27 @@ function postToolHook(session: Session): AgentDeps["onPostTool"] {
   };
 }
 
+/**
+ * Phase 8A JIT instruction injector. Returns a callback that, each turn, scans
+ * paths read so far and yields rendered path-local instruction blocks for any
+ * nested instruction files that just became relevant. `commitJitSource` records
+ * each on the graph, so every block is yielded exactly once. Undefined (no-op)
+ * when the instruction graph is off.
+ */
+function jitContext(session: Session): AgentDeps["jitContext"] {
+  const graph = session.instructionGraph;
+  if (!graph) return undefined;
+  return () => {
+    const blocks: string[] = [];
+    for (const accessed of session.readTracker) {
+      for (const src of pathLocalSources(graph, accessed)) {
+        blocks.push(commitJitSource(graph, src));
+      }
+    }
+    return blocks;
+  };
+}
+
 /** Fire a session-level advisory event (no matcher keys); returns injected context. */
 async function fireSessionEvent(session: Session, event: HookEvent, payload: Record<string, unknown> = {}): Promise<string[]> {
   const list = hooksFor(session, event);
@@ -114,8 +147,28 @@ async function fireSessionEvent(session: Session, event: HookEvent, payload: Rec
   return out.context;
 }
 
-export function systemMessage(config: Config, mode: ApprovalMode): AgentMessage {
-  const { text } = loadInstructions(config.workspaceRoot);
+/**
+ * Resolve project instructions for the system prompt. With the Phase 8A
+ * instruction graph enabled, this builds the hierarchical graph and returns its
+ * rendered startup block (plus the live graph for `/instructions` + JIT);
+ * otherwise it falls back to the legacy first-match loader (zero behavior change).
+ */
+export function resolveInstructions(config: Config): { text: string; graph?: InstructionGraph } {
+  if (config.context.instructionGraph) {
+    const graph = buildInstructionGraph({
+      workspaceRoot: config.workspaceRoot,
+      cwd: config.workspaceRoot,
+      importsEnabled: config.context.instructionImports,
+      importMaxDepth: config.context.instructionImportMaxDepth,
+      importMaxBytes: config.context.instructionImportMaxBytes,
+    });
+    return { text: graph.renderedStartupText, graph };
+  }
+  return { text: loadInstructions(config.workspaceRoot).text };
+}
+
+export function systemMessage(config: Config, mode: ApprovalMode, instructionsText?: string): AgentMessage {
+  const text = instructionsText ?? resolveInstructions(config).text;
   // Project memory (8B): the control plane is the real workspace root, so memory
   // persists/loads there even under workspace isolation.
   const memory = loadStartupMemorySync(config.workspaceRoot);
@@ -183,6 +236,7 @@ async function runTask(session: Session): Promise<void> {
     approve: (inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview),
     onPreToolUse: preToolUseHook(session),
     onPostTool: postToolHook(session),
+    jitContext: jitContext(session),
     onPersist: () => session.store.save(snapshot(session)),
     onAssistantTextDelta: (chunk) => {
       if (!streaming) {

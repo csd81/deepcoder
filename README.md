@@ -227,6 +227,17 @@ your real repo changes only when you apply the resulting patch. The two compose 
 - **Planning mode** — `/plan <task>` (or `--planning-model`) runs one turn against
   `deepseek-reasoner` with **tools disabled**, recording the plan in history to
   guide later implementation.
+- **Instruction graph** (opt-in: `DEEPCODER_INSTRUCTION_GRAPH=1` or
+  `context.instructionGraph` in `.deepcoder/config.json`) — an inspectable,
+  hierarchical replacement for the first-match instructions loader. It loads
+  cross-tool instruction files (`AGENTS[.override].md`, `CLAUDE[.local].md`,
+  `GEMINI.md`, `.deepcoder/instructions.md`, `.deepcoder/rules/*.md`) from a
+  global dir + a workspace-root→cwd walk, expands safe `@file.md` imports
+  (relative-only, inside-workspace, non-sensitive, depth/size-bounded,
+  cycle-detected), and surfaces likely conflicts. Nested instructions load
+  **just-in-time** when a file under them is read. Inspect with
+  `/instructions [show | sources | conflicts | reload]`. Off by default; when
+  off the legacy first-match loader is unchanged.
 
 ## MCP servers (external tools)
 

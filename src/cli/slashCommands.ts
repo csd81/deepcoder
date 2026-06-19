@@ -29,6 +29,8 @@ import { stdout } from "node:process";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
+import { resolveInstructions } from "./repl.js";
+import path from "node:path";
 
 export interface SlashOutcome {
   consumed: boolean;
@@ -78,6 +80,13 @@ export async function handleSlashCommand(
       return { consumed: true };
 
     case "instructions": {
+      // Phase 8A: with the instruction graph active, `/instructions` gains
+      // inspection subcommands (show | sources | conflicts | reload). Without
+      // it, keep the legacy first-match display.
+      if (session.instructionGraph) {
+        printInstructionGraph(session, rest[0]?.trim().toLowerCase() || "show");
+        return { consumed: true };
+      }
       const { source, text } = loadInstructions(config.workspaceRoot);
       if (source) console.log(chalk.dim(`(${source})\n`) + text);
       else console.log(chalk.dim("No project instructions found (.deepcoder/instructions.md, AGENTS.md, CLAUDE.md)."));
@@ -689,7 +698,7 @@ export async function handleSlashCommand(
           "/clear           clear conversation + todos (keep system prompt)",
           "/mode [m]        show or set approval mode (ask | auto | readonly)",
           "/todos           show the current todo list",
-          "/instructions    show loaded project instructions",
+          "/instructions    show project instructions (graph: show | sources | conflicts | reload)",
           "/context         show context-token usage",
           "/compact         compact conversation history now",
           "/plan <task>     produce a plan with the reasoner model (no tools run)",
@@ -848,4 +857,62 @@ function renderSubagentResult(result: SubagentResult, trace: SubagentTrace): voi
   if (result.errors.length) console.log(chalk.yellow(`  (${result.errors.join("; ")})`));
   console.log(chalk.dim(`  · ${result.profile} · ${trace.toolsCalled.length} tool calls · ${trace.turns} turns · ${trace.model}`));
   console.log(chalk.dim("  (advisory — make any changes yourself; this subagent cannot edit or run anything)"));
+}
+
+/** Render `/instructions [show|sources|conflicts|reload]` against the graph (8A). */
+function printInstructionGraph(session: Session, sub: string): void {
+  // `reload` rescans instruction files, bumps the version, and replaces the live
+  // graph. It does NOT rewrite existing transcript messages (only future calls).
+  if (sub === "reload") {
+    const prev = session.instructionGraph!;
+    const next = resolveInstructions(session.config).graph;
+    if (next) {
+      next.version = String((Number(prev.version) || 0) + 1);
+      session.instructionGraph = next;
+      console.log(chalk.dim(`reloaded instruction graph (version ${next.version}, ${next.sources.filter((s) => !s.skipped).length} sources).`));
+      console.log(chalk.yellow("note: applies to future model calls; existing conversation messages are unchanged."));
+    }
+    return;
+  }
+
+  const g = session.instructionGraph!;
+  const root = session.config.workspaceRoot;
+  const relOf = (p: string): string => {
+    const r = path.relative(root, p);
+    return r === "" || r.startsWith("..") ? p : r;
+  };
+
+  if (sub === "conflicts") {
+    const conflicts = g.warnings.filter((w) => w.kind === "conflict");
+    if (!conflicts.length) console.log(chalk.dim("no instruction conflicts detected."));
+    for (const c of conflicts) console.log(chalk.yellow(`conflict: ${(c as { message: string }).message}`));
+    return;
+  }
+
+  if (sub === "sources") {
+    if (!g.sources.length) console.log(chalk.dim("no instruction sources loaded."));
+    for (const s of g.sources) {
+      const tags = [s.kind, s.loadedAt, `${s.bytes}b`];
+      if (s.importedBy) tags.push(`imported by ${path.basename(s.importedBy)}`);
+      if (s.skipped) tags.push(chalk.dim(`skipped: ${s.skipReason ?? "?"}`));
+      console.log(`${chalk.cyan(relOf(s.path))} ${chalk.dim(`(${tags.join(" · ")})`)}`);
+    }
+    for (const w of g.warnings) {
+      if (w.kind === "conflict") continue;
+      console.log(chalk.yellow(`  ⚠ ${w.kind}: ${w.message}`));
+    }
+    return;
+  }
+
+  // show (default): the rendered startup block + any JIT additions.
+  if (!g.renderedStartupText.trim()) {
+    console.log(chalk.dim("no startup instructions (no supported instruction files found)."));
+  } else {
+    console.log(chalk.dim(`(instruction graph v${g.version})\n`) + g.renderedStartupText);
+  }
+  const jit = Object.values(g.renderedJitTextBySourceId);
+  if (jit.length) {
+    console.log(chalk.dim("\n— JIT path-local additions —"));
+    for (const t of jit) console.log(t);
+  }
 }

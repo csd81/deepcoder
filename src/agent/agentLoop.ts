@@ -51,6 +51,14 @@ export interface AgentDeps {
    * that already ran. Returned warnings are reported via `onNotice`.
    */
   onPostTool?(failed: boolean, toolName: string, invocation: ToolInvocation, result: ToolResult): Promise<string[] | undefined>;
+  /**
+   * Phase 8A JIT instructions. Called before each model turn; returns rendered
+   * path-local instruction blocks that became relevant since the last turn
+   * (e.g. a nested AGENTS.md after a file under it was read). Each block is
+   * returned at most once (the callback commits it), so it's injected exactly
+   * once. Injected ephemerally — like todo context — without mutating history.
+   */
+  jitContext?(): string[];
 }
 
 /**
@@ -77,7 +85,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       await deps.onPersist?.();
     }
 
-    const response = await getResponse(deps, withTodoContext(messages, ctx));
+    const response = await getResponse(deps, withEphemeralContext(messages, ctx, deps));
 
     messages.push({
       role: "assistant",
@@ -202,10 +210,20 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
   return "";
 }
 
-/** Append an ephemeral todo system message (not persisted in history). */
-function withTodoContext(messages: AgentMessage[], ctx: ToolContext): AgentMessage[] {
-  if (ctx.todos.length === 0) return messages;
-  return [...messages, { role: "system", content: `Current todo list:\n${renderTodos(ctx.todos)}` }];
+/**
+ * Append ephemeral context (todo list + newly-relevant JIT path-local
+ * instructions) for the upcoming model call, without mutating persisted
+ * history. JIT blocks are pulled once via `deps.jitContext()`.
+ */
+function withEphemeralContext(messages: AgentMessage[], ctx: ToolContext, deps: AgentDeps): AgentMessage[] {
+  const extra: AgentMessage[] = [];
+  if (ctx.todos.length > 0) {
+    extra.push({ role: "system", content: `Current todo list:\n${renderTodos(ctx.todos)}` });
+  }
+  for (const block of deps.jitContext?.() ?? []) {
+    extra.push({ role: "system", content: block });
+  }
+  return extra.length ? [...messages, ...extra] : messages;
 }
 
 /**

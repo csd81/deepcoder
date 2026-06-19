@@ -11,7 +11,7 @@ import { createIsolatedWorkspace, WorkspaceIsolationError } from "../workspaceIs
 import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
 import { defaultRegistry } from "../tools/registry.js";
-import { runOneShot, runRepl, systemMessage, type Session } from "./repl.js";
+import { runOneShot, runRepl, systemMessage, resolveInstructions, type Session } from "./repl.js";
 import {
   SessionStore,
   newSessionId,
@@ -140,8 +140,9 @@ async function buildSession(
     console.log(chalk.dim(`Resuming session ${id} (${saved.messages.length} messages).`));
     // Rebuild the system prompt from CURRENT project instructions rather than
     // trusting the (possibly stale) saved one, then keep the rest of history.
+    const instr = resolveInstructions(cfg);
     const messages = saved.messages.slice();
-    const fresh = systemMessage(cfg, saved.mode);
+    const fresh = systemMessage(cfg, saved.mode, instr.text);
     if (messages[0]?.role === "system") messages[0] = fresh;
     else messages.unshift(fresh);
     return {
@@ -158,15 +159,17 @@ async function buildSession(
       reviews: saved.reviews ?? [],
       mcp,
       recorder,
+      instructionGraph: instr.graph,
     };
   }
 
+  const instr = resolveInstructions(config);
   return {
     config,
     provider,
     registry,
     store: new SessionStore(config.workspaceRoot, newSessionId()),
-    messages: [systemMessage(config, config.approvalMode)],
+    messages: [systemMessage(config, config.approvalMode, instr.text)],
     mode: config.approvalMode,
     executionRoot: config.workspaceRoot,
     todos: [],
@@ -175,6 +178,7 @@ async function buildSession(
     reviews: [],
     mcp,
     recorder,
+    instructionGraph: instr.graph,
   };
 }
 

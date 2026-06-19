@@ -86,7 +86,28 @@ export interface Config {
    * hooks run before each tool use (PreToolUse) and can deny the action.
    */
   hooks: HooksConfig;
+  /**
+   * Phase 8A — instruction graph. When `instructionGraph` is true, project
+   * instructions load through the inspectable hierarchical graph (global +
+   * workspace→cwd walk + safe `@imports` + JIT path-local rules) instead of the
+   * legacy first-match loader. Off by default (gate: DEEPCODER_INSTRUCTION_GRAPH=1).
+   */
+  context: ContextConfig;
 }
+
+export interface ContextConfig {
+  instructionGraph: boolean;
+  instructionImports: boolean;
+  instructionImportMaxDepth: number;
+  instructionImportMaxBytes: number;
+}
+
+const DEFAULT_CONTEXT: ContextConfig = {
+  instructionGraph: false,
+  instructionImports: true,
+  instructionImportMaxDepth: 4,
+  instructionImportMaxBytes: 65_536,
+};
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
 function numEnv(raw: string | undefined, fallback: number): number {
@@ -119,6 +140,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
+  context?: Partial<ContextConfig>;
 };
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
@@ -146,6 +168,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const hooks: HooksConfig = {
     ...DEFAULT_HOOKS,
     ...(file.hooks ?? {}),
+  };
+
+  // Context/instruction-graph: default < config file < env gate.
+  const igEnv = (process.env.DEEPCODER_INSTRUCTION_GRAPH ?? "").toLowerCase();
+  const context: ContextConfig = {
+    ...DEFAULT_CONTEXT,
+    ...(file.context ?? {}),
+    ...(["1", "true", "yes"].includes(igEnv) ? { instructionGraph: true } : {}),
+    ...(["0", "false", "no"].includes(igEnv) ? { instructionGraph: false } : {}),
   };
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
@@ -197,5 +228,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     sandbox: { ...sandbox, ...(sandboxOverride ?? {}) },
     workspaceIsolation: { ...workspaceIsolation, ...(wsIsoOverride ?? {}) },
     hooks: { ...hooks, ...(overrides.hooks ?? {}) },
+    context: { ...context, ...(overrides.context ?? {}) },
   };
 }
