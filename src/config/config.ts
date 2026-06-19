@@ -100,6 +100,18 @@ export interface ContextConfig {
   instructionImports: boolean;
   instructionImportMaxDepth: number;
   instructionImportMaxBytes: number;
+  /**
+   * Phase 8D — preflight context gathering. When true, before solve attempt 1
+   * the solver builds a context plan, runs the read-only explorer subagent, and
+   * injects a compact advisory brief into the conversation. Opt-in only (default
+   * false). Gated by DEEPCODER_CONTEXT_PREFLIGHT env var (1/true/yes on,
+   * 0/false/no off), following the instructionGraph env pattern.
+   */
+  preflight: boolean;
+  /** Maximum bytes for the rendered preflight brief (default 6000). */
+  preflightMaxBytes: number;
+  /** Maximum turns for the explorer subagent during preflight (default 8). */
+  explorerMaxTurns: number;
 }
 
 const DEFAULT_CONTEXT: ContextConfig = {
@@ -107,6 +119,9 @@ const DEFAULT_CONTEXT: ContextConfig = {
   instructionImports: true,
   instructionImportMaxDepth: 4,
   instructionImportMaxBytes: 65_536,
+  preflight: false,
+  preflightMaxBytes: 6000,
+  explorerMaxTurns: 8,
 };
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -172,11 +187,14 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
 
   // Context/instruction-graph: default < config file < env gate.
   const igEnv = (process.env.DEEPCODER_INSTRUCTION_GRAPH ?? "").toLowerCase();
+  const pfEnv = (process.env.DEEPCODER_CONTEXT_PREFLIGHT ?? "").toLowerCase();
   const context: ContextConfig = {
     ...DEFAULT_CONTEXT,
     ...(file.context ?? {}),
     ...(["1", "true", "yes"].includes(igEnv) ? { instructionGraph: true } : {}),
     ...(["0", "false", "no"].includes(igEnv) ? { instructionGraph: false } : {}),
+    ...(["1", "true", "yes"].includes(pfEnv) ? { preflight: true } : {}),
+    ...(["0", "false", "no"].includes(pfEnv) ? { preflight: false } : {}),
   };
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();

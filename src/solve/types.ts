@@ -45,6 +45,14 @@ export interface SolveResult {
   lastRunId?: string;
   /** Phase 5C — repro-test generation outcome (absent when repro was off). */
   repro?: ReproResult;
+  /** Phase 8D — preflight context gathering was performed before attempt 1. */
+  preflightPerformed?: boolean;
+  /** Number of explorer tool calls during preflight (0 if preflight was off). */
+  preflightExplorerTurns?: number;
+  /** Number of files cited in the preflight brief (0 if preflight was off). */
+  preflightFilesCited?: number;
+  /** Bytes of advisory brief injected by preflight (0 if none/empty). */
+  preflightContextBytes?: number;
 }
 
 /** Outcome of the Phase 5C repro-test generation phase. */

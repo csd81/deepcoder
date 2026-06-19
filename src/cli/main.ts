@@ -41,6 +41,7 @@ program
   .option("--repro [mode]", "solve: generate a failing repro test as the oracle when no --check exists (auto|off, default off)")
   .option("--repro-path <path>", "workspace-relative path for the generated repro test")
   .option("--telemetry <path>", "write a solve telemetry JSON to this path (headless eval)")
+  .option("--preflight", "run context preflight (plan + explorer) before solve attempt 1")
   .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
   .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
   .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
@@ -53,6 +54,7 @@ program
         listSessions?: boolean;
         planningModel?: string;
         planFirst?: boolean;
+        preflight?: boolean;
         solve?: boolean;
         check?: string;
         solveAttempts?: string;
@@ -87,6 +89,7 @@ program
           }
         : {}),
     });
+    if (opts.preflight) baseConfig.context.preflight = true;
 
     if (opts.listSessions) {
       const all = await listSessions(baseConfig.workspaceRoot);

@@ -12,6 +12,8 @@ import { hookCtx, hooksFor } from "./repl.js";
 import { runAdvisoryHooks } from "../hooks/runner.js";
 import type { HookEvent } from "../hooks/types.js";
 import { buildReproInstruction } from "../agent/systemPrompt.js";
+import { runExplorer } from "../subagents/contextExplorer.js";
+import { renderExplorerBrief } from "../context/explorerBrief.js";
 
 /** Build an advisory solve hook for `event`; null if no such hooks are enabled. */
 function solveHook(session: Session, event: HookEvent, key: string) {
@@ -63,6 +65,32 @@ export async function runSolveCommand(
         };
       }
     : undefined;
+  // ---- Phase 8D: preflight context gathering (before attempt 1) ----
+  let preflightExplorerTurns = 0;
+  let preflightFilesCited = 0;
+  let preflightContextBytes = 0;
+  if (session.config.context.preflight) {
+    stdout.write(chalk.dim(`Preflight: exploring (max ${session.config.context.explorerMaxTurns} turns)…\n`));
+    const { brief, trace } = await runExplorer(opts.task, {
+      workspaceRoot: session.executionRoot ?? session.config.workspaceRoot,
+      provider: session.provider,
+      parentModel: session.config.model,
+      contextBudgetTokens: session.config.contextBudgetTokens,
+      compactAt: session.config.compactAt,
+      signal: controller.signal,
+    });
+    preflightExplorerTurns = trace.toolsCalled.length;
+    preflightFilesCited = brief.relevantFiles.length;
+    const rendered = renderExplorerBrief(brief, session.config.context.preflightMaxBytes);
+    if (rendered) {
+      preflightContextBytes = Buffer.byteLength(rendered, "utf8");
+      session.messages.push({ role: "system", content: rendered });
+      stdout.write(chalk.dim(`Preflight: injected ${preflightContextBytes}B brief.\n`));
+    } else {
+      stdout.write(chalk.dim("Preflight: brief was empty, skipped injection.\n"));
+    }
+  }
+
   try {
     const result = await runSolveLoop(session, opts, {
       runAgent,
@@ -102,6 +130,14 @@ export async function runSolveCommand(
       onPostCheck: (info) => solveHook(session, "PostCheck", label)({ check: info }),
       onSolveAttemptEnd: (info) => solveHook(session, "SolveAttemptEnd", label)({ solve: info }),
     });
+
+    // Attach preflight telemetry to the result (Phase 8D).
+    if (session.config.context.preflight) {
+      result.preflightPerformed = true;
+      result.preflightExplorerTurns = preflightExplorerTurns;
+      result.preflightFilesCited = preflightFilesCited;
+      result.preflightContextBytes = preflightContextBytes;
+    }
 
     if (session.config.solveTelemetry) {
       await writeTelemetry(session.config.solveTelemetry, session, opts, result);
@@ -161,6 +197,10 @@ async function writeTelemetry(
             reason: result.repro.reason ?? null,
           }
         : null,
+      preflightPerformed: result.preflightPerformed ?? false,
+      preflightExplorerTurns: result.preflightExplorerTurns ?? 0,
+      preflightFilesCited: result.preflightFilesCited ?? 0,
+      preflightContextBytes: result.preflightContextBytes ?? 0,
       changedFiles: [...session.writeTracker].map((p) => path.basename(p)),
       attempts: result.attempts.map((a) => ({
         index: a.index,

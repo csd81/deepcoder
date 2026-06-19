@@ -86,6 +86,9 @@ const contextSchema = z.object({
   instructionImports: z.boolean().optional(),
   instructionImportMaxDepth: z.number().int().min(0).max(16).optional(),
   instructionImportMaxBytes: z.number().int().min(0).optional(),
+  preflight: z.boolean().optional(),
+  preflightMaxBytes: z.number().int().min(0).optional(),
+  explorerMaxTurns: z.number().int().min(1).max(50).optional(),
 });
 
 /**
