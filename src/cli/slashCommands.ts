@@ -12,6 +12,9 @@ import { compactIfNeeded } from "../context/compaction.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
+import { runExplorer } from "../subagents/contextExplorer.js";
+import { buildDeterministicPlan } from "../context/contextPlanner.js";
+import { renderExplorerBrief } from "../context/explorerBrief.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { resolveBackend } from "../sandbox/index.js";
 import { discoverSkills } from "../skills/discovery.js";
@@ -215,6 +218,76 @@ export async function handleSlashCommand(
         researcher,
         `Answer this question about the codebase using only read-only inspection; cite file:line evidence where possible: ${arg}`,
       );
+      return { consumed: true };
+    }
+
+    case "context-plan": {
+      if (!arg) {
+        console.log(chalk.dim("usage: /context-plan <task>  — build a deterministic context plan from the repo index"));
+        return { consumed: true };
+      }
+      const root = session.executionRoot ?? session.config.workspaceRoot;
+      console.log(chalk.dim("Loading repo index…"));
+      const saved = await loadIndex(root);
+      const index = saved?.index ?? await buildRepoIndex(root);
+      const checkNames = Object.keys(session.config.checks);
+      const plan = buildDeterministicPlan({
+        task: arg,
+        index,
+        checkNames,
+        changedFiles: [...session.writeTracker].map((p) => {
+          // Convert absolute paths to workspace-relative
+          if (p.startsWith(root)) return p.slice(root.length + 1);
+          return p;
+        }),
+      });
+      console.log(chalk.bold("\nContext Plan:"));
+      console.log(chalk.dim(`Task summary: ${plan.taskSummary}`));
+      if (plan.likelyAreas.length) console.log(chalk.dim(`Likely areas: ${plan.likelyAreas.join(", ")}`));
+      if (plan.initialQueries.length) console.log(chalk.dim(`Initial queries: ${plan.initialQueries.join(", ")}`));
+      if (plan.mustRead.length) console.log(chalk.dim(`Must-read files: ${plan.mustRead.join(", ")}`));
+      if (plan.likelySymbols.length) console.log(chalk.dim(`Likely symbols: ${plan.likelySymbols.join(", ")}`));
+      if (plan.likelyChecks.length) console.log(chalk.dim(`Likely checks: ${plan.likelyChecks.join(", ")}`));
+      if (plan.riskNotes.length) {
+        console.log(chalk.yellow("Risks:"));
+        for (const r of plan.riskNotes) console.log(chalk.yellow(`  - ${r}`));
+      }
+      if (plan.stopConditions.length) {
+        console.log(chalk.dim("Stop conditions:"));
+        for (const s of plan.stopConditions) console.log(chalk.dim(`  - ${s}`));
+      }
+      return { consumed: true };
+    }
+
+    case "explore": {
+      if (!arg) {
+        console.log(chalk.dim("usage: /explore <question>  — run a read-only explorer subagent and produce a cited brief"));
+        return { consumed: true };
+      }
+      const controller = new AbortController();
+      const onSigint = () => controller.abort();
+      process.once("SIGINT", onSigint);
+      console.log(chalk.dim("Running explorer subagent (read-only)…"));
+      try {
+        const { brief, trace } = await runExplorer(arg, {
+          workspaceRoot: session.config.workspaceRoot,
+          provider: session.provider,
+          parentModel: session.config.model,
+          subagentModel: session.config.subagentModel,
+          contextBudgetTokens: session.config.contextBudgetTokens,
+          compactAt: session.config.compactAt,
+          signal: controller.signal,
+        });
+        console.log("\n" + chalk.bold("Explorer brief:"));
+        console.log(renderExplorerBrief(brief));
+        console.log(chalk.dim(`  · ${trace.toolsCalled.length} tool calls · ${trace.turns} turns · ${trace.model}`));
+        console.log(chalk.dim("  (advisory — verify by reading files before editing)"));
+        // Save to quarantined session metadata — NEVER into model-visible history.
+        session.briefs.push({ createdAt: new Date().toISOString(), brief, trace });
+        await save();
+      } finally {
+        process.removeListener("SIGINT", onSigint);
+      }
       return { consumed: true };
     }
 

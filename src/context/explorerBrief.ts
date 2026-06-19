@@ -41,6 +41,16 @@ export interface ExplorerBrief {
   trace: SubagentTrace[];
 }
 
+/**
+ * A persisted record of an explorer subagent run. Stored in quarantined session
+ * metadata (session.briefs) — NEVER added to the model-visible message history.
+ */
+export interface BriefRunRecord {
+  createdAt: string;
+  brief: ExplorerBrief;
+  trace: SubagentTrace;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */

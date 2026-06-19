@@ -25,6 +25,7 @@ import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
+import type { BriefRunRecord } from "../context/explorerBrief.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -52,6 +53,8 @@ export interface Session {
   recorder?: CheckpointRecorder;
   /** Subagent run records — persisted for audit, NEVER sent to the model. */
   reviews: SubagentRunRecord[];
+  /** Explorer brief records — quarantined metadata, NEVER sent to the model. */
+  briefs: BriefRunRecord[];
   /**
    * Phase 8A instruction graph (only when config.context.instructionGraph). The
    * live graph is mutated as JIT path-local sources load; `/instructions` and
@@ -199,6 +202,7 @@ function snapshot(session: Session): SessionSnapshot {
     writeTracker: session.writeTracker,
     pendingCheckpoint: session.recorder?.serialize() ?? [],
     reviews: session.reviews,
+    briefs: session.briefs,
   };
 }
 
