@@ -125,7 +125,11 @@ See `plans/phase5-verification-workflows-plan.md`.
   (`provision`, default `["node_modules"]`) into the worktree; composes with 7A (symlink targets are
   auto-added as read-only sandbox `extraMounts` so they resolve inside bwrap); separators/`..`
   rejected; never shadows tracked files; cleanup keeps the real targets. Unblocks isolated `--solve`.
-- [ ] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`).
+- [~] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`): 7C1-core shipped (`src/skills/`)
+  — discovery of `.deepcoder/skills/<name>/SKILL.md` (+`.agents/skills/` alias; user<workspace
+  precedence; malformed skipped), YAML-frontmatter parsing (no dep), a token-bounded progressive-
+  disclosure catalog, and `/skills` listing. Deferred: the `activate_skill` tool, system-prompt
+  catalog injection, session persistence, trust-approval flow, and script-backed skills (7C2).
 
 ## Non-goals (for now)
 

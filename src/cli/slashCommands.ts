@@ -13,6 +13,7 @@ import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { resolveBackend } from "../sandbox/index.js";
+import { discoverSkills } from "../skills/discovery.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
@@ -338,6 +339,26 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "skills": {
+      // 7C1: discover + list. `reload` is a no-op marker (discovery is on-demand).
+      const skills = await discoverSkills(config.workspaceRoot);
+      if (skills.length === 0) {
+        console.log(
+          chalk.dim("No skills found. Add .deepcoder/skills/<name>/SKILL.md (YAML frontmatter with a description + a markdown body)."),
+        );
+        return { consumed: true };
+      }
+      console.log(`${skills.length} skill(s):`);
+      for (const s of skills) {
+        const flags = [s.disableModelInvocation ? "no-model" : null, s.userInvocable ? null : "not-user-invocable"]
+          .filter(Boolean)
+          .join(", ");
+        console.log(`  ${chalk.bold(s.name)} ${chalk.dim(`(${s.source})`)}  ${s.description}${flags ? chalk.dim(` [${flags}]`) : ""}`);
+      }
+      console.log(chalk.dim("(activation lands in a follow-up; this is the 7C1 discovery slice)"));
+      return { consumed: true };
+    }
+
     case "hooks": {
       const h = config.hooks;
       const pre = h?.events?.PreToolUse ?? [];
@@ -466,6 +487,7 @@ export async function handleSlashCommand(
           "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
           "/hooks           show configured PreToolUse lifecycle hooks (Phase 7B)",
+          "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
           "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",
