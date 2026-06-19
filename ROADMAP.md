@@ -137,7 +137,9 @@ See `plans/phase5-verification-workflows-plan.md`.
   an ignore-aware scanner (.gitignore + .deepcoderignore + defaults) + file classification
   (code/test/config/docs/generated/other, with a language tag), exposed via `/index` (counts;
   `/index code` lists code files). Deferred: TS/JS+Python symbol extraction, the impact graph,
-  test targeting, and the model-callable find_definition/impact_graph tools.
+  symbol-DEFINITION extraction (TS/JS exports/functions/classes + Python def/class, with line
+  numbers) via `/index symbols [name]`. Deferred: references, the impact graph, test targeting,
+  and the model-callable repo_index/find_references/impact_graph tools.
 - [~] **8B inspectable local memory** (`src/memory/`, `plans/phase8b-inspectable-local-memory-plan.md`):
   plain-markdown `.deepcoder/memory/MEMORY.md` store — `loadStartupMemory` (bounded) is injected into
   the system prompt as non-authoritative recall *only when the file exists* (zero change otherwise);

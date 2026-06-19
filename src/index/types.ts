@@ -13,9 +13,22 @@ export interface IndexedFile {
   lang?: string;
 }
 
+export type SymbolKind = "function" | "class" | "const" | "method";
+
+export interface IndexedSymbol {
+  name: string;
+  kind: SymbolKind;
+  /** Workspace-relative file the symbol is defined in. */
+  file: string;
+  /** 1-based line of the definition. */
+  line: number;
+}
+
 export interface RepoIndex {
   root: string;
   files: IndexedFile[];
   /** Count of files per kind. */
   counts: Record<FileKind, number>;
+  /** Symbol definitions (populated only when scanned with { symbols: true }). */
+  symbols: IndexedSymbol[];
 }

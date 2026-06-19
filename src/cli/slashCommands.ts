@@ -342,19 +342,35 @@ export async function handleSlashCommand(
     }
 
     case "index": {
-      // 8C v1: ignore-aware scan + file classification (inspectable counts).
-      const idx = await buildRepoIndex(session.executionRoot ?? config.workspaceRoot);
+      // 8C: ignore-aware scan + classification (+ optional symbol definitions).
+      const root = session.executionRoot ?? config.workspaceRoot;
+      const [sub, ...subRest] = arg.trim().split(/\s+/);
+      const query = subRest.join(" ").trim();
+      if (sub === "symbols" || sub === "sym") {
+        const idx = await buildRepoIndex(root, { symbols: true });
+        const hits = query
+          ? idx.symbols.filter((s) => s.name === query || s.name.toLowerCase().includes(query.toLowerCase()))
+          : idx.symbols;
+        if (hits.length === 0) {
+          console.log(chalk.dim(query ? `no symbol matching "${query}"` : "no symbols found"));
+        } else {
+          console.log(`${hits.length} symbol(s)${query ? ` matching "${query}"` : ""}${hits.length > 200 ? " (showing 200)" : ""}:`);
+          for (const s of hits.slice(0, 200)) console.log(chalk.dim(`  ${s.kind} ${chalk.bold(s.name)} — ${s.file}:${s.line}`));
+        }
+        return { consumed: true };
+      }
+      const idx = await buildRepoIndex(root);
       const c = idx.counts;
       console.log(
         `indexed ${idx.files.length} file(s):\n` +
           `  code ${c.code} · test ${c.test} · config ${c.config} · docs ${c.docs} · generated ${c.generated} · other ${c.other}`,
       );
-      if (arg.trim() === "--code" || arg.trim() === "code") {
+      if (sub === "--code" || sub === "code") {
         for (const f of idx.files.filter((f) => f.kind === "code").slice(0, 200)) {
           console.log(chalk.dim(`  ${f.path}${f.lang ? ` (${f.lang})` : ""}`));
         }
       } else {
-        console.log(chalk.dim("(/index code to list code files; symbols + impact graph land in a follow-up)"));
+        console.log(chalk.dim("(/index code lists code files · /index symbols [name] lists definitions; impact graph lands in a follow-up)"));
       }
       return { consumed: true };
     }
@@ -552,7 +568,7 @@ export async function handleSlashCommand(
           "/hooks           show configured PreToolUse lifecycle hooks (Phase 7B)",
           "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
           "/memory [sub]    show | remember <fact> | forget <pattern>  (Phase 8B)",
-          "/index [code]    scan + classify workspace files (Phase 8C)",
+          "/index [code|symbols [name]]  scan + classify files; list symbol defs (Phase 8C)",
           "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
           "/check <name>    run a configured check (gated, bounded, quarantined)",

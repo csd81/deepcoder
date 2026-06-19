@@ -6,6 +6,7 @@ import path from "node:path";
 import { classify } from "../../src/index/classify.js";
 import { loadIgnorer } from "../../src/index/ignore.js";
 import { buildRepoIndex } from "../../src/index/scanner.js";
+import { extractSymbols } from "../../src/index/symbols.js";
 
 test("classify assigns kind (test before code; generated before code) + language", () => {
   assert.deepEqual(classify("src/agent/loop.ts"), { kind: "code", lang: "ts" });
@@ -61,6 +62,47 @@ test("buildRepoIndex scans + classifies and skips ignored trees", async () => {
     assert.equal(idx.counts.test, 1);
     assert.equal(idx.counts.docs, 1);
     assert.equal(idx.counts.config, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("extractSymbols finds TS exports/functions/classes and Python def/class (with line numbers)", () => {
+  const ts = extractSymbols(
+    "a.ts",
+    "export function runSolveLoop() {}\nclass Helper {}\nexport const wrap = () => {};\nconst hidden = 1;\n",
+    "ts",
+  );
+  const byName = new Map(ts.map((s) => [s.name, s]));
+  assert.equal(byName.get("runSolveLoop")?.kind, "function");
+  assert.equal(byName.get("runSolveLoop")?.line, 1);
+  assert.equal(byName.get("Helper")?.kind, "class");
+  assert.equal(byName.get("wrap")?.kind, "const");
+  assert.ok(!byName.has("hidden"), "non-exported const is not captured in v1");
+
+  const py = extractSymbols("m.py", "def top():\n    pass\nclass C:\n    def method(self):\n        pass\n", "py");
+  const pyByName = new Map(py.map((s) => [s.name, s]));
+  assert.equal(pyByName.get("top")?.kind, "function");
+  assert.equal(pyByName.get("C")?.kind, "class");
+  assert.equal(pyByName.get("method")?.kind, "method", "indented def is a method");
+
+  assert.deepEqual(extractSymbols("x.json", "{}", undefined), [], "non-code → no symbols");
+});
+
+test("buildRepoIndex with { symbols: true } populates definitions; default omits them", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "idx-sym-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "core.ts"), "export function alpha() {}\nexport class Beta {}\n", "utf8");
+
+    const plain = await buildRepoIndex(root);
+    assert.deepEqual(plain.symbols, [], "metadata-only scan has no symbols");
+
+    const withSym = await buildRepoIndex(root, { symbols: true });
+    const names = withSym.symbols.map((s) => s.name);
+    assert.ok(names.includes("alpha"));
+    assert.ok(names.includes("Beta"));
+    assert.equal(withSym.symbols.find((s) => s.name === "alpha")?.file, "src/core.ts");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
