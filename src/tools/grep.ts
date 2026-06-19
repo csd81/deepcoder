@@ -53,8 +53,11 @@ export const grepTool: Tool = {
         const rgArgs = ["--line-number", "--no-heading", "--color=never"];
         // Always exclude secret files so a broad search (e.g. path ".") can't
         // pull .env / .deepcoder contents into the model context.
-        for (const ex of SENSITIVE_GLOB_EXCLUDES) rgArgs.push("--glob", ex);
+        // User glob is added BEFORE the sensitive excludes so that the excludes
+        // (which use the "!" negation prefix) come last and win — ripgrep applies
+        // "last glob wins" semantics.
         if (args.glob) rgArgs.push("--glob", args.glob);
+        for (const ex of SENSITIVE_GLOB_EXCLUDES) rgArgs.push("--glob", ex);
         rgArgs.push(args.pattern, abs);
         try {
           const { stdout } = await execFileAsync("rg", rgArgs, {
