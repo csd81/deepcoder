@@ -46,4 +46,30 @@ export const testTriage: SubagentProfile = {
     "You did NOT run anything — never claim a test was run or passed.",
 };
 
-export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage };
+export const explorer: SubagentProfile = {
+  name: "explorer",
+  purpose:
+    "Given a ContextPlan, gather enough evidence from the repository to orient the main agent. " +
+    "Return a compact cited brief. Do not propose edits unless directly supported by file citations. Do not dump file contents.",
+  allowedTools: [
+    "read_file",
+    "list_dir",
+    "grep",
+    "glob",
+    "repo_map",
+    "find_symbols",
+    "list_recent_context",
+    "repo_index",
+    "find_references",
+    "impact_graph",
+    "target_tests",
+  ],
+  maxTurns: 8,
+  contextBudgetTokens: 32000,
+  outputGuidance:
+    "Return a JSON ExplorerBrief with fields: summary, relevantFiles (each with path, reason, citations[]), " +
+    "likelyFixLocations (each with path, confidence low|medium|high, reason), relevantTests (each with pathOrCommand, reason), " +
+    "risks[], openQuestions[], trace[]. Every file claim must include at least one citation. Be concise and bounded.",
+};
+
+export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer };
