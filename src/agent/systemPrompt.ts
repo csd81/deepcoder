@@ -49,3 +49,22 @@ export function buildSystemPrompt(opts: {
   }
   return text;
 }
+
+/**
+ * Phase 5C — the instruction for a constrained "repro" turn: write exactly one
+ * failing test that reproduces the reported issue, at the path the harness will
+ * run, and make NO product-code edits. The harness runs the test and requires it
+ * to fail on the current (buggy) tree before any fix is attempted.
+ */
+export function buildReproInstruction(reproPath: string): string {
+  return [
+    "Reproduction step (do NOT fix anything yet):",
+    `- Write exactly ONE new test file at: ${reproPath}`,
+    "- The test must FAIL on the current code, reproducing the issue described above.",
+    "- Assert the correct/expected behavior so the test passes only once the bug is fixed.",
+    "- Do NOT modify any product/source code in this turn — only create the test file.",
+    "- Do NOT run the test yourself; the harness runs it and reports whether it went red.",
+    "- Keep it minimal and focused on the one reported behavior; reference the real symbols/paths involved.",
+    "Then end your turn.",
+  ].join("\n");
+}

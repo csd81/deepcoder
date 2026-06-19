@@ -35,6 +35,14 @@ export interface Config {
   /** Maximum edit→verify attempts in solve mode. */
   solveMaxAttempts: number;
   /**
+   * Phase 5C — repro-test generation in solve mode. "auto" lets the solver write
+   * its own failing test (the oracle when no check is configured, else an extra
+   * regression artifact). Default "off" — zero change to existing solve runs.
+   */
+  solveRepro?: "auto" | "off";
+  /** Workspace-relative path for the generated repro test (default: a scratch path). */
+  solveReproPath?: string;
+  /**
    * When set (headless eval only), the solver writes a machine-readable
    * telemetry JSON of the run to this path: per-attempt check exit/timeout,
    * a patch hash (to detect repeated edits) and the bounded failure summary.
@@ -168,6 +176,8 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       ["1", "true", "yes"].includes((process.env.DEEPCODER_SOLVE_PLAN_FIRST ?? "").toLowerCase()),
     solveCheck: process.env.DEEPCODER_SOLVE_CHECK || undefined,
     solveMaxAttempts: Math.max(1, Math.trunc(numEnv(process.env.DEEPCODER_SOLVE_MAX_ATTEMPTS, 3))),
+    solveRepro: process.env.DEEPCODER_SOLVE_REPRO === "auto" ? "auto" : undefined,
+    solveReproPath: process.env.DEEPCODER_SOLVE_REPRO_PATH || undefined,
     solveTelemetry: process.env.DEEPCODER_SOLVE_TELEMETRY || undefined,
     subagentModel: process.env.DEEPCODER_SUBAGENT_MODEL,
     maxTurns: numEnv(process.env.DEEPCODER_MAX_TURNS, 20),

@@ -11,6 +11,7 @@ import { redactSecrets } from "../workspace/redact.js";
 import { hookCtx, hooksFor } from "./repl.js";
 import { runAdvisoryHooks } from "../hooks/runner.js";
 import type { HookEvent } from "../hooks/types.js";
+import { buildReproInstruction } from "../agent/systemPrompt.js";
 
 /** Build an advisory solve hook for `event`; null if no such hooks are enabled. */
 function solveHook(session: Session, event: HookEvent, key: string) {
@@ -37,6 +38,16 @@ export async function runSolveCommand(
   const onSigint = () => controller.abort();
   process.on("SIGINT", onSigint);
   let checkStreaming = false;
+  const label = opts.checkName ?? "repro"; // the loop verifies against the repro when no check is named
+  // Phase 5C: a constrained turn that writes one failing test, reusing the same
+  // agent loop. The issue is included so the model knows what to reproduce.
+  const runReproTurn =
+    opts.repro === "auto"
+      ? async (reproPath: string) => {
+          session.messages.push({ role: "user", content: `${opts.task}\n\n${buildReproInstruction(reproPath)}` });
+          await runAgent();
+        }
+      : undefined;
   // Telemetry (headless eval only): hash the working-tree patch each attempt so
   // we can detect repeated/empty edits. Git stays out of the solver core.
   const wantTelemetry = !!session.config.solveTelemetry;
@@ -55,6 +66,7 @@ export async function runSolveCommand(
   try {
     const result = await runSolveLoop(session, opts, {
       runAgent,
+      runReproTurn,
       signal: controller.signal,
       snapshotPatch,
       onProgress: (e) => {
@@ -70,17 +82,25 @@ export async function runSolveCommand(
             : e.passed
               ? chalk.green("passed (exit 0)")
               : chalk.red(`failed (exit ${e.exitCode ?? "?"})`);
-          stdout.write(`check ${opts.checkName}: ${status} · run ${e.runId}\n`);
+          stdout.write(`check ${label}: ${status} · run ${e.runId}\n`);
         } else if (e.type === "retrying") {
           stdout.write(chalk.dim("retrying with a redacted failure summary…\n"));
+        } else if (e.type === "repro") {
+          if (checkStreaming) {
+            stdout.write("\n");
+            checkStreaming = false;
+          }
+          if (e.phase === "generated") stdout.write(chalk.dim(`repro generated: ${e.path}\n`));
+          else if (e.phase === "validated") stdout.write(chalk.green(`repro validated red on the buggy tree: ${e.path}\n`));
+          else stdout.write(chalk.yellow(`repro invalid (discarded): ${e.reason ?? "did not capture the bug"}\n`));
         }
       },
       onCheckData: (chunk) => {
         checkStreaming = true;
         stdout.write(chalk.dim(chunk));
       },
-      onPostCheck: (info) => solveHook(session, "PostCheck", opts.checkName)({ check: info }),
-      onSolveAttemptEnd: (info) => solveHook(session, "SolveAttemptEnd", opts.checkName)({ solve: info }),
+      onPostCheck: (info) => solveHook(session, "PostCheck", label)({ check: info }),
+      onSolveAttemptEnd: (info) => solveHook(session, "SolveAttemptEnd", label)({ solve: info }),
     });
 
     if (session.config.solveTelemetry) {
@@ -95,8 +115,12 @@ export async function runSolveCommand(
     const verdict = result.solved
       ? chalk.green(`solved in ${result.attempts.length} attempt(s)`)
       : chalk.yellow(`not solved after ${result.attempts.length} attempt(s)`);
+    const oracleNote = result.repro?.usedAsOracle
+      ? ` · oracle: generated repro (best-effort)${result.repro.tautological ? " ⚠ shallow" : ""}`
+      : ` · check "${label}"`;
     stdout.write(
-      `\n${verdict} · check "${opts.checkName}"` +
+      `\n${verdict}${oracleNote}` +
+        (result.repro?.kept ? ` · repro kept: ${result.repro.path}` : "") +
         (changed.length ? ` · changed: ${changed.join(", ")}` : " · no files changed") +
         (result.lastRunId ? ` · last run ${result.lastRunId}` : "") +
         "\n",
@@ -120,12 +144,23 @@ async function writeTelemetry(
 ): Promise<void> {
   try {
     const record = {
-      checkName: opts.checkName,
+      checkName: opts.checkName ?? null,
       maxAttempts: opts.maxAttempts,
       solved: result.solved,
       refusal: result.refusal ?? null,
       attemptsCount: result.attempts.length,
       lastRunId: result.lastRunId ?? null,
+      repro: result.repro
+        ? {
+            generated: result.repro.generated,
+            valid: result.repro.valid,
+            usedAsOracle: result.repro.usedAsOracle,
+            tautological: result.repro.tautological,
+            kept: result.repro.kept,
+            path: result.repro.path ?? null,
+            reason: result.repro.reason ?? null,
+          }
+        : null,
       changedFiles: [...session.writeTracker].map((p) => path.basename(p)),
       attempts: result.attempts.map((a) => ({
         index: a.index,

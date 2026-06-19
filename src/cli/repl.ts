@@ -233,14 +233,21 @@ export async function runOneShot(session: Session, prompt: string): Promise<void
   try {
     if (session.config.solve) {
       const checkName = session.config.solveCheck;
-      if (!checkName) {
-        stdout.write(chalk.red("--solve requires --check <name> (or DEEPCODER_SOLVE_CHECK).\n"));
+      const repro = session.config.solveRepro === "auto" ? "auto" : "off";
+      if (!checkName && repro !== "auto") {
+        stdout.write(chalk.red("--solve requires --check <name> (or DEEPCODER_SOLVE_CHECK), or --repro auto to generate the oracle.\n"));
         return;
       }
       if (session.config.planFirst) await planFirstPass(session, prompt);
       await runSolveCommand(
         session,
-        { task: prompt, checkName, maxAttempts: session.config.solveMaxAttempts },
+        {
+          task: prompt,
+          checkName,
+          maxAttempts: session.config.solveMaxAttempts,
+          repro,
+          reproPath: session.config.solveReproPath,
+        },
         () => runTask(session),
       );
       return;

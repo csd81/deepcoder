@@ -19,10 +19,21 @@ export interface SolveAttempt {
 export interface SolveOptions {
   /** The task / issue the agent must resolve. */
   task: string;
-  /** Name of a user-configured check to verify with (never model-chosen). */
-  checkName: string;
+  /**
+   * Name of a user-configured check to verify with (never model-chosen).
+   * Optional only when `repro: "auto"` supplies a generated oracle instead.
+   */
+  checkName?: string;
   /** Maximum edit→verify attempts before giving up. */
   maxAttempts: number;
+  /**
+   * Phase 5C — repro-test generation. "auto" lets the solver write its own
+   * failing test (the in-loop oracle when no check is configured, or an extra
+   * signal/regression artifact alongside a configured check). Default "off".
+   */
+  repro?: "auto" | "off";
+  /** Workspace-relative path for the generated repro test (default: a scratch path). */
+  reproPath?: string;
 }
 
 export interface SolveResult {
@@ -32,4 +43,24 @@ export interface SolveResult {
   refusal?: string;
   /** The last check run id (most recent attempt that ran a check). */
   lastRunId?: string;
+  /** Phase 5C — repro-test generation outcome (absent when repro was off). */
+  repro?: ReproResult;
+}
+
+/** Outcome of the Phase 5C repro-test generation phase. */
+export interface ReproResult {
+  /** A repro file was produced by the constrained generation turn. */
+  generated: boolean;
+  /** The repro went red on the buggy tree (proved it captures the bug). */
+  valid: boolean;
+  /** The validated repro was the success oracle (no configured check existed). */
+  usedAsOracle: boolean;
+  /** The repro tripped the non-tautology guard (shallow/constant-truth test). */
+  tautological: boolean;
+  /** The repro was kept as a regression test (valid + non-scratch path). */
+  kept: boolean;
+  /** Workspace-relative path of the repro (present once generation was attempted). */
+  path?: string;
+  /** Why the repro was rejected/invalid, when applicable. */
+  reason?: string;
 }

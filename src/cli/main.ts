@@ -38,6 +38,8 @@ program
   .option("--solve", "closed-loop solve: edit, run --check, retry on failure (needs --check)")
   .option("--check <name>", "configured check to verify with in --solve mode")
   .option("--solve-attempts <n>", "max attempts in --solve mode (default 3)")
+  .option("--repro [mode]", "solve: generate a failing repro test as the oracle when no --check exists (auto|off, default off)")
+  .option("--repro-path <path>", "workspace-relative path for the generated repro test")
   .option("--telemetry <path>", "write a solve telemetry JSON to this path (headless eval)")
   .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
   .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
@@ -54,6 +56,8 @@ program
         solve?: boolean;
         check?: string;
         solveAttempts?: string;
+        repro?: string | boolean;
+        reproPath?: string;
         telemetry?: string;
         sandbox?: string;
         workspaceIsolation?: string;
@@ -69,6 +73,9 @@ program
       ...(opts.solveAttempts && Number.isFinite(Number(opts.solveAttempts))
         ? { solveMaxAttempts: Math.max(1, Math.trunc(Number(opts.solveAttempts))) }
         : {}),
+      // Bare `--repro` means auto; `--repro off` (or absent) leaves it off.
+      ...(opts.repro === true || opts.repro === "auto" ? { solveRepro: "auto" as const } : {}),
+      ...(opts.reproPath ? { solveReproPath: opts.reproPath } : {}),
       ...(opts.telemetry ? { solveTelemetry: opts.telemetry } : {}),
       ...(opts.sandbox ? { sandbox: { mode: opts.sandbox as SandboxMode } } : {}),
       ...(opts.workspaceIsolation || opts.workspaceIsolationIncludeDirty
