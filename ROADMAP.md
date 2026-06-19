@@ -114,6 +114,12 @@ See `plans/phase5-verification-workflows-plan.md`.
   may deny (exit 2 / `{"decision":"deny"}`); never override a policy/headless deny; sandboxed
   (network off), fail-open, redacted; disabled by default; `/hooks` status. Deferred: Post*/Session*/
   UserPromptSubmit events, context injection, runtime enable/disable, project-trust mechanism.
+- [x] **7E isolation dependency provisioning** (`src/workspaceIsolation/provision.ts`,
+  `plans/phase7e-isolation-dependency-provisioning-plan.md`): a worktree of HEAD has no gitignored
+  deps, so JS/py checks couldn't run in it (hand-symlinked all session). Now symlinks an allowlist
+  (`provision`, default `["node_modules"]`) into the worktree; composes with 7A (symlink targets are
+  auto-added as read-only sandbox `extraMounts` so they resolve inside bwrap); separators/`..`
+  rejected; never shadows tracked files; cleanup keeps the real targets. Unblocks isolated `--solve`.
 - [ ] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`).
 
 ## Non-goals (for now)

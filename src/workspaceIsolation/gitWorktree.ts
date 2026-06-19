@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { WorkspaceIsolationError, type IsolatedWorkspace } from "./types.js";
+import { WorkspaceIsolationError, type IsolatedWorkspace, type ProvisionedLink } from "./types.js";
+import { provisionWorktree } from "./provision.js";
 
 interface GitResult {
   status: number | null;
@@ -32,7 +33,7 @@ export function isDirty(root: string): boolean {
  */
 export async function createGitWorktree(
   realRoot: string,
-  opts: { includeDirty: boolean },
+  opts: { includeDirty: boolean; provision?: string[] },
 ): Promise<IsolatedWorkspace> {
   if (!isGitRepo(realRoot)) {
     throw new WorkspaceIsolationError(
@@ -55,12 +56,22 @@ export async function createGitWorktree(
     throw new WorkspaceIsolationError(`git worktree add failed: ${add.stderr.trim() || add.stdout.trim()}`);
   }
 
+  // Symlink dependency dirs (node_modules, …) so checks/builds can run in the
+  // worktree. Best-effort; never fatal.
+  let provisioned: ProvisionedLink[] = [];
+  try {
+    provisioned = await provisionWorktree(realRoot, isolatedRoot, opts.provision ?? []);
+  } catch {
+    /* provisioning is best-effort */
+  }
+
   const stageAll = () => git(isolatedRoot, ["add", "-A"]); // worktree has its own index; .gitignore respected
 
   return {
     realRoot,
     isolatedRoot,
     backend: "git-worktree",
+    provisioned,
 
     async diff(): Promise<string> {
       stageAll();

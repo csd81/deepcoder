@@ -184,9 +184,22 @@ async function setupIsolation(session: Session): Promise<void> {
     const ws = await createIsolatedWorkspace(session.config.workspaceRoot, iso);
     session.isolation = ws;
     session.executionRoot = ws.isolatedRoot;
+    // Compose with the sandbox (7A): provisioned dep symlinks point OUTSIDE the
+    // worktree, so when commands are sandboxed the targets must be bound read-only
+    // for the symlinks to resolve inside bwrap.
+    const sb = session.config.sandbox;
+    if (sb.mode !== "off" && ws.provisioned.length) {
+      for (const { target } of ws.provisioned) {
+        if (!sb.extraMounts.some((m) => m.path === target)) sb.extraMounts.push({ path: target, mode: "ro" });
+      }
+    }
     stdout.write(
       chalk.cyan(`workspace isolation: ${iso.mode}\n`) +
-        chalk.dim(`isolated workspace: ${ws.isolatedRoot}\nthe real repo changes only if you apply the patch\n`),
+        chalk.dim(
+          `isolated workspace: ${ws.isolatedRoot}\n` +
+            (ws.provisioned.length ? `provisioned: ${ws.provisioned.map((p) => path.basename(p.link)).join(", ")}\n` : "") +
+            "the real repo changes only if you apply the patch\n",
+        ),
     );
   } catch (err) {
     if (err instanceof WorkspaceIsolationError) {

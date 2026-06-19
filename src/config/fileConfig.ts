@@ -59,6 +59,8 @@ const workspaceIsolationSchema = z.object({
   keepOnFailure: z.boolean().optional(),
   includeDirty: z.boolean().optional(),
   exclude: z.array(z.string()).optional(),
+  provision: z.array(z.string()).optional(),
+  setupCommands: z.array(z.string()).optional(),
 });
 
 const hookConfigSchema = z.object({
