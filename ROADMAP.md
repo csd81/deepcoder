@@ -74,6 +74,12 @@ See `plans/phase5-verification-workflows-plan.md`.
   hard cases** (issue-derived-test, cache-invalidation, path-traversal, async-race,
   config-precedence) with no-model acceptance (`--selftest` + `--fake-solve fixed|noop`). The live
   5-case run is a separate explicit decision (decision rule: 5/5-in-one-attempt ⇒ still too easy).
+  - **6D retune:** the first live run was 4/5 — all bugs fixed first-attempt; the one miss was a
+    correct fix blocked by an over-rigid test-placement rule. Loosened the gate (agent tests may live
+    under any allowed `tests/` prefix; `repro_invalid` still requires red→green), expanded to **10
+    hard cases** (added multi-file-call-chain, error-preservation, red-herring-files, cli-contract,
+    parser-quotes — symptom-only issue text, discovery required), and the report now separates
+    `bug-fixed by oracle` (correctness) from `quality-blocked` (correct-but-flagged).
 - [ ] follow-ups: wire the read-only `reviewer` subagent as an LLM quality gate; consider a
   non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding); expand the
   hard set toward the full "Hard 20" once the first 5 discriminate.

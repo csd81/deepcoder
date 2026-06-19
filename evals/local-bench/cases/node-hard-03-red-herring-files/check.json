@@ -1,0 +1,19 @@
+{
+  "name": "unit",
+  "command": "node test.mjs",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "red-herring-files",
+  "difficulty": "hard",
+  "issueHintsLevel": "vague",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "configLoader.mjs"
+  ],
+  "expectedChangedPaths": [
+    "configLoader.mjs"
+  ],
+  "forbiddenChangedPaths": [],
+  "requiredTestPaths": []
+}

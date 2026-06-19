@@ -3,23 +3,19 @@
   "command": "python -m pytest -q",
   "timeoutMs": 60000,
   "solveAttempts": 3,
-  "category": "issue-derived-test",
+  "category": "error-preservation",
   "difficulty": "hard",
   "issueHintsLevel": "realistic",
-  "forbiddenPatterns": [
-    "\\bassert\\b"
-  ],
+  "forbiddenPatterns": [],
   "requiredPatterns": [
-    "raise ValueError"
+    "from e"
   ],
   "allowedPaths": [
-    "blueprints.py",
-    "tests/"
+    "client.py"
   ],
   "expectedChangedPaths": [
-    "blueprints.py"
+    "client.py"
   ],
-  "requiredTestPaths": [
-    "tests/"
-  ]
+  "forbiddenChangedPaths": [],
+  "requiredTestPaths": []
 }

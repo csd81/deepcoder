@@ -23,6 +23,10 @@ export interface ResultRow {
   category?: string;
   difficulty?: string;
   issue_hints_level?: string;
+  /** Derived: the independent oracle accepted the fix (== tests_passed). */
+  bug_fixed_by_oracle?: boolean;
+  /** Derived: the fix was correct but a quality flag blocked it (tests_passed && !quality_passed). */
+  quality_blocked?: boolean;
 }
 
 const COLS = [
@@ -97,7 +101,8 @@ export function formatReport(rows: ResultRow[]): string {
   lines.push(`cases scored:          ${n}${rows.length !== n ? ` (+${rows.length - n} skipped)` : ""}`);
   lines.push(`solved (tests+quality): ${solved}/${n}`);
   lines.push(`tests passed:          ${testsPassed}/${n}`);
-  lines.push(`passed but FLAGGED:    ${passedButFlagged}/${n}   <- bad-but-green patches (flask lesson)`);
+  lines.push(`bug-fixed by oracle:   ${testsPassed}/${n}   (correctness only — the independent oracle accepted the fix)`);
+  lines.push(`quality-blocked:       ${passedButFlagged}/${n}   <- correct-but-flagged: oracle passed, a quality rule blocked it (flask lesson)`);
   lines.push(`timeouts:              ${timeouts}/${n}`);
   if (attemptsToSolve.length) {
     const avg = (attemptsToSolve.reduce((a, b) => a + b, 0) / attemptsToSolve.length).toFixed(1);

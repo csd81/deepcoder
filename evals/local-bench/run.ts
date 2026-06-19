@@ -242,6 +242,9 @@ async function scoreCase(
     category: m.check.category,
     difficulty: m.check.difficulty,
     issue_hints_level: m.check.issueHintsLevel,
+    // Derived signals: separate "the fix was correct" from "a policy blocked it".
+    bug_fixed_by_oracle: v.tests_passed,
+    quality_blocked: v.tests_passed && !v.quality_passed,
   };
   await writeFile(path.join(runDir, "result.json"), JSON.stringify(row, null, 2), "utf8");
   if (!keepWorkdir) await rm(ws, { recursive: true, force: true });

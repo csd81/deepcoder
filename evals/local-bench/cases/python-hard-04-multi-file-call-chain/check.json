@@ -1,0 +1,19 @@
+{
+  "name": "unit",
+  "command": "python -m pytest -q",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "multi-file-call-chain",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "helper.py"
+  ],
+  "expectedChangedPaths": [
+    "helper.py"
+  ],
+  "forbiddenChangedPaths": [],
+  "requiredTestPaths": []
+}

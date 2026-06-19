@@ -1,0 +1,19 @@
+{
+  "name": "unit",
+  "command": "node test.mjs",
+  "timeoutMs": 60000,
+  "solveAttempts": 3,
+  "category": "cli-contract",
+  "difficulty": "hard",
+  "issueHintsLevel": "realistic",
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "allowedPaths": [
+    "cli.mjs"
+  ],
+  "expectedChangedPaths": [
+    "cli.mjs"
+  ],
+  "forbiddenChangedPaths": [],
+  "requiredTestPaths": []
+}

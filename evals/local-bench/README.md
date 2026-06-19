@@ -111,23 +111,41 @@ ramps from one-liners to small algorithms:
 - **18–20** harder: `public-check-trap` (a broad-`except`/`try-catch` fix passes the test but is
   flagged → **not solved**), `merge-intervals` (sort + touching), `balanced-brackets` (stack).
 
-## Hard set (`*-hard-*`, `difficulty: hard`)
-The 40 above became too easy (a full live run was 40/40 solved in one attempt). The hard set adds
-cases that require *discovery* — the issue text does **not** name the function/file, the visible test
-is weak or absent, and an independent `oracle/` grades the real behavior. First 5 (run with
-`--cases python-hard-01-issue-derived-test,python-hard-02-cache-invalidation,python-hard-03-path-traversal,node-hard-01-async-race,node-hard-02-config-precedence`):
+## Hard set (`*-hard-*`, `difficulty: hard`) — 10 cases
+The 40 base cases became too easy (a full live run was 40/40 solved in one attempt). The hard set
+requires *discovery* — the issue text describes a **symptom only** (it never names the function/file),
+the visible public test is weak or absent, and an independent `oracle/` grades the real behavior.
+
+A first live run of the original 5 came back 4/5 (all bugs fixed first-attempt); the one miss was a
+correct fix blocked by an over-rigid test-placement rule. So the gate was loosened — **an
+agent-authored test may live anywhere under an allowed test path** (use a trailing-`/` directory
+prefix, e.g. `requiredTestPaths: ["tests/"]`); `repro_invalid` still requires that test to go red on
+the buggy baseline. Penalize bad/weak/cheating fixes, not normal development choices.
+
+Run all 10 with `--cases python-hard-01-issue-derived-test,python-hard-02-cache-invalidation,python-hard-03-path-traversal,python-hard-04-multi-file-call-chain,python-hard-05-error-preservation,node-hard-01-async-race,node-hard-02-config-precedence,node-hard-03-red-herring-files,node-hard-04-cli-contract,node-hard-05-parser-quotes`:
 
 - `python-hard-01-issue-derived-test` — existing tests pass; the agent must **add a regression test**
-  (`requiredTestPaths`, validated red→green via `repro_invalid`) *and* fix the code.
+  (any path under `tests/`, validated red→green via `repro_invalid`) *and* fix the code.
 - `python-hard-02-cache-invalidation` — weak public test (single `get`); the oracle does update→read.
 - `python-hard-03-path-traversal` — a `".."` string blacklist; the oracle checks absolute-path/normalize bypasses (`requiredPatterns: realpath|normpath|…`).
+- `python-hard-04-multi-file-call-chain` — `api → service → helper`; the real bug is in the deepest helper. Fixing the caller passes the oracle but trips `unrelated_files`+`missing_expected_change`.
+- `python-hard-05-error-preservation` — a wrapper re-raises and loses `__cause__`/`.code`; the oracle asserts the cause is chained and the code preserved (`requiredPatterns: "from e"`).
 - `node-hard-01-async-race` — missing-ordering bug invisible to the single-id public test; the oracle runs two delayed lookups and asserts input order.
 - `node-hard-02-config-precedence` — env-over-file precedence bug that only appears when defaults+file+env all set; the oracle sets all three.
+- `node-hard-03-red-herring-files` — decoy look-alike loaders; only `configLoader.mjs` is on the runtime path. Editing a decoy leaves the **oracle red** (a discovery failure, on tests).
+- `node-hard-04-cli-contract` — the error path returns exit 0 with the message on stdout; the oracle requires nonzero exit + message on stderr.
+- `node-hard-05-parser-quotes` — naive `split(",")` tears apart a quoted comma; the oracle covers quoted values and quote-stripping.
 
-**Decision rule after a live run:** if deepcoder still gets **5/5 in one attempt**, the bench is
-still too explicit — tighten the issue hints / add traps. Any failures or multi-attempt solves are
-the useful signal; only then expand toward the full "Hard 20". The live run is a **separate explicit
-decision** — implementation/acceptance is fully no-model (`--selftest` + `--fake-solve fixed|noop`).
+The report separates **`bug-fixed by oracle`** (correctness: did the oracle accept the fix?) from
+**`quality-blocked`** (a correct fix that a quality rule blocked), so a discovery/reasoning failure
+is never confused with a bookkeeping nitpick.
+
+**Decision rule after a live run** (separate explicit decision; implementation/acceptance is fully
+no-model via `--selftest` + `--fake-solve fixed|noop`):
+- **10/10 in one attempt** → still too easy; tighten hints / add traps.
+- **10/10 but multi-attempt** → useful benchmark.
+- **some test failures** (`bug-fixed by oracle` < 10) → real solver/reasoning signal.
+- **quality-only failures** (`quality-blocked` > 0) → inspect whether the rule is fair or too rigid.
 
 ## Later
 Wire the read-only `reviewer` subagent (`src/subagents/runner.ts`) as an LLM quality gate

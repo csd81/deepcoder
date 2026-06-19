@@ -204,7 +204,7 @@ test("report distinguishes solved from passed-but-flagged and counts skips", () 
   const out = formatReport(rows);
   assert.match(out, /solved \(tests\+quality\): 1\/2/);
   assert.match(out, /tests passed:\s+2\/2/);
-  assert.match(out, /passed but FLAGGED:\s+1\/2/); // the green-but-bad patch
+  assert.match(out, /quality-blocked:\s+1\/2/); // the green-but-bad patch
   assert.match(out, /\+1 skipped/);
 });
 
@@ -244,6 +244,29 @@ test("forbidden_path_changed: editing a forbidden path is flagged (caller-only /
     forbiddenChangedPaths: ["tests/test_public.py"],
   });
   assert.ok(flags.includes("forbidden_path_changed"));
+});
+
+test("requiredTestPaths accepts a directory prefix: any test under tests/ counts (6D retune)", () => {
+  const base = { forbiddenPatterns: [], requiredPatterns: [], allowedPaths: ["blueprints.py", "tests/"] };
+  // The exact live behavior from 6C: fix blueprints.py + add a test in the
+  // EXISTING tests/test_basic.py. Under the ["tests/"] prefix this is clean.
+  const inExisting = computeQualityFlags({
+    patch: "+++ b/blueprints.py\n+raise ValueError('x')\n+++ b/tests/test_basic.py\n+def test_dot(): pass\n",
+    attempts: [],
+    requiredTestPaths: ["tests/"],
+    ...base,
+  });
+  assert.ok(!inExisting.includes("missing_required_test"), "a test under tests/ satisfies the prefix");
+  assert.ok(!inExisting.includes("unrelated_files"), "tests/ is an allowed prefix");
+
+  // No test anywhere under tests/ → still flagged.
+  const noTest = computeQualityFlags({
+    patch: "+++ b/blueprints.py\n+raise ValueError('x')\n",
+    attempts: [],
+    requiredTestPaths: ["tests/"],
+    ...base,
+  });
+  assert.ok(noTest.includes("missing_required_test"));
 });
 
 test("missing_required_test: no listed test added is flagged; adding one is clean", () => {
@@ -360,4 +383,18 @@ test("report groups solved/total by difficulty and category", () => {
   assert.match(out, /async-race\s+1\/2/);
   // repro_invalid surfaces in the flag legend/column
   assert.match(out, /repro=repro_invalid/);
+});
+
+test("report separates 'bug-fixed by oracle' from 'quality-blocked' (correct but flagged)", () => {
+  const rows: ResultRow[] = [
+    // correct AND clean
+    { id: "a", tests_passed: true, quality_passed: true, solved: true, quality_flags: [], attempts: 1, patch_bytes: 10, timed_out: false, changed_files: ["x"] },
+    // correct fix, but a policy flag blocked it → quality-blocked
+    { id: "b", tests_passed: true, quality_passed: false, solved: false, quality_flags: ["unrelated_files"], attempts: 1, patch_bytes: 10, timed_out: false, changed_files: ["y"] },
+    // genuinely wrong (oracle rejected)
+    { id: "c", tests_passed: false, quality_passed: false, solved: false, quality_flags: [], attempts: 1, patch_bytes: 10, timed_out: false, changed_files: ["z"] },
+  ];
+  const out = formatReport(rows);
+  assert.match(out, /bug-fixed by oracle:\s+2\/3/); // a + b had a correct fix
+  assert.match(out, /quality-blocked:\s+1\/3/); // only b was correct-but-flagged
 });
