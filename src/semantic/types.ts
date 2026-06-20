@@ -20,3 +20,14 @@ export interface ChunkOptions {
   // Optional symbol boundaries (e.g. from the 8C repo index). 1-based lines.
   symbols?: { name: string; startLine: number; endLine: number }[];
 }
+
+export interface VectorManifest {
+  providerLabel: string;      // e.g. "ollama/nomic-embed-text" — NEVER a key
+  model: string;
+  dimensions: number | null;
+  createdAt: string;          // ISO
+  chunkCount: number;
+  repoIndexHash?: string;
+}
+export interface VectorRecord { chunk: SemanticChunk; vector: number[]; }
+
