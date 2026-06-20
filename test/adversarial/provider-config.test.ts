@@ -96,7 +96,7 @@ test("gemini resolves GEMINI_* vars for its own prefix", () => {
     const cfg = loadConfig({ workspaceRoot: "/tmp" });
     assert.equal(cfg.apiKey, "g-key");
     assert.equal(cfg.baseUrl, "https://generativelanguage.googleapis.com/v1beta/openai");
-    assert.equal(cfg.model, "gemini-3.5-flash"); // provider default (newest flash; 2.0-flash 404s on the compat chat endpoint)
+    assert.equal(cfg.model, "gemini-2.5-flash"); // newest flash that works with the tool loop (3.x needs thought_signature)
   });
 });
 
