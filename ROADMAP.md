@@ -182,6 +182,15 @@ See `plans/phase5-verification-workflows-plan.md`.
   the system prompt as non-authoritative recall *only when the file exists* (zero change otherwise);
   `/memory show|remember|forget` (remember refuses secret-looking content; forget previews then
   applies). Deferred: auto-memory candidate generation, inbox, config block, session extraction.
+- [x] **7G dependency self-healing** (`src/dependencies/`, `plans/phase7g-…-plan.md`): opt-in,
+  default-off check-runner interceptor. On a dependency-shaped check failure (detect.ts —
+  conservative, excludes assertions/type/syntax/timeouts) it picks ONE allowlisted repair
+  (repairPlanner.ts — fixed templates from visible lockfiles; never interpolates the error's module
+  name), runs it once via healer.ts (classifier-gated — the only path allowed to run an `ask`-class
+  repair, never `deny`; sandboxed, network off by default, fail-closed when isolation is unavailable;
+  symlinked node_modules → skipped), then retries the original check once (no recursion). Recorded on
+  CheckRun for audit. Wired into the solve loop + `/check`. Deferred: network-on benchmark configs,
+  `uv`/pyproject defaults.
 
 ## Phase 9 — Self-orchestration & delegated workers
 

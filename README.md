@@ -322,6 +322,25 @@ Run **named, pre-configured** project checks from the CLI. Configure them in
 
 (Feeding a stored run straight into `/triage` is planned as a follow-up.)
 
+### Dependency self-healing (Phase 7G, opt-in, default off)
+
+When a check fails for an **environment** reason rather than a code bug
+(`Cannot find module …`, `ModuleNotFoundError`, missing `node_modules`, …),
+deepcoder can run **one** allowlisted package-manager repair and retry the check
+once — so solve/bench runs don't waste attempts on setup noise.
+
+It is a deterministic, config-gated check-runner step, **not** a model tool: the
+model never chooses the command and never sees raw package logs. Enable per repo
+(`.deepcoder/config.json` `dependencyHealing` block, or `DEEPCODER_DEP_HEALING=1`).
+Hard rules: **off by default** (zero change when disabled); the command is built
+from a fixed template set (`npm ci --ignore-scripts`, `pnpm/yarn … --frozen-lockfile
+--ignore-scripts`, `python -m pip install -r requirements.txt`, `uv sync --frozen`)
+and a module name from the error is **never** interpolated into it; **network off**
+by default; runs sandboxed (fail-closed if isolation is unavailable); a
+symlink-provisioned `node_modules` is treated read-only and skipped; exactly one
+repair + one retry; non-dependency failures (assertions, type/syntax errors,
+timeouts) never trigger it. Each repair is recorded on the check run for audit.
+
 ## Solve loop (closed-loop verification)
 
 Instead of editing once and hoping, deepcoder can **iterate against a check**:

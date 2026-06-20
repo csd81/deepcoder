@@ -117,7 +117,28 @@ export interface Config {
    */
   context: ContextConfig;
   skills: SkillsConfig;
+  dependencyHealing: DependencyHealingConfig;
 }
+
+export interface DependencyHealingConfig {
+  enabled: boolean;
+  network: "on" | "off";
+  maxAttempts: number;
+  allowPackageScripts: boolean;
+  managers: string[];
+  preferFrozenLockfile: boolean;
+  timeoutMs: number;
+}
+
+export const DEFAULT_DEPENDENCY_HEALING: DependencyHealingConfig = {
+  enabled: false,
+  network: "off",
+  maxAttempts: 1,
+  allowPackageScripts: false,
+  managers: ["npm", "pnpm", "yarn", "pip"],
+  preferFrozenLockfile: true,
+  timeoutMs: 300000,
+};
 
 export interface SkillsConfig {
   enabled: boolean;
@@ -211,12 +232,13 @@ const PROVIDER_ENV_PREFIX: Record<string, string> = {
   anthropic: "ANTHROPIC",
 };
 
-export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "skills">> & {
+export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "skills" | "dependencyHealing">> & {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
+  dependencyHealing?: Partial<DependencyHealingConfig>;
 };
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
@@ -299,6 +321,24 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       ? numEnv(activationBytesEnv, DEFAULT_SKILLS.activationMaxBytes)
       : (fileSkills.activationMaxBytes ?? DEFAULT_SKILLS.activationMaxBytes),
     disabled: fileSkills.disabled ?? DEFAULT_SKILLS.disabled,
+  };
+
+  const fileDepHealing = file.dependencyHealing ?? {};
+  const depHealingEnv = process.env.DEEPCODER_DEP_HEALING;
+  const depHealingNetworkEnv = process.env.DEEPCODER_DEP_HEALING_NETWORK;
+
+  const dependencyHealing: DependencyHealingConfig = {
+    enabled: depHealingEnv !== undefined
+      ? ["1", "true", "yes"].includes(depHealingEnv.toLowerCase())
+      : (fileDepHealing.enabled ?? DEFAULT_DEPENDENCY_HEALING.enabled),
+    network: depHealingNetworkEnv !== undefined && ["on", "off"].includes(depHealingNetworkEnv.toLowerCase())
+      ? (depHealingNetworkEnv.toLowerCase() as "on" | "off")
+      : (fileDepHealing.network ?? DEFAULT_DEPENDENCY_HEALING.network),
+    maxAttempts: fileDepHealing.maxAttempts ?? DEFAULT_DEPENDENCY_HEALING.maxAttempts,
+    allowPackageScripts: fileDepHealing.allowPackageScripts ?? DEFAULT_DEPENDENCY_HEALING.allowPackageScripts,
+    managers: fileDepHealing.managers ?? DEFAULT_DEPENDENCY_HEALING.managers,
+    preferFrozenLockfile: fileDepHealing.preferFrozenLockfile ?? DEFAULT_DEPENDENCY_HEALING.preferFrozenLockfile,
+    timeoutMs: fileDepHealing.timeoutMs ?? DEFAULT_DEPENDENCY_HEALING.timeoutMs,
   };
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
@@ -392,5 +432,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     hooks: { ...hooks, ...(overrides.hooks ?? {}) },
     context: { ...context, ...(overrides.context ?? {}) },
     skills: { ...skills, ...(overrides.skills ?? {}) },
+    dependencyHealing: { ...dependencyHealing, ...(overrides.dependencyHealing ?? {}) },
   };
 }

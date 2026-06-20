@@ -409,6 +409,7 @@ export async function handleSlashCommand(
           signal: controller.signal,
           onData: (chunk) => stdout.write(chunk), // already redacted by the runner
           sandbox: config.sandbox,
+          dependencyHealing: config.dependencyHealing,
         });
         const status = run.timedOut
           ? chalk.red("timed out")

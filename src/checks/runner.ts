@@ -11,6 +11,8 @@ import {
 import type { CheckConfig } from "../config/fileConfig.js";
 import { wrapCommand } from "../sandbox/index.js";
 import type { SandboxConfig } from "../sandbox/types.js";
+import type { DependencyHealingConfig } from "../config/config.js";
+import { maybeHealDependencies } from "../dependencies/healer.js";
 
 /** Thrown when a configured check command is denied by the command classifier. */
 export class CheckRefusedError extends Error {
@@ -27,6 +29,12 @@ export interface RunCheckOptions {
   onData?(chunk: string): void;
   /** When set, the check command is isolated through this sandbox policy. */
   sandbox?: SandboxConfig;
+  /**
+   * Phase 7G — when present AND `enabled`, a dependency-shaped failure triggers
+   * exactly one allowlisted repair + a single retry. Absent/disabled → runCheck
+   * behaves exactly as before (a true no-op).
+   */
+  dependencyHealing?: DependencyHealingConfig;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -43,6 +51,46 @@ const MAX_TIMEOUT_MS = 600_000; // hard ceiling regardless of config
  * byte-identical across call sites.
  */
 export async function runCheck(name: string, check: CheckConfig, opts: RunCheckOptions): Promise<CheckRun> {
+  const { run, captured } = await runCheckOnce(name, check, opts);
+
+  // Phase 7G: dependency self-healing. Off by default → return immediately
+  // (identical to the pre-7G behavior). Healing is NEVER applied to the retry.
+  const heal = opts.dependencyHealing;
+  if (!heal?.enabled || run.exitCode === 0 || run.timedOut) return run;
+
+  const record = await maybeHealDependencies(captured, {
+    workspaceRoot: opts.workspaceRoot,
+    signal: opts.signal,
+    sandbox: opts.sandbox,
+    config: heal,
+    checkRunId: run.id,
+    onData: opts.onData,
+  });
+  run.dependencyHealing = record;
+
+  // Retry the original check exactly once, only if the repair ran and succeeded.
+  if (record.attempted && record.exitCode === 0) {
+    const retry = await runCheckOnce(name, check, { ...opts, dependencyHealing: undefined });
+    retry.run.dependencyHealing = { ...record, retriedCheckRunId: retry.run.id };
+    await saveCheckRun(opts.workspaceRoot, retry.run, retry.captured);
+    return retry.run;
+  }
+
+  // No repair (or repair failed): persist the healing record onto the original.
+  await saveCheckRun(opts.workspaceRoot, run, captured);
+  return run;
+}
+
+/**
+ * Run a single named check exactly once (no healing). Classifier-gated, bounded,
+ * redacted, persisted. Returns the run plus its captured output (so the healing
+ * wrapper can inspect the failure without re-reading the log).
+ */
+async function runCheckOnce(
+  name: string,
+  check: CheckConfig,
+  opts: RunCheckOptions,
+): Promise<{ run: CheckRun; captured: string }> {
   if (classifyCommand(check.command) === "deny") {
     throw new CheckRefusedError(`Check "${name}" command is blocked by the permission policy: ${check.command}`);
   }
@@ -89,5 +137,5 @@ export async function runCheck(name: string, check: CheckConfig, opts: RunCheckO
 
   // `result.captured` is already redacted and byte-capped by runBoundedProcess.
   await saveCheckRun(opts.workspaceRoot, run, result.captured);
-  return run;
+  return { run, captured: result.captured };
 }

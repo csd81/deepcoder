@@ -8,6 +8,19 @@ import { assertSafeId } from "../workspace/paths.js";
  * and quarantined exactly like subagent results.
  */
 
+export interface DependencyHealingRecord {
+  attempted: boolean;
+  reason?: string;
+  manager?: "npm" | "pnpm" | "yarn" | "pip";
+  command?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number | null;
+  timedOut?: boolean;
+  retriedCheckRunId?: string;
+  logPath?: string;
+}
+
 export interface CheckRun {
   id: string;
   name: string;
@@ -20,6 +33,7 @@ export interface CheckRun {
   timedOut: boolean;
   truncated: boolean;
   logPath: string; // workspace-relative
+  dependencyHealing?: DependencyHealingRecord;
 }
 
 export const CHECK_LOG_MAX_BYTES = 256 * 1024;

@@ -162,6 +162,7 @@ export async function runSolveLoop(
         signal: deps.signal,
         onData: deps.onCheckData,
         sandbox: session.config.sandbox,
+        dependencyHealing: session.config.dependencyHealing,
       });
     } catch (err) {
       if (err instanceof CheckRefusedError) {

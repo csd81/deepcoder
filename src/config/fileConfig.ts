@@ -20,7 +20,7 @@ export interface CheckConfig {
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
-import type { ContextConfig, SkillsConfig } from "./config.js";
+import type { ContextConfig, SkillsConfig, DependencyHealingConfig } from "./config.js";
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
@@ -31,6 +31,7 @@ export interface FileConfig {
   hooks?: Partial<HooksConfig>;
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
+  dependencyHealing?: Partial<DependencyHealingConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -98,6 +99,16 @@ const skillsSchema = z.object({
   catalogMaxChars: z.number().int().min(0).optional(),
   activationMaxBytes: z.number().int().min(0).optional(),
   disabled: z.array(z.string()).optional(),
+});
+
+const dependencyHealingSchema = z.object({
+  enabled: z.boolean().optional(),
+  network: z.enum(["on", "off"]).optional(),
+  maxAttempts: z.number().int().positive().optional(),
+  allowPackageScripts: z.boolean().optional(),
+  managers: z.array(z.string()).optional(),
+  preferFrozenLockfile: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().optional(),
 });
 
 /**
@@ -191,7 +202,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "skills": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills };
+  const rawDepHealing = (parsed as { dependencyHealing?: unknown }).dependencyHealing;
+  let dependencyHealing: Partial<DependencyHealingConfig> | undefined;
+  if (rawDepHealing && typeof rawDepHealing === "object") {
+    const result = dependencyHealingSchema.safeParse(rawDepHealing);
+    if (result.success) dependencyHealing = result.data as Partial<DependencyHealingConfig>;
+    else warn(`ignoring "dependencyHealing": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing };
 }
 
 function warn(msg: string): void {
