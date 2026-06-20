@@ -10,6 +10,10 @@ export const QWEN_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compat
 export const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 export const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
+export function geminiWireModelName(model: string): string {
+  return model.startsWith("models/") ? model : `models/${model}`;
+}
+
 /**
  * Build a provider from config. All providers map onto the same
  * `ModelProvider` boundary, so nothing downstream is provider-aware. DeepSeek
@@ -49,6 +53,7 @@ export function createProvider(config: Config): ModelProvider {
         apiKey: config.apiKey,
         baseUrl: config.baseUrl || GEMINI_DEFAULT_BASE_URL,
         label: "Gemini",
+        modelName: geminiWireModelName,
         temperature: config.temperature,
       });
 

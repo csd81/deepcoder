@@ -22,6 +22,8 @@ export interface OpenAICompatibleOptions {
   baseUrl: string;
   /** Human-readable provider name, used only in error messages. */
   label: string;
+  /** Optional provider-specific wire model name mapping. */
+  modelName?: (model: string) => string;
   /**
    * Provider-default sampling temperature. `undefined` means OMIT the field so
    * the model uses its own default (GPT-5 reasoning models reject a non-default
@@ -54,19 +56,22 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private client: OpenAI;
   private label: string;
   private temperature?: number;
+  private modelName: (model: string) => string;
 
   constructor(opts: OpenAICompatibleOptions) {
     this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl });
     this.label = opts.label;
     this.temperature = opts.temperature;
+    this.modelName = opts.modelName ?? ((model) => model);
   }
 
   async chat(input: ChatRequest): Promise<ChatResponse> {
+    const wireModel = this.modelName(input.model);
     let res;
     try {
       res = await this.client.chat.completions.create(
         {
-          model: input.model,
+          model: wireModel,
           ...temperatureField(input.temperature, this.temperature),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
@@ -91,11 +96,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
   }
 
   async *streamChat(input: ChatRequest): AsyncIterable<ModelEvent> {
+    const wireModel = this.modelName(input.model);
     let stream;
     try {
       stream = await this.client.chat.completions.create(
         {
-          model: input.model,
+          model: wireModel,
           ...temperatureField(input.temperature, this.temperature),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,

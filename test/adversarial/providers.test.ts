@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createProvider } from "../../src/providers/factory.js";
+import { createProvider, geminiWireModelName } from "../../src/providers/factory.js";
 import {
   createToolCallAccumulator,
   mapProviderError,
@@ -41,6 +41,11 @@ test("unknown provider is rejected", () => {
 
 test("DeepSeekProvider preset still constructs (back-compat)", () => {
   assert.ok(new DeepSeekProvider({ apiKey: "k" }) instanceof OpenAICompatibleProvider);
+});
+
+test("Gemini model names are normalized only for Google's OpenAI-compatible endpoint", () => {
+  assert.equal(geminiWireModelName("gemini-3.5-flash"), "models/gemini-3.5-flash");
+  assert.equal(geminiWireModelName("models/gemini-3.5-flash"), "models/gemini-3.5-flash");
 });
 
 // --- Streaming tool-call accumulation ---
