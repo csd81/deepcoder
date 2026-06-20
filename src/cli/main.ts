@@ -11,6 +11,7 @@ import { createIsolatedWorkspace, WorkspaceIsolationError } from "../workspaceIs
 import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
 import { EMPTY_USAGE } from "../providers/usage.js";
+import { createSemanticTools } from "../tools/semanticTools.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { runOneShot, runRepl, systemMessage, resolveInstructions, type Session } from "./repl.js";
 import {
@@ -117,6 +118,10 @@ async function buildSession(
 ): Promise<Session> {
   const provider = createProvider(config);
   const registry = defaultRegistry();
+  // Phase 8E: register the semantic tools only when opt-in is enabled (default off).
+  if (config.semanticSearch.enabled) {
+    for (const t of createSemanticTools({ config: config.semanticSearch })) registry.register(t);
+  }
   const mcp = await initMcp(config, registry);
   const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
 

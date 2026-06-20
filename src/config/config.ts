@@ -16,6 +16,17 @@ const WS_ISOLATION_MODES: WorkspaceIsolationMode[] = ["off", "patch", "keep"];
 export type ApprovalMode = "ask" | "auto" | "readonly";
 export type CheckpointMode = "off" | "manual" | "auto";
 
+/** Phase 8E semantic-search settings (opt-in; default disabled). */
+export interface SemanticSearchConfig {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  dimensions: number | null;
+  hybridLexicalWeight: number;
+  topK: number;
+}
+
 export interface Config {
   provider: string;
   apiKey: string;
@@ -31,6 +42,8 @@ export interface Config {
   temperature?: number;
   /** Reasoning effort for reasoning providers (openai-responses). Default "medium". */
   reasoningEffort?: "low" | "medium" | "high";
+  /** Phase 8E opt-in semantic search (default disabled). */
+  semanticSearch: SemanticSearchConfig;
   /**
    * When true, a one-shot run first asks the reasoner model for a step-by-step
    * plan (no tools), prepends it as context, then runs the normal agent loop.
@@ -265,6 +278,21 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     | "medium"
     | "high";
 
+  // Phase 8E semantic search: opt-in (default off). fileConfig provides the
+  // block; env can flip enabled/provider/model.
+  const ss = (file as { semanticSearch?: Partial<SemanticSearchConfig> }).semanticSearch ?? {};
+  const semanticSearch: SemanticSearchConfig = {
+    enabled:
+      ["1", "true", "yes"].includes((process.env.DEEPCODER_SEMANTIC_SEARCH ?? "").toLowerCase()) ||
+      ss.enabled === true,
+    provider: process.env.DEEPCODER_EMBEDDING_PROVIDER ?? ss.provider ?? "ollama",
+    model: process.env.DEEPCODER_EMBEDDING_MODEL ?? ss.model ?? "nomic-embed-text",
+    baseUrl: ss.baseUrl ?? "http://localhost:11434",
+    dimensions: typeof ss.dimensions === "number" ? ss.dimensions : null,
+    hybridLexicalWeight: typeof ss.hybridLexicalWeight === "number" ? ss.hybridLexicalWeight : 0.35,
+    topK: typeof ss.topK === "number" && ss.topK > 0 ? ss.topK : 12,
+  };
+
   return {
     provider,
     apiKey,
@@ -272,6 +300,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     model,
     temperature,
     reasoningEffort,
+    semanticSearch,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL"),
     planFirst:
       ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||
