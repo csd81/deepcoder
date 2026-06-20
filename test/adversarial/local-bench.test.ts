@@ -450,3 +450,29 @@ test("report separates 'bug-fixed by oracle' from 'quality-blocked' (correct but
   assert.match(out, /bug-fixed by oracle:\s+2\/3/); // a + b had a correct fix
   assert.match(out, /quality-blocked:\s+1\/3/); // only b was correct-but-flagged
 });
+
+test("R1#7: bench subprocess env is scrubbed — no host secrets; check env has no model key", async () => {
+  const { baseEnv, solveEnv } = await import("../../evals/local-bench/lib/env.js");
+  const host = {
+    PATH: "/usr/bin", HOME: "/home/u", LANG: "en_US.UTF-8",
+    DEEPCODER_API_KEY: "sk-MODEL-KEY", DEEPSEEK_BASE_URL: "https://api",
+    AWS_SECRET_ACCESS_KEY: "AKIA-LEAK", GITHUB_TOKEN: "ghp_LEAK", MY_PRIVATE_SECRET: "nope",
+  } as NodeJS.ProcessEnv;
+
+  const checkEnv = baseEnv(host);
+  // Check command: toolchain only — NO model key, NO host secrets.
+  assert.equal(checkEnv.PATH, "/usr/bin");
+  assert.equal(checkEnv.DEEPCODER_API_KEY, undefined, "case check must not get the model key");
+  assert.equal(checkEnv.AWS_SECRET_ACCESS_KEY, undefined);
+  assert.equal(checkEnv.GITHUB_TOKEN, undefined);
+  assert.equal(checkEnv.MY_PRIVATE_SECRET, undefined);
+
+  const agentEnv = solveEnv(host);
+  // Solve agent: toolchain + its own provider config (needs the key), but still no host secrets.
+  assert.equal(agentEnv.PATH, "/usr/bin");
+  assert.equal(agentEnv.DEEPCODER_API_KEY, "sk-MODEL-KEY", "solve agent needs the model key");
+  assert.equal(agentEnv.DEEPSEEK_BASE_URL, "https://api");
+  assert.equal(agentEnv.AWS_SECRET_ACCESS_KEY, undefined, "host secret must not leak to the agent");
+  assert.equal(agentEnv.GITHUB_TOKEN, undefined);
+  assert.equal(agentEnv.MY_PRIVATE_SECRET, undefined);
+});

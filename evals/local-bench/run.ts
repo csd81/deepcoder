@@ -28,6 +28,7 @@ import {
   type CaseManifest,
 } from "./lib/cases.js";
 import { computeQualityFlags, verdict, classifyOracleFailure } from "./lib/flags.js";
+import { baseEnv, solveEnv } from "./lib/env.js";
 import { formatReport, type ResultRow } from "./report.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,7 @@ function runCheck(ws: string, check: Check): CheckRun {
     timeout: check.timeoutMs,
     killSignal: "SIGKILL",
     maxBuffer: 16 * 1024 * 1024,
+    env: baseEnv(), // toolchain only — a case check never needs host secrets or the model key
   });
   const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || r.signal === "SIGKILL";
   return { code: r.status, timedOut, output: redactSecrets((r.stdout ?? "") + (r.stderr ?? "")) };
@@ -122,7 +124,7 @@ function solveReal(ws: string, m: CaseManifest, telemetryPath: string, preflight
       input: "", // empty stdin -> EOF -> headless approval auto-denies (issue #2)
       timeout: m.check.timeoutMs * m.check.solveAttempts + 120_000,
       killSignal: "SIGKILL",
-      env: process.env,
+      env: solveEnv(),
       maxBuffer: 32 * 1024 * 1024,
     },
   );
