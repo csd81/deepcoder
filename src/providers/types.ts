@@ -45,9 +45,18 @@ export interface ChatRequest {
   signal?: AbortSignal;
 }
 
+/** Normalized token usage for a single model call. */
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface ChatResponse {
   text: string;
   toolCalls: ToolCall[];
+  /** Token usage for this call, when the provider reports it. */
+  usage?: TokenUsage;
 }
 
 /**
@@ -57,7 +66,7 @@ export interface ChatResponse {
 export type ModelEvent =
   | { type: "assistant_text_delta"; text: string }
   | { type: "tool_call_complete"; toolCall: ToolCall }
-  | { type: "done"; finishReason?: string }
+  | { type: "done"; finishReason?: string; usage?: TokenUsage }
   | { type: "error"; message: string };
 
 export interface ModelProvider {

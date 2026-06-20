@@ -5,6 +5,7 @@ import path from "node:path";
 import chalk from "chalk";
 import type { ApprovalMode, Config } from "../config/config.js";
 import type { ModelProvider, AgentMessage } from "../providers/types.js";
+import { addUsage } from "../providers/usage.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext, ToolInvocation, ToolPreview, ToolResult, Todo } from "../tools/types.js";
 import { runAgentLoop, type AgentDeps } from "../agent/agentLoop.js";
@@ -61,6 +62,8 @@ export interface Session {
    * the JIT injector read it. Undefined under the legacy first-match loader.
    */
   instructionGraph?: import("../context/instructionGraph.js").InstructionGraph;
+  /** Cumulative token usage across this session's model calls. */
+  tokenUsage: import("../providers/types.js").TokenUsage;
 }
 
 /**
@@ -242,6 +245,7 @@ async function runTask(session: Session): Promise<void> {
     onPostTool: postToolHook(session),
     jitContext: jitContext(session),
     onPersist: () => session.store.save(snapshot(session)),
+    onUsage: (u) => addUsage(session.tokenUsage, u),
     onAssistantTextDelta: (chunk) => {
       if (!streaming) {
         stdout.write("\n" + chalk.bold("assistant> "));

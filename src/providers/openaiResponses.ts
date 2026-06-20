@@ -8,6 +8,7 @@ import type {
   ToolSchema,
 } from "./types.js";
 import { mapProviderError, safeParseArgs } from "./openaiCompatible.js";
+import { parseUsage } from "./usage.js";
 
 /**
  * OpenAI Responses-API provider (`/v1/responses`). Lets deepcoder use models
@@ -29,6 +30,7 @@ export type ResponsesInputItem = Record<string, unknown>;
 export interface ResponsesResult {
   output?: unknown[];
   output_text?: string;
+  usage?: unknown;
 }
 
 /**
@@ -167,6 +169,6 @@ export class OpenAIResponsesProvider implements ModelProvider {
     } catch (err) {
       throw mapProviderError(err, { label: this.label, model: input.model });
     }
-    return parseResponsesOutput(res);
+    return { ...parseResponsesOutput(res), usage: parseUsage(res.usage) };
   }
 }

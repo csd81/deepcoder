@@ -30,6 +30,8 @@ export interface AgentDeps {
   onAssistantTextDelta?(chunk: string): void;
   /** Final assistant text (fired once per turn; fallback when not streaming). */
   onAssistantText?(text: string): void;
+  /** Token usage for each model call (when the provider reports it). */
+  onUsage?(usage: ChatResponse["usage"]): void;
   onToolCall?(name: string, describe: string): void;
   onToolResult?(name: string, result: ToolResult): void;
   onNotice?(message: string): void;
@@ -86,6 +88,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
     }
 
     const response = await getResponse(deps, withEphemeralContext(messages, ctx, deps));
+    deps.onUsage?.(response.usage);
 
     messages.push({
       role: "assistant",
@@ -269,12 +272,13 @@ async function getResponse(deps: AgentDeps, sent: AgentMessage[]): Promise<ChatR
   return deps.provider.chat(req);
 }
 
-async function consumeStream(
+export async function consumeStream(
   stream: AsyncIterable<ModelEvent>,
   onDelta?: (chunk: string) => void,
 ): Promise<ChatResponse> {
   let text = "";
   const toolCalls: ToolCall[] = [];
+  let usage: ChatResponse["usage"];
   for await (const ev of stream) {
     switch (ev.type) {
       case "assistant_text_delta":
@@ -287,10 +291,11 @@ async function consumeStream(
       case "error":
         throw new Error(ev.message);
       case "done":
+        usage = ev.usage;
         break;
     }
   }
-  return { text, toolCalls };
+  return { text, toolCalls, usage };
 }
 
 function pushToolResult(

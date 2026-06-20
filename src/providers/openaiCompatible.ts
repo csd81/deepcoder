@@ -12,6 +12,7 @@ import type {
   ToolCall,
 } from "./types.js";
 import { redactSecrets } from "../workspace/redact.js";
+import { parseUsage } from "./usage.js";
 
 // Re-export so existing `from "./openaiCompatible.js"` import paths keep working.
 export { redactSecrets };
@@ -86,7 +87,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       return [parseWireToolCall(tc)];
     });
 
-    return { text: choice?.content ?? "", toolCalls };
+    return { text: choice?.content ?? "", toolCalls, usage: parseUsage(res.usage) };
   }
 
   async *streamChat(input: ChatRequest): AsyncIterable<ModelEvent> {
@@ -100,6 +101,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
           tool_choice: input.tools.length ? "auto" : undefined,
           stream: true,
+          stream_options: { include_usage: true },
         },
         { signal: input.signal },
       );
@@ -110,8 +112,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     const acc = createToolCallAccumulator();
     let finishReason: string | undefined;
+    let usage: ChatResponse["usage"];
     try {
       for await (const chunk of stream) {
+        // The final chunk (with include_usage) carries usage and no choices.
+        const u = parseUsage((chunk as { usage?: unknown }).usage);
+        if (u) usage = u;
         const choice = chunk.choices[0];
         if (!choice) continue;
         if (choice.delta?.content) yield { type: "assistant_text_delta", text: choice.delta.content };
@@ -124,7 +130,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     for (const toolCall of acc.finalize()) yield { type: "tool_call_complete", toolCall };
-    yield { type: "done", finishReason };
+    yield { type: "done", finishReason, usage };
   }
 }
 

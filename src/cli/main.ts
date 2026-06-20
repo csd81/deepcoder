@@ -10,6 +10,7 @@ import type { WorkspaceIsolationMode } from "../workspaceIsolation/types.js";
 import { createIsolatedWorkspace, WorkspaceIsolationError } from "../workspaceIsolation/index.js";
 import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
+import { EMPTY_USAGE } from "../providers/usage.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { runOneShot, runRepl, systemMessage, resolveInstructions, type Session } from "./repl.js";
 import {
@@ -164,6 +165,7 @@ async function buildSession(
       mcp,
       recorder,
       instructionGraph: instr.graph,
+      tokenUsage: { ...EMPTY_USAGE },
     };
   }
 
@@ -184,6 +186,7 @@ async function buildSession(
     mcp,
     recorder,
     instructionGraph: instr.graph,
+    tokenUsage: { ...EMPTY_USAGE },
   };
 }
 

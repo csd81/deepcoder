@@ -110,6 +110,17 @@ export async function handleSlashCommand(
       console.log(chalk.dim(`Saved session ${session.store.id}`));
       return { consumed: true };
 
+    case "usage": {
+      const u = session.tokenUsage;
+      console.log(
+        chalk.dim(
+          `Session tokens — total ${u.totalTokens} (prompt ${u.promptTokens}, completion ${u.completionTokens}). ` +
+            `Provider-reported; not a remote quota.`,
+        ),
+      );
+      return { consumed: true };
+    }
+
     case "context": {
       const used = estimateMessages(session.messages);
       const budget = config.contextBudgetTokens;
