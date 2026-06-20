@@ -244,6 +244,17 @@ every patch before anything touches the repo. Plans/runs persist under
   sequential `runRunnable` is unchanged + remains the default. `/delegate run <plan> --parallel
   [--max-concurrency N]`. Deferred: cross-process plan locking, config-gated default.
 
+- [x] **9J in-loop read-only LLM quality gate** (`src/delegate/qualityGate.ts`, `plans/phase9j-…-plan.md`):
+  an apply-time, **downgrade-only** reviewer gate. `runQualityGate` runs the existing read-only
+  `reviewer` subagent (asserts the registry is read-only; patch truncated to maxPatchBytes) over a
+  deterministically-passing patch and parses a bounded verdict/findings; `verdict:block` or a finding
+  ≥ `minimumBlockingSeverity` (default high) → blocked; malformed/timeout → blocked when
+  `blockOnReviewerError`. The reviewer can NEVER turn a deterministic failure into a pass (deterministic
+  failure skips it), is read-only, its output is untrusted (never added to model history), and an
+  injectable `reviewerRunner` keeps it no-model-testable. `applyWorker` refuses a blocked gate (always)
+  and a missing gate in mandatory mode; result persisted to `quality-gate.json`. Config-gated,
+  default-off. Deferred: `/delegate review --quality` live rerun, before-check (Mode A) gating.
+
 Built largely *by* delegated workers (DeepSeek, OpenAI codex via the Responses provider, Gemini) with
 parent review closing recurring gaps (skipped/thin/hallucinated tests). Deferred: model-callable /
 autonomous delegation, the `delegate` config block + remaining env wiring.

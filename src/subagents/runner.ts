@@ -18,7 +18,7 @@ export async function runSubagent(
   profile: SubagentProfile,
   task: string,
   opts: RunSubagentOptions,
-): Promise<{ result: SubagentResult; trace: SubagentTrace }> {
+): Promise<{ result: SubagentResult; trace: SubagentTrace; finalText?: string }> {
   const model = opts.subagentModel ?? opts.parentModel;
   const registry = restrictedRegistry(profile.allowedTools);
   const { text: instructions } = loadInstructions(opts.workspaceRoot);
@@ -66,5 +66,5 @@ export async function runSubagent(
   result.errors.push(...errors);
 
   const turns = messages.filter((m) => m.role === "assistant").length;
-  return { result, trace: { toolsCalled, turns, model } };
+  return { result, trace: { toolsCalled, turns, model }, finalText };
 }

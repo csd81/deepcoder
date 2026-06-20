@@ -20,7 +20,7 @@ export interface CheckConfig {
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
-import type { ContextConfig, SkillsConfig, DependencyHealingConfig } from "./config.js";
+import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig } from "./config.js";
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
@@ -32,6 +32,7 @@ export interface FileConfig {
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
+  delegate?: Partial<DelegateConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -109,6 +110,19 @@ const dependencyHealingSchema = z.object({
   managers: z.array(z.string()).optional(),
   preferFrozenLockfile: z.boolean().optional(),
   timeoutMs: z.number().int().positive().optional(),
+});
+
+const qualityGateSchema = z.object({
+  enabled: z.boolean().optional(),
+  mode: z.enum(["mandatory", "advisory"]).optional(),
+  blockOnReviewerError: z.boolean().optional(),
+  minimumBlockingSeverity: z.enum(["critical", "high", "medium", "low"]).optional(),
+  maxPatchBytes: z.number().int().positive().optional(),
+  maxContextBytes: z.number().int().positive().optional(),
+});
+
+const delegateSchema = z.object({
+  qualityGate: qualityGateSchema.optional(),
 });
 
 /**
@@ -210,7 +224,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "dependencyHealing": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing };
+  const rawDelegate = (parsed as { delegate?: unknown }).delegate;
+  let delegate: Partial<DelegateConfig> | undefined;
+  if (rawDelegate && typeof rawDelegate === "object") {
+    const result = delegateSchema.safeParse(rawDelegate);
+    if (result.success) delegate = result.data as Partial<DelegateConfig>;
+    else warn(`ignoring "delegate": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate };
 }
 
 function warn(msg: string): void {

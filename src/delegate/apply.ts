@@ -82,6 +82,12 @@ export interface ApplyOptions {
   confirmResult?: boolean;
   /** Paths already changed by previously-applied workers (overlap gate). */
   alreadyChangedPaths?: string[];
+  /**
+   * Phase 9J: when true, a passed worker must ALSO carry a non-blocked LLM
+   * quality gate (run.qualityGate). A blocked gate is always refused; a missing
+   * gate is refused only when this is set (mandatory mode).
+   */
+  requireQualityGate?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,6 +180,24 @@ export async function applyWorker(
     return {
       ok: false,
       message: `Patch validation failed for worker "${workerId}":\n${details}`,
+    };
+  }
+
+  // ── Gate 3.5 (9J): LLM quality gate — downgrade-only, after deterministic ──
+  // A blocked gate is ALWAYS refused; a missing gate is refused only in
+  // mandatory mode. The reviewer can never turn a deterministic pass into an
+  // apply on its own — it can only block here.
+  const qg = run.qualityGate;
+  const qgObj = qg && typeof qg === "object" ? qg : undefined;
+  if (qgObj?.blocked) {
+    const top = qgObj.findings.find((f) => f.severity === "critical" || f.severity === "high") ?? qgObj.findings[0];
+    const detail = top ? `${top.severity} finding: ${top.claim}${top.path ? ` (${top.path})` : ""}` : (qgObj.errors[0] ?? "blocked");
+    return { ok: false, message: `Quality gate blocked worker "${workerId}": ${detail}` };
+  }
+  if (opts.requireQualityGate && !qgObj) {
+    return {
+      ok: false,
+      message: `Quality gate required but missing for worker "${workerId}". Run /delegate review ${planId} ${workerId} --quality, or rerun the worker.`,
     };
   }
 

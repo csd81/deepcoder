@@ -78,6 +78,30 @@ export interface WorkerIsolationRecord {
   cleanupError?: string;
 }
 
+export interface WorkerQualityGate {
+  enabled: boolean;
+  passed: boolean;
+  blocked: boolean;
+  reviewerProfile: "reviewer";
+  model: string;
+  startedAt: string;
+  finishedAt?: string;
+  findings: QualityFinding[];
+  errors: string[];
+  trace: {
+    toolsCalled: string[];
+    turns: number;
+  };
+  artifactPath?: string;
+}
+
+export interface QualityFinding {
+  severity: "critical" | "high" | "medium" | "low";
+  claim: string;
+  evidence?: string;
+  path?: string;
+}
+
 export interface WorkerRun {
   planId: string;
   workerId: string;
@@ -94,6 +118,7 @@ export interface WorkerRun {
   summary: string;
   warnings: string[];
   isolation?: WorkerIsolationRecord;
+  qualityGate?: WorkerQualityGate | "skipped_deterministic_failure";
 }
 
 /* ------------------------------------------------------------------ */

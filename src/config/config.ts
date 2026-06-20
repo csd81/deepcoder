@@ -118,7 +118,30 @@ export interface Config {
   context: ContextConfig;
   skills: SkillsConfig;
   dependencyHealing: DependencyHealingConfig;
+  delegate: DelegateConfig;
 }
+
+export interface QualityGateOptions {
+  enabled: boolean;
+  mode: "mandatory" | "advisory";
+  blockOnReviewerError: boolean;
+  minimumBlockingSeverity: "critical" | "high" | "medium" | "low";
+  maxPatchBytes: number;
+  maxContextBytes: number;
+}
+
+export interface DelegateConfig {
+  qualityGate: QualityGateOptions;
+}
+
+export const DEFAULT_QUALITY_GATE: QualityGateOptions = {
+  enabled: false,
+  mode: "mandatory",
+  blockOnReviewerError: true,
+  minimumBlockingSeverity: "high",
+  maxPatchBytes: 80000,
+  maxContextBytes: 24000,
+};
 
 export interface DependencyHealingConfig {
   enabled: boolean;
@@ -232,17 +255,18 @@ const PROVIDER_ENV_PREFIX: Record<string, string> = {
   anthropic: "ANTHROPIC",
 };
 
-export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "skills" | "dependencyHealing">> & {
+export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "skills" | "dependencyHealing" | "delegate">> & {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
+  delegate?: { qualityGate?: Partial<QualityGateOptions> };
 };
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
-  const { sandbox: sandboxOverride, workspaceIsolation: wsIsoOverride, ...rest } = overrides;
+  const { sandbox: sandboxOverride, workspaceIsolation: wsIsoOverride, delegate: delegateOverride, ...rest } = overrides;
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";
   const workspaceRoot = overrides.workspaceRoot ?? process.cwd();
   const file = loadFileConfig(workspaceRoot);
@@ -341,6 +365,34 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     timeoutMs: fileDepHealing.timeoutMs ?? DEFAULT_DEPENDENCY_HEALING.timeoutMs,
   };
 
+  const fileDelegate = (file.delegate ?? {}) as Partial<DelegateConfig>;
+  const fileQualityGate = (fileDelegate.qualityGate ?? {}) as Partial<QualityGateOptions>;
+  const overrideQualityGate = delegateOverride?.qualityGate ?? {};
+
+  const qgEnabledEnv = process.env.DEEPCODER_DELEGATE_QUALITY_GATE;
+  const qgBlockOnErrorEnv = process.env.DEEPCODER_DELEGATE_QUALITY_GATE_BLOCK_ON_ERROR;
+
+  const qualityGate: QualityGateOptions = {
+    enabled: overrideQualityGate.enabled !== undefined
+      ? overrideQualityGate.enabled
+      : (qgEnabledEnv !== undefined
+        ? ["1", "true", "yes"].includes(qgEnabledEnv.toLowerCase())
+        : (fileQualityGate.enabled ?? DEFAULT_QUALITY_GATE.enabled)),
+    mode: overrideQualityGate.mode ?? fileQualityGate.mode ?? DEFAULT_QUALITY_GATE.mode,
+    blockOnReviewerError: overrideQualityGate.blockOnReviewerError !== undefined
+      ? overrideQualityGate.blockOnReviewerError
+      : (qgBlockOnErrorEnv !== undefined
+        ? ["1", "true", "yes"].includes(qgBlockOnErrorEnv.toLowerCase())
+        : (fileQualityGate.blockOnReviewerError ?? DEFAULT_QUALITY_GATE.blockOnReviewerError)),
+    minimumBlockingSeverity: overrideQualityGate.minimumBlockingSeverity ?? fileQualityGate.minimumBlockingSeverity ?? DEFAULT_QUALITY_GATE.minimumBlockingSeverity,
+    maxPatchBytes: overrideQualityGate.maxPatchBytes ?? fileQualityGate.maxPatchBytes ?? DEFAULT_QUALITY_GATE.maxPatchBytes,
+    maxContextBytes: overrideQualityGate.maxContextBytes ?? fileQualityGate.maxContextBytes ?? DEFAULT_QUALITY_GATE.maxContextBytes,
+  };
+
+  const delegate: DelegateConfig = {
+    qualityGate,
+  };
+
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
   // Validate the provider BEFORE requiring a key, so a typo'd provider reports
   // "unknown provider" rather than a misleading "missing API key".
@@ -433,5 +485,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     context: { ...context, ...(overrides.context ?? {}) },
     skills: { ...skills, ...(overrides.skills ?? {}) },
     dependencyHealing: { ...dependencyHealing, ...(overrides.dependencyHealing ?? {}) },
+    delegate,
   };
 }
