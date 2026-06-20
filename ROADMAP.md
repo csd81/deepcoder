@@ -225,6 +225,14 @@ every patch before anything touches the repo. Plans/runs persist under
   deliverables/expected-files/tests + worker self-audit cross-check, between "check passed" and
   "apply" (the 8D lesson: a worker can pass its check while skipping deliverables).
 
+- [x] **9H delegated-worker isolation defaults** (`src/delegate/workerRunner.ts`, `…types.ts`,
+  `plans/phase9h-…-plan.md`): make worker isolation a mandatory, audited invariant — `runWorker`
+  REFUSES `isolation: off` (and forces keep/patch when unset), records a `WorkerIsolationRecord`
+  (backend/realRoot/isolatedRoot/kept/cleaned/cleanupError) on the run, and the real repo stays
+  byte-identical after worker success/failure/timeout (apply via `/delegate apply` is the only path
+  that mutates the live repo). `/delegate run` + `review` print the isolation boundary + a "live repo
+  was not modified" line. (Discard-removes-kept-worktree: follow-up.)
+
 Built largely *by* delegated workers (DeepSeek, OpenAI codex via the Responses provider, Gemini) with
 parent review closing recurring gaps (skipped/thin/hallucinated tests). Deferred: model-callable /
 autonomous delegation, parallel workers, the `delegate` config block + remaining env wiring.

@@ -68,6 +68,16 @@ export interface DelegationPlan {
 /*  WorkerRun                                                          */
 /* ------------------------------------------------------------------ */
 
+export interface WorkerIsolationRecord {
+  backend: "git-worktree" | "copy";
+  mode: "runner-owned";
+  realRoot: string;
+  isolatedRoot: string | null;
+  kept: boolean;
+  cleaned: boolean;
+  cleanupError?: string;
+}
+
 export interface WorkerRun {
   planId: string;
   workerId: string;
@@ -83,6 +93,7 @@ export interface WorkerRun {
   telemetryPath?: string;
   summary: string;
   warnings: string[];
+  isolation?: WorkerIsolationRecord;
 }
 
 /* ------------------------------------------------------------------ */

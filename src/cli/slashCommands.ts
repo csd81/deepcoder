@@ -1010,6 +1010,7 @@ export async function handleSlashCommand(
           }
           console.log("");
         }
+        console.log(chalk.green("live repo was not modified by this run — it changes only through /delegate apply."));
         return { consumed: true };
       }
 
@@ -1077,6 +1078,11 @@ export async function handleSlashCommand(
               console.log(chalk.dim(`  changed: ${shown}${more}`));
             }
             if (run.patchPath) console.log(chalk.dim(`  patch:   ${run.patchPath}`));
+            if (run.isolation) {
+              const iso = run.isolation;
+              console.log(chalk.dim(`  isolation: ${iso.backend} (${iso.cleaned ? "cleaned" : iso.kept ? `kept:${iso.isolatedRoot}` : "—"})`));
+            }
+            console.log(chalk.dim("  live repo was not modified by this run — apply with /delegate apply, review with /delegate review."));
             for (const w of run.warnings.slice(0, 10)) console.log(chalk.yellow(`  ! ${w}`));
 
             const auto = ["1", "true", "yes"].includes((process.env.DEEPCODER_DELEGATE_AUTO_APPLY ?? "").toLowerCase());

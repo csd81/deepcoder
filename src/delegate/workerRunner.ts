@@ -24,7 +24,7 @@ import {
 } from "../process/runBoundedProcess.js";
 import { savePlan } from "./store.js";
 import { assertSafeId } from "../workspace/paths.js";
-import type { DelegationPlan, WorkerRun, WorkerTask, WorkerTaskStatus } from "./types.js";
+import type { DelegationPlan, WorkerRun, WorkerTask, WorkerTaskStatus, WorkerIsolationRecord } from "./types.js";
 
 /* ------------------------------------------------------------------ */
 /*  Env allowlist (strict)                                            */
@@ -208,6 +208,18 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
     );
   }
 
+  let isolationConfig = input.isolationConfig;
+  if (isolationConfig) {
+    if (isolationConfig.mode === "off") {
+      throw new WorkerRunError("Delegated workers must never run with isolation off.");
+    }
+  } else {
+    isolationConfig = {
+      ...DEFAULT_WORKSPACE_ISOLATION,
+      mode: input.keepWorktree ? "keep" : "patch",
+    };
+  }
+
   // Validate ids before they are ever used as path segments.
   assertSafeId(input.plan.id);
   assertSafeId(input.worker.id);
@@ -223,8 +235,17 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
   // Worktree creation refuses a dirty tree (fail-closed) with a clear message.
   const iso = await createIsolatedWorkspace(
     input.realRoot,
-    input.isolationConfig ?? { ...DEFAULT_WORKSPACE_ISOLATION },
+    isolationConfig,
   );
+
+  const isolation: WorkerIsolationRecord = {
+    backend: iso.backend,
+    mode: "runner-owned",
+    realRoot: input.realRoot,
+    isolatedRoot: iso.isolatedRoot,
+    kept: !!input.keepWorktree,
+    cleaned: false,
+  };
 
   let res: BoundedProcessResult;
   try {
@@ -246,7 +267,15 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
       onData: input.onData,
     });
   } catch (err) {
-    if (!input.keepWorktree) await iso.cleanup().catch(() => {});
+    if (!input.keepWorktree) {
+      try {
+        await iso.cleanup();
+        isolation.cleaned = true;
+        isolation.isolatedRoot = null;
+      } catch (cleanupErr) {
+        isolation.cleanupError = (cleanupErr as Error).message;
+      }
+    }
     input.worker.status = "failed";
     await savePlan(input.realRoot, input.plan).catch(() => {});
     throw err;
@@ -277,11 +306,23 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
   if (res.truncated) warnings.push("worker output truncated");
   if (res.exitCode !== 0 && res.exitCode !== null) warnings.push(`worker exited ${res.exitCode}`);
 
+  if (!input.keepWorktree) {
+    try {
+      await iso.cleanup();
+      isolation.cleaned = true;
+      isolation.isolatedRoot = null;
+    } catch (cleanupErr) {
+      const msg = (cleanupErr as Error).message;
+      isolation.cleanupError = msg;
+      warnings.push(`cleanup warning: ${msg}`);
+    }
+  }
+
   const run: WorkerRun = {
     planId: input.plan.id,
     workerId: input.worker.id,
     sessionId: newSessionId(),
-    worktreePath: iso.isolatedRoot,
+    worktreePath: isolation.isolatedRoot ?? iso.isolatedRoot,
     startedAt,
     finishedAt: new Date().toISOString(),
     exitCode: res.exitCode,
@@ -293,14 +334,13 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
       ? `Worker ${input.worker.id} passed; ${changedFiles.length} file(s) changed (not applied).`
       : `Worker ${input.worker.id} did not pass (exit ${res.exitCode}${res.timedOut ? ", timed out" : ""}).`,
     warnings,
+    isolation,
   };
   await fs.writeFile(path.join(runDir, "run.json"), JSON.stringify(run, null, 2), "utf8");
 
   // Update worker status + persist. NO APPLY — the real repo is untouched.
   input.worker.status = checkPassed ? "passed" : "failed";
   await savePlan(input.realRoot, input.plan);
-
-  if (!input.keepWorktree) await iso.cleanup();
 
   return { run, patchPath, changedFiles };
 }
