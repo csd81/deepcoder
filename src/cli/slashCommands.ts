@@ -36,6 +36,7 @@ import { resolveInstructions } from "./repl.js";
 import { buildPlan } from "../delegate/planner.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
 import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
+import { applyWorker, discardWorker } from "../delegate/apply.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -970,7 +971,50 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
-      console.log(chalk.dim("usage: /delegate plan <task> | run <plan-id> <worker-id> | status <plan-id> | review <plan-id>"));
+      if (sub === "apply") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate apply <plan-id> <worker-id>  — apply a passed worker's patch to the real repo"));
+          return { consumed: true };
+        }
+        // TTY gate: apply is inherently destructive.
+        if (!process.stdin.isTTY) {
+          console.log(chalk.red("Refusing to apply in a non-interactive session — run /delegate apply from an interactive terminal."));
+          return { consumed: true };
+        }
+        const result = await applyWorker(root, planId, workerId, { checks: config.checks });
+        if (result.ok) {
+          console.log(chalk.green(result.message));
+          if (result.globalCheckResults?.length) {
+            for (const g of result.globalCheckResults) {
+              const icon = g.passed ? chalk.green("✓") : chalk.red("✗");
+              console.log(`  ${icon} ${g.name}: ${g.summary}`);
+            }
+          }
+        } else {
+          console.log(chalk.red(result.message));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "discard") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate discard <plan-id> <worker-id>  — discard a worker (mark as discarded, never touches the repo)"));
+          return { consumed: true };
+        }
+        const result = await discardWorker(root, planId, workerId);
+        if (result.ok) {
+          console.log(chalk.green(result.message));
+        } else {
+          console.log(chalk.red(result.message));
+        }
+        return { consumed: true };
+      }
+
+      console.log(chalk.dim("usage: /delegate plan <task> | run <plan-id> <worker-id> | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id>"));
       return { consumed: true };
     }
 
@@ -1005,6 +1049,12 @@ export async function handleSlashCommand(
           "/save            save the session now",
           "/status          git status",
           "/diff            git diff",
+          "/delegate plan <task>  build a delegation plan",
+          "/delegate run <plan-id> <worker-id>  run a worker in an isolated subprocess",
+          "/delegate status <plan-id>  show worker status table",
+          "/delegate review <plan-id>  show full plan for human review",
+          "/delegate apply <plan-id> <worker-id>  apply a passed worker's patch to the real repo",
+          "/delegate discard <plan-id> <worker-id>  discard a worker (mark as discarded)",
         ].join("\n"),
       );
       return { consumed: true };

@@ -318,3 +318,25 @@ export function isWorkerSelfAudit(x: unknown): x is WorkerSelfAudit {
 
   return true;
 }
+
+/* ------------------------------------------------------------------ */
+/*  ApplyRecord                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Record of a single apply or discard operation on a worker patch.
+ * Written to `.deepcoder/delegations/<plan-id>/runs/<worker-id>/apply.json`
+ * after a successful apply, or after a discard.
+ */
+export interface ApplyRecord {
+  planId: string;
+  workerId: string;
+  action: "applied" | "discarded";
+  appliedAt: string;
+  /** SHA-256 of the patch file (hex). Empty string for discard. */
+  patchSha256: string;
+  /** Results of global checks run after apply, if any. */
+  globalCheckResults?: { name: string; passed: boolean; summary: string }[];
+  /** Human-readable note. */
+  note?: string;
+}
