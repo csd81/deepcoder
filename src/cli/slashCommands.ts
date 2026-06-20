@@ -35,7 +35,9 @@ import type { Session } from "./repl.js";
 import { resolveInstructions } from "./repl.js";
 import { buildPlan } from "../delegate/planner.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
+import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface SlashOutcome {
   consumed: boolean;
@@ -899,7 +901,76 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
-      console.log(chalk.dim("usage: /delegate plan <task> | status <plan-id> | review <plan-id>"));
+      if (sub === "run") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate run <plan-id> <worker-id>  — run one worker in an isolated subprocess (no auto-apply)"));
+          return { consumed: true };
+        }
+        // Nested-delegation guard: a process that is itself a delegated worker
+        // must not spawn further workers. Fail closed.
+        const depth = delegateDepthFromEnv(process.env);
+        if (depth > 0) {
+          console.log(chalk.red(`Refusing nested delegation: this process is itself a delegated worker (depth ${depth}).`));
+          return { consumed: true };
+        }
+        // Spawning a live worker is gated to interactive sessions.
+        if (!process.stdin.isTTY) {
+          console.log(chalk.red("Refusing to spawn a worker in a non-interactive session — run /delegate run from an interactive terminal."));
+          return { consumed: true };
+        }
+        const plan = await loadPlan(root, planId);
+        if (!plan) {
+          console.log(chalk.red(`Plan "${planId}" not found or corrupt.`));
+          return { consumed: true };
+        }
+        const worker = plan.workers.find((w) => w.id === workerId);
+        if (!worker) {
+          console.log(chalk.red(`Worker "${workerId}" not found in plan "${planId}".`));
+          return { consumed: true };
+        }
+        if (worker.status !== "planned" && worker.status !== "failed") {
+          console.log(chalk.red(`Worker "${workerId}" is not runnable (status: ${worker.status}).`));
+          return { consumed: true };
+        }
+        console.log(chalk.yellow(`\nThis spawns a live Deepcoder worker (provider: ${config.provider}) in an isolated worktree.`));
+        console.log(chalk.dim(`  check:  ${worker.checkName}`));
+        console.log(chalk.dim(`  prompt: ${worker.prompt.slice(0, 120)}${worker.prompt.length > 120 ? "…" : ""}`));
+        console.log(chalk.dim("  The patch will NOT be applied — review it with /delegate review afterwards."));
+        if (!(await confirm(`Run worker "${workerId}"?`))) {
+          console.log(chalk.dim("Cancelled."));
+          return { consumed: true };
+        }
+        const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
+        const ac = new AbortController();
+        try {
+          const { run } = await runWorker({
+            realRoot: root,
+            plan,
+            worker,
+            signal: ac.signal,
+            mainEntry,
+            provider: config.provider,
+            delegateDepth: depth,
+            onData: (c) => process.stdout.write(c),
+          });
+          console.log("");
+          console.log(run.checkPassed ? chalk.green(`✓ ${run.summary}`) : chalk.red(`✗ ${run.summary}`));
+          if (run.changedFiles.length) {
+            const shown = run.changedFiles.slice(0, 20).join(", ");
+            const more = run.changedFiles.length > 20 ? ` … (+${run.changedFiles.length - 20})` : "";
+            console.log(chalk.dim(`  changed: ${shown}${more}`));
+          }
+          if (run.patchPath) console.log(chalk.dim(`  patch:   ${run.patchPath}`));
+          for (const w of run.warnings.slice(0, 10)) console.log(chalk.yellow(`  ! ${w}`));
+        } catch (err) {
+          console.log(chalk.red(`Worker run failed: ${(err as Error).message}`));
+        }
+        return { consumed: true };
+      }
+
+      console.log(chalk.dim("usage: /delegate plan <task> | run <plan-id> <worker-id> | status <plan-id> | review <plan-id>"));
       return { consumed: true };
     }
 
