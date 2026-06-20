@@ -33,6 +33,8 @@ import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagent
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
 import { resolveInstructions } from "./repl.js";
+import { buildPlan } from "../delegate/planner.js";
+import { savePlan, loadPlan } from "../delegate/store.js";
 import path from "node:path";
 
 export interface SlashOutcome {
@@ -760,6 +762,144 @@ export async function handleSlashCommand(
       const git = new Git(config.workspaceRoot);
       if (await git.isRepo()) console.log((await git.diff()) || chalk.dim("No unstaged changes."));
       else console.log(chalk.dim("Not a git repository."));
+      return { consumed: true };
+    }
+
+    case "delegate": {
+      const [sub, ...subArgs] = arg.split(/\s+/);
+      const subArg = subArgs.join(" ").trim();
+      const root = config.workspaceRoot;
+
+      if (sub === "plan") {
+        if (!subArg) {
+          console.log(chalk.dim("usage: /delegate plan <task>  — build a deterministic delegation plan"));
+          return { consumed: true };
+        }
+        const plan = buildPlan(subArg, { checkNames: Object.keys(config.checks) });
+        await savePlan(root, plan);
+        console.log(chalk.bold("\nDelegation Plan:"));
+        console.log(chalk.dim(`  id: ${plan.id}`));
+        console.log(chalk.dim(`  task: ${plan.task.slice(0, 120)}${plan.task.length > 120 ? "…" : ""}`));
+        console.log(chalk.dim(`  workers: ${plan.workers.length}`));
+        for (const w of plan.workers) {
+          const deps = w.dependsOn.length ? ` (after ${w.dependsOn.join(", ")})` : "";
+          console.log(`    ${chalk.cyan(w.id)}: ${w.title.slice(0, 60)}${deps}`);
+          console.log(chalk.dim(`      check: ${w.checkName} · paths: ${w.allowedPaths.join(", ")}`));
+        }
+        if (plan.dependencies.length) {
+          console.log(chalk.dim("  dependencies:"));
+          for (const d of plan.dependencies) {
+            console.log(chalk.dim(`    ${d.before} → ${d.after} (${d.reason.slice(0, 60)})`));
+          }
+        }
+        if (plan.riskNotes.length) {
+          console.log(chalk.yellow("  risks:"));
+          for (const r of plan.riskNotes) console.log(chalk.yellow(`    - ${r}`));
+        }
+        console.log(chalk.dim(`\nSaved to .deepcoder/delegations/${plan.id}/plan.json`));
+        return { consumed: true };
+      }
+
+      if (sub === "status") {
+        if (!subArg) {
+          console.log(chalk.dim("usage: /delegate status <plan-id>  — show worker status table"));
+          return { consumed: true };
+        }
+        const plan = await loadPlan(root, subArg);
+        if (!plan) {
+          console.log(chalk.red(`Plan "${subArg}" not found or corrupt.`));
+          return { consumed: true };
+        }
+        console.log(chalk.bold(`\nPlan: ${plan.id}`));
+        console.log(chalk.dim(`  task: ${plan.task.slice(0, 80)}${plan.task.length > 80 ? "…" : ""}`));
+        console.log(chalk.dim(`  status: ${plan.status}`));
+        console.log("");
+        // Bounded table: cap rows at 20, truncate long values.
+        const rows = plan.workers.slice(0, 20);
+        for (const w of rows) {
+          const color = w.status === "passed" || w.status === "applied" ? chalk.green
+            : w.status === "failed" || w.status === "conflict" ? chalk.red
+            : w.status === "running" ? chalk.yellow
+            : chalk.dim;
+          const check = w.checkName.length > 20 ? w.checkName.slice(0, 17) + "…" : w.checkName;
+          const title = w.title.length > 40 ? w.title.slice(0, 37) + "…" : w.title;
+          console.log(`  ${chalk.cyan(w.id.padEnd(12))} ${color(w.status.padEnd(12))} ${check.padEnd(22)} ${title}`);
+        }
+        if (plan.workers.length > 20) {
+          console.log(chalk.dim(`  … and ${plan.workers.length - 20} more worker(s)`));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "review") {
+        if (!subArg) {
+          console.log(chalk.dim("usage: /delegate review <plan-id>  — show full plan for human review"));
+          return { consumed: true };
+        }
+        const plan = await loadPlan(root, subArg);
+        if (!plan) {
+          console.log(chalk.red(`Plan "${subArg}" not found or corrupt.`));
+          return { consumed: true };
+        }
+        // Bounded rendering: cap total output.
+        const MAX_WORKERS = 20;
+        const MAX_DEPS = 20;
+        const MAX_RISKS = 20;
+        const MAX_STR_LEN = 200;
+
+        console.log(chalk.bold("\n=== Delegation Plan Review ==="));
+        console.log(chalk.dim(`id:        ${plan.id}`));
+        console.log(chalk.dim(`created:   ${plan.createdAt}`));
+        console.log(chalk.dim(`status:    ${plan.status}`));
+        console.log(chalk.dim(`task:      ${plan.task.slice(0, MAX_STR_LEN)}${plan.task.length > MAX_STR_LEN ? "…" : ""}`));
+        console.log("");
+
+        console.log(chalk.bold("Workers:"));
+        for (const w of plan.workers.slice(0, MAX_WORKERS)) {
+          console.log(`  ${chalk.cyan(w.id)}`);
+          console.log(chalk.dim(`    title:       ${w.title.slice(0, MAX_STR_LEN)}`));
+          console.log(chalk.dim(`    check:       ${w.checkName}`));
+          console.log(chalk.dim(`    maxAttempts: ${w.maxAttempts}`));
+          console.log(chalk.dim(`    status:      ${w.status}`));
+          if (w.allowedPaths.length) console.log(chalk.dim(`    allowed:     ${w.allowedPaths.join(", ")}`));
+          if (w.forbiddenPaths.length) console.log(chalk.dim(`    forbidden:   ${w.forbiddenPaths.join(", ")}`));
+          if (w.dependsOn.length) console.log(chalk.dim(`    dependsOn:   ${w.dependsOn.join(", ")}`));
+          if (w.expectedOutputs.length) console.log(chalk.dim(`    outputs:     ${w.expectedOutputs.join(", ")}`));
+          console.log("");
+        }
+        if (plan.workers.length > MAX_WORKERS) {
+          console.log(chalk.dim(`  … and ${plan.workers.length - MAX_WORKERS} more worker(s)\n`));
+        }
+
+        if (plan.dependencies.length) {
+          console.log(chalk.bold("Dependencies:"));
+          for (const d of plan.dependencies.slice(0, MAX_DEPS)) {
+            console.log(`  ${d.before} → ${d.after}  ${chalk.dim(d.reason.slice(0, MAX_STR_LEN))}`);
+          }
+          if (plan.dependencies.length > MAX_DEPS) {
+            console.log(chalk.dim(`  … and ${plan.dependencies.length - MAX_DEPS} more`));
+          }
+          console.log("");
+        }
+
+        if (plan.globalChecks.length) {
+          console.log(chalk.bold("Global checks:"));
+          for (const c of plan.globalChecks) console.log(`  ${c}`);
+          console.log("");
+        }
+
+        if (plan.riskNotes.length) {
+          console.log(chalk.yellow("Risk notes:"));
+          for (const r of plan.riskNotes.slice(0, MAX_RISKS)) console.log(chalk.yellow(`  - ${r}`));
+          if (plan.riskNotes.length > MAX_RISKS) {
+            console.log(chalk.dim(`  … and ${plan.riskNotes.length - MAX_RISKS} more`));
+          }
+          console.log("");
+        }
+        return { consumed: true };
+      }
+
+      console.log(chalk.dim("usage: /delegate plan <task> | status <plan-id> | review <plan-id>"));
       return { consumed: true };
     }
 
