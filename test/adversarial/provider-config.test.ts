@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadConfig } from "../../src/config/config.js";
-import { redactSecrets, mapProviderError } from "../../src/providers/openaiCompatible.js";
+import { redactSecrets, mapProviderError, temperatureField } from "../../src/providers/openaiCompatible.js";
 import { SessionStore, newSessionId, loadSession } from "../../src/session/sessionStore.js";
 
 /** Run a function with a patched process.env, always restored afterwards. */
@@ -14,6 +14,7 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
   // Clear all provider-related vars first for a clean slate.
   for (const k of [
     "DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_BASE_URL", "DEEPCODER_MODEL", "DEEPCODER_REASONER_MODEL",
+    "DEEPCODER_TEMPERATURE", "DEEPCODER_REASONING_EFFORT",
     "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
     "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
     "GEMINI_API_KEY", "GEMINI_BASE_URL", "GEMINI_MODEL",
@@ -122,6 +123,51 @@ test("a provider does NOT read another provider's key (deepseek is not satisfied
 test("an explicit DEEPCODER_API_KEY still overrides the per-provider key", () => {
   withEnv({ DEEPCODER_PROVIDER: "openai-compatible", DEEPCODER_API_KEY: "explicit", OPENAI_API_KEY: "sk-openai" }, () => {
     assert.equal(loadConfig({ workspaceRoot: "/tmp" }).apiKey, "explicit");
+  });
+});
+
+// --- Configurable temperature (lets GPT-5 reasoning models work via chat/completions) ---
+
+test("DEEPCODER_TEMPERATURE unset defaults to 0 (deterministic, back-compat)", () => {
+  withEnv({ DEEPSEEK_API_KEY: "sk-x" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).temperature, 0);
+  });
+});
+
+test("DEEPCODER_TEMPERATURE numeric value is used", () => {
+  withEnv({ DEEPSEEK_API_KEY: "sk-x", DEEPCODER_TEMPERATURE: "0.7" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).temperature, 0.7);
+  });
+});
+
+test("DEEPCODER_TEMPERATURE=default omits temperature (undefined → model default)", () => {
+  withEnv({ DEEPSEEK_API_KEY: "sk-x", DEEPCODER_TEMPERATURE: "default" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).temperature, undefined);
+  });
+});
+
+test("DEEPCODER_TEMPERATURE garbage falls back to 0 (no NaN)", () => {
+  withEnv({ DEEPSEEK_API_KEY: "sk-x", DEEPCODER_TEMPERATURE: "hot" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).temperature, 0);
+  });
+});
+
+test("temperatureField sends a number but OMITS the field when temperature is undefined", () => {
+  assert.deepEqual(temperatureField(undefined, 0), { temperature: 0 });
+  assert.deepEqual(temperatureField(0.7, 0), { temperature: 0.7 }); // per-call wins
+  const omitted = temperatureField(undefined, undefined);
+  assert.equal("temperature" in omitted, false, "must not send temperature at all when omitted");
+});
+
+test("DEEPCODER_REASONING_EFFORT resolves (default medium, validated)", () => {
+  withEnv({ DEEPSEEK_API_KEY: "sk-x" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).reasoningEffort, "medium");
+  });
+  withEnv({ DEEPSEEK_API_KEY: "sk-x", DEEPCODER_REASONING_EFFORT: "high" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).reasoningEffort, "high");
+  });
+  withEnv({ DEEPSEEK_API_KEY: "sk-x", DEEPCODER_REASONING_EFFORT: "bogus" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).reasoningEffort, "medium");
   });
 });
 

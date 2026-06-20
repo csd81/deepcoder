@@ -21,6 +21,26 @@ export interface OpenAICompatibleOptions {
   baseUrl: string;
   /** Human-readable provider name, used only in error messages. */
   label: string;
+  /**
+   * Provider-default sampling temperature. `undefined` means OMIT the field so
+   * the model uses its own default (GPT-5 reasoning models reject a non-default
+   * temperature). A per-request `ChatRequest.temperature` overrides this.
+   */
+  temperature?: number;
+}
+
+/**
+ * The `temperature` fragment to spread into a request body. Returns an EMPTY
+ * object (no `temperature` key) when the resolved value is `undefined`, so the
+ * field is omitted entirely rather than sent as null/0. A per-call value wins
+ * over the provider default.
+ */
+export function temperatureField(
+  perCall: number | undefined,
+  providerDefault: number | undefined,
+): { temperature?: number } {
+  const t = perCall ?? providerDefault;
+  return t === undefined ? {} : { temperature: t };
 }
 
 /**
@@ -32,10 +52,12 @@ export interface OpenAICompatibleOptions {
 export class OpenAICompatibleProvider implements ModelProvider {
   private client: OpenAI;
   private label: string;
+  private temperature?: number;
 
   constructor(opts: OpenAICompatibleOptions) {
     this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl });
     this.label = opts.label;
+    this.temperature = opts.temperature;
   }
 
   async chat(input: ChatRequest): Promise<ChatResponse> {
@@ -44,7 +66,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       res = await this.client.chat.completions.create(
         {
           model: input.model,
-          temperature: input.temperature ?? 0,
+          ...temperatureField(input.temperature, this.temperature),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
           tool_choice: input.tools.length ? "auto" : undefined,
@@ -73,7 +95,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       stream = await this.client.chat.completions.create(
         {
           model: input.model,
-          temperature: input.temperature ?? 0,
+          ...temperatureField(input.temperature, this.temperature),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
           tool_choice: input.tools.length ? "auto" : undefined,

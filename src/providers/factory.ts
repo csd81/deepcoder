@@ -21,6 +21,7 @@ export function createProvider(config: Config): ModelProvider {
         apiKey: config.apiKey,
         baseUrl: config.baseUrl || DEEPSEEK_DEFAULT_BASE_URL,
         label: "DeepSeek",
+        temperature: config.temperature,
       });
 
     case "ollama":
@@ -28,6 +29,7 @@ export function createProvider(config: Config): ModelProvider {
         apiKey: config.apiKey || "ollama", // Ollama ignores the key
         baseUrl: config.baseUrl || OLLAMA_DEFAULT_BASE_URL,
         label: "Ollama",
+        temperature: config.temperature,
       });
 
     case "qwen":
@@ -36,6 +38,7 @@ export function createProvider(config: Config): ModelProvider {
         apiKey: config.apiKey,
         baseUrl: config.baseUrl || QWEN_DEFAULT_BASE_URL,
         label: "Qwen",
+        temperature: config.temperature,
       });
 
     case "gemini":
@@ -44,6 +47,7 @@ export function createProvider(config: Config): ModelProvider {
         apiKey: config.apiKey,
         baseUrl: config.baseUrl || GEMINI_DEFAULT_BASE_URL,
         label: "Gemini",
+        temperature: config.temperature,
       });
 
     case "openai-compatible":
@@ -56,6 +60,7 @@ export function createProvider(config: Config): ModelProvider {
         apiKey: config.apiKey,
         baseUrl: config.baseUrl,
         label: "OpenAI-compatible",
+        temperature: config.temperature,
       });
 
     case "anthropic":

@@ -23,6 +23,15 @@ export interface Config {
   model: string;
   reasonerModel?: string;
   /**
+   * Sampling temperature sent to the provider. Defaults to 0 (deterministic).
+   * `undefined` means OMIT the field entirely so the model uses its own default
+   * — required by GPT-5 reasoning models, which reject a non-default temperature.
+   * Set via DEEPCODER_TEMPERATURE (a number, or "default"/"omit" to omit).
+   */
+  temperature?: number;
+  /** Reasoning effort for reasoning providers (openai-responses). Default "medium". */
+  reasoningEffort?: "low" | "medium" | "high";
+  /**
    * When true, a one-shot run first asks the reasoner model for a step-by-step
    * plan (no tools), prepends it as context, then runs the normal agent loop.
    * Lets a stronger reasoning model guide a cheaper editing model.
@@ -235,11 +244,30 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const model =
     process.env.DEEPCODER_MODEL ?? providerEnv("MODEL") ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-chat";
 
+  // Temperature: a number, or omitted ("default"/"omit"/"none") so reasoning
+  // models can use their own default. Unset → 0 (deterministic, back-compat).
+  const tempRaw = process.env.DEEPCODER_TEMPERATURE;
+  let temperature: number | undefined;
+  if (tempRaw === undefined || tempRaw === "") temperature = 0;
+  else if (/^(default|omit|none)$/i.test(tempRaw)) temperature = undefined;
+  else {
+    const n = Number(tempRaw);
+    temperature = Number.isFinite(n) ? n : 0;
+  }
+
+  const reEff = (process.env.DEEPCODER_REASONING_EFFORT ?? "").toLowerCase();
+  const reasoningEffort = (["low", "medium", "high"].includes(reEff) ? reEff : "medium") as
+    | "low"
+    | "medium"
+    | "high";
+
   return {
     provider,
     apiKey,
     baseUrl,
     model,
+    temperature,
+    reasoningEffort,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL"),
     planFirst:
       ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||
