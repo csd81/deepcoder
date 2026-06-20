@@ -150,3 +150,21 @@ test("invalid model plan -> proposeDecomposition falls back to heuristic buildPl
   assert.equal(plan.warnings.length > 0, true);
   assert.match(plan.warnings[0], /fell back to heuristic/);
 });
+
+/* ---- 9O.3+9O.4 SEED (red): execution + assembly ---- */
+import { runDecomposition } from "../../src/delegate/decompose.js";
+
+test("[decompose-run-order] runDecomposition runs accepted sub-tasks in dependency order, then assembles", async () => {
+  const order: string[] = [];
+  const plan = {
+    task: "t", source: "model" as const, warnings: [],
+    subtasks: [subtask("a", []), subtask("b", ["a"])],
+  };
+  const res = await runDecomposition(plan, {
+    realRoot: "/tmp", signal: new AbortController().signal,
+    runSubTask: async (st: SubTaskSpec) => { order.push(st.id); return { accepted: true, patch: "" }; },
+    runAssemblyCheck: async () => ({ ok: true }),
+  });
+  assert.deepEqual(order, ["a", "b"], "sub-tasks run in dependency order");
+  assert.equal(res.ok, true);
+});
