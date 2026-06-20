@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { matchHooks } from "../../src/hooks/matcher.js";
@@ -85,6 +86,25 @@ test("runPreToolUseHooks redacts secrets in the surfaced reason", async () => {
     assert.equal(out.decision, "deny");
     assert.doesNotMatch(out.reason ?? "", /sk-ABCDEF123456/);
     assert.match(out.reason ?? "", /sk-\*\*\*/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("R2#3: a hook runs with cwd = the execution root, not the parent CLI cwd", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "hooks-cwd-"));
+  try {
+    const outPath = path.join(root, "hook-cwd.txt");
+    // The hook writes its own process.cwd() to an ABSOLUTE path (so the file
+    // lands in `root` regardless of cwd); the FILE CONTENTS reveal the real cwd.
+    const probe = nodeHook("cwd-probe", `require('fs').writeFileSync(${JSON.stringify(outPath)}, process.cwd())`);
+    const before = process.cwd();
+    const out = await runPreToolUseHooks([probe], { tool: "run_bash" }, runCtx(root));
+    assert.equal(out.decision, "none");
+    const hookCwd = (await readFile(outPath, "utf8")).trim();
+    // realpath both sides: mkdtemp dirs are often symlinked (e.g. /tmp → /private/tmp).
+    assert.equal(realpathSync(hookCwd), realpathSync(root), "hook must run from the execution root");
+    assert.notEqual(realpathSync(hookCwd), realpathSync(before), "hook must NOT run from the parent CLI cwd");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

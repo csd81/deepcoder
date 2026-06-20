@@ -127,19 +127,23 @@ async function runOne(hook: HookConfig, stdin: string, ctx: HookRunContext): Pro
     { command: hook.command, workspaceRoot: ctx.workspaceRoot, network: "off" },
     { ...sandboxConfig, network: "off" },
   );
-  return runHookCommand(wrapped.command, stdin, timeoutMs, ctx.signal);
+  // Run from the execution root (ctx.workspaceRoot is the isolated workspace when
+  // isolation is active). Without this, an unsandboxed/local-fallback hook would
+  // run from the parent CLI cwd and inspect/mutate the wrong tree.
+  return runHookCommand(wrapped.command, stdin, timeoutMs, ctx.workspaceRoot, ctx.signal);
 }
 
 function runHookCommand(
   command: string,
   stdin: string,
   timeoutMs: number,
+  cwd: string,
   signal?: AbortSignal,
 ): Promise<CommandResult | null> {
   return new Promise((resolve) => {
     // detached so the timeout/abort `process.kill(-child.pid)` below takes down
     // the whole process group, not just the shell (grandchildren would survive).
-    const child = spawn(command, { shell: true, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, { cwd, shell: true, detached: true, stdio: ["pipe", "pipe", "pipe"] });
 
     let stdout = "";
     child.stdout?.on("data", (d: Buffer) => {

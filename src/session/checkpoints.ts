@@ -169,11 +169,24 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
   // files half-rolled-back.
   const plan: Array<{ f: CheckpointFile; abs: string; current: string | null }> = [];
   for (const f of manifest.files) {
+    // Defense-in-depth against a TAMPERED manifest: never restore/delete a
+    // sensitive path. The capture side already excludes these, so a legitimate
+    // checkpoint never contains one — a sensitive entry here is an attack.
+    if (isSensitivePath(f.path)) {
+      result.skipped.push(f.path);
+      continue;
+    }
     let abs: string;
     try {
       abs = resolveRealPathInWorkspace(root, f.path);
     } catch {
       result.skipped.push(f.path); // would resolve outside the workspace now
+      continue;
+    }
+    // Re-check the normalized, resolved path so `sub/../.env` or a symlinked
+    // alias can't slip a sensitive target past the raw-string check above.
+    if (isSensitivePath(displayPath(root, abs))) {
+      result.skipped.push(f.path);
       continue;
     }
     if (f.restoreSha && !/^[a-f0-9]{64}$/.test(f.restoreSha)) {

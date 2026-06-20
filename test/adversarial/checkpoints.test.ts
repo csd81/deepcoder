@@ -212,3 +212,39 @@ test("an empty window finalizes to null", async () => {
   assert.equal(rec.size, 0);
   assert.equal(await rec.finalize(), null);
 });
+
+test("R1#10: a tampered manifest cannot restore or delete a sensitive path", async () => {
+  const root = await ws();
+  // Real secrets the agent must never be able to clobber via a forged checkpoint.
+  await writeFile(path.join(root, ".env"), "REAL_SECRET=keep", "utf8");
+  await mkdir(path.join(root, ".deepcoder"), { recursive: true });
+  await writeFile(path.join(root, ".deepcoder", "config.json"), '{"keep":true}', "utf8");
+
+  const id = "tampered-2026-01-01T00-00-00-000Z";
+  const ckptDir = path.join(root, ".deepcoder", "checkpoints", id);
+  await mkdir(path.join(root, ".deepcoder", "checkpoints", "blobs"), { recursive: true });
+  await mkdir(ckptDir, { recursive: true });
+  const fakeSha = "a".repeat(64);
+  await writeFile(path.join(root, ".deepcoder", "checkpoints", "blobs", fakeSha), "PWNED-OVERWRITE", "utf8");
+  // Forged manifest: restore .env from an attacker blob; delete .deepcoder/config.json.
+  await writeFile(
+    path.join(ckptDir, "manifest.json"),
+    JSON.stringify({
+      id,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      files: [
+        { path: ".env", existed: true, restoreSha: fakeSha, expectedSha: "b".repeat(64) },
+        { path: ".deepcoder/config.json", existed: false, expectedSha: "c".repeat(64) },
+      ],
+    }),
+    "utf8",
+  );
+
+  const res = await rollback(root, id, { force: true }); // even with --force
+  assert.ok(res.skipped.includes(".env"), ".env must be skipped");
+  assert.ok(res.skipped.includes(".deepcoder/config.json"), "sensitive config must be skipped");
+  assert.deepEqual(res.restored, [], "no sensitive path restored");
+  assert.deepEqual(res.deleted, [], "no sensitive path deleted");
+  assert.equal(await readFile(path.join(root, ".env"), "utf8"), "REAL_SECRET=keep", ".env untouched");
+  assert.equal(await exists(path.join(root, ".deepcoder", "config.json")), true, "config not deleted");
+});
