@@ -151,6 +151,22 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
 
+/**
+ * Per-provider env-var prefix. Each provider resolves its key/baseUrl/model from
+ * its OWN prefix only (e.g. `OPENAI_API_KEY` for openai-compatible), so multiple
+ * providers' credentials can live in `.env` uncommented at the same time and
+ * `DEEPCODER_PROVIDER` selects which one is active. A prefix never bleeds across
+ * providers (a stray `DEEPSEEK_*` cannot satisfy openai-compatible).
+ */
+const PROVIDER_ENV_PREFIX: Record<string, string> = {
+  deepseek: "DEEPSEEK",
+  ollama: "OLLAMA",
+  "openai-compatible": "OPENAI",
+  qwen: "QWEN",
+  gemini: "GEMINI",
+  anthropic: "ANTHROPIC",
+};
+
 export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks">> & {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
@@ -204,22 +220,27 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     throw new Error(`Unknown provider "${provider}". Use deepseek | openai-compatible | ollama.`);
   }
 
-  // DEEPSEEK_* are aliases ONLY for the deepseek provider — they must not bleed
-  // into ollama/openai-compatible (which would silently target DeepSeek).
-  const alias = <T>(v: T): T | undefined => (provider === "deepseek" ? v : undefined);
-  const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? alias(process.env.DEEPSEEK_API_KEY);
+  // Resolve credentials from the selected provider's OWN prefix (DEEPSEEK_*,
+  // OPENAI_*, GEMINI_*, …). Explicit DEEPCODER_* always wins; a provider never
+  // reads another provider's prefix, so DEEPSEEK_* can't silently satisfy
+  // openai-compatible. This lets every provider's keys stay uncommented in .env.
+  const prefix = PROVIDER_ENV_PREFIX[provider];
+  const providerEnv = (suffix: string): string | undefined =>
+    prefix ? process.env[`${prefix}_${suffix}`] : undefined;
+
+  const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? providerEnv("API_KEY");
   // Ollama runs locally and ignores the key, so it isn't required there.
   const apiKey = provider === "ollama" ? apiKeyRaw ?? "" : req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
-  const baseUrl = process.env.DEEPCODER_BASE_URL ?? alias(process.env.DEEPSEEK_BASE_URL) ?? "";
+  const baseUrl = process.env.DEEPCODER_BASE_URL ?? providerEnv("BASE_URL") ?? "";
   const model =
-    process.env.DEEPCODER_MODEL ?? alias(process.env.DEEPSEEK_MODEL) ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-chat";
+    process.env.DEEPCODER_MODEL ?? providerEnv("MODEL") ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-chat";
 
   return {
     provider,
     apiKey,
     baseUrl,
     model,
-    reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? alias(process.env.DEEPSEEK_REASONER_MODEL),
+    reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL"),
     planFirst:
       ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||
       ["1", "true", "yes"].includes((process.env.DEEPCODER_SOLVE_PLAN_FIRST ?? "").toLowerCase()),

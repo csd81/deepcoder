@@ -12,7 +12,13 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
   const saved: Record<string, string | undefined> = {};
   for (const k of Object.keys(env)) saved[k] = process.env[k];
   // Clear all provider-related vars first for a clean slate.
-  for (const k of ["DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_BASE_URL", "DEEPCODER_MODEL", "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL"]) {
+  for (const k of [
+    "DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_BASE_URL", "DEEPCODER_MODEL", "DEEPCODER_REASONER_MODEL",
+    "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
+    "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+    "GEMINI_API_KEY", "GEMINI_BASE_URL", "GEMINI_MODEL",
+    "QWEN_API_KEY", "ANTHROPIC_API_KEY",
+  ]) {
     saved[k] = process.env[k];
     delete process.env[k];
   }
@@ -59,6 +65,63 @@ test("deepseek still honours DEEPSEEK_* aliases (back-compat)", () => {
     assert.equal(cfg.provider, "deepseek");
     assert.equal(cfg.baseUrl, "https://api.deepseek.com");
     assert.equal(cfg.apiKey, "sk-x");
+  });
+});
+
+// --- Per-provider env prefixes: keep multiple providers' keys in .env at once,
+//     switch with DEEPCODER_PROVIDER, no commenting required. ---
+
+test("openai-compatible resolves OPENAI_* vars for its own prefix", () => {
+  withEnv({
+    DEEPCODER_PROVIDER: "openai-compatible",
+    OPENAI_API_KEY: "sk-openai",
+    OPENAI_BASE_URL: "https://api.openai.com/v1",
+    OPENAI_MODEL: "gpt-4o-mini",
+  }, () => {
+    const cfg = loadConfig({ workspaceRoot: "/tmp" });
+    assert.equal(cfg.apiKey, "sk-openai");
+    assert.equal(cfg.baseUrl, "https://api.openai.com/v1");
+    assert.equal(cfg.model, "gpt-4o-mini");
+  });
+});
+
+test("gemini resolves GEMINI_* vars for its own prefix", () => {
+  withEnv({
+    DEEPCODER_PROVIDER: "gemini",
+    GEMINI_API_KEY: "g-key",
+    GEMINI_BASE_URL: "https://generativelanguage.googleapis.com/v1beta/openai",
+  }, () => {
+    const cfg = loadConfig({ workspaceRoot: "/tmp" });
+    assert.equal(cfg.apiKey, "g-key");
+    assert.equal(cfg.baseUrl, "https://generativelanguage.googleapis.com/v1beta/openai");
+    assert.equal(cfg.model, "gemini-2.0-flash"); // provider default
+  });
+});
+
+test("with BOTH providers' keys set, DEEPCODER_PROVIDER selects which one is used (no commenting)", () => {
+  const both = {
+    DEEPSEEK_API_KEY: "sk-deepseek",
+    DEEPSEEK_BASE_URL: "https://api.deepseek.com",
+    OPENAI_API_KEY: "sk-openai",
+    OPENAI_BASE_URL: "https://api.openai.com/v1",
+  };
+  withEnv({ ...both, DEEPCODER_PROVIDER: "deepseek" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).apiKey, "sk-deepseek");
+  });
+  withEnv({ ...both, DEEPCODER_PROVIDER: "openai-compatible" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).apiKey, "sk-openai");
+  });
+});
+
+test("a provider does NOT read another provider's key (deepseek is not satisfied by OPENAI_API_KEY)", () => {
+  withEnv({ DEEPCODER_PROVIDER: "deepseek", OPENAI_API_KEY: "sk-openai" }, () => {
+    assert.throws(() => loadConfig({ workspaceRoot: "/tmp" }), /API key/);
+  });
+});
+
+test("an explicit DEEPCODER_API_KEY still overrides the per-provider key", () => {
+  withEnv({ DEEPCODER_PROVIDER: "openai-compatible", DEEPCODER_API_KEY: "explicit", OPENAI_API_KEY: "sk-openai" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).apiKey, "explicit");
   });
 });
 
