@@ -155,7 +155,7 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   "openai-compatible": "gpt-4o-mini",
   "openai-responses": "gpt-5.3-codex",
   qwen: "qwen2.5-coder-32b-instruct",
-  gemini: "gemini-2.5-flash",
+  gemini: "gemini-3.5-flash",
   anthropic: "claude-3-5-sonnet-latest",
 };
 
