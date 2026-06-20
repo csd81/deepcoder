@@ -55,3 +55,61 @@ test("tddArtifacts: writeTddRecord → readTddRecord round-trips the TDD run rec
     assert.equal(await readTddRecord(root, "p1", "nope"), null);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+/* ---- 9L.2+ red seed: forces tdd.ts (runWorkerTdd) + apply.ts TDD gate ---- */
+
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { writeFile, mkdir } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { runWorkerTdd } from "../../src/delegate/tdd.js";
+import { applyWorker } from "../../src/delegate/apply.js";
+import { savePlan } from "../../src/delegate/store.js";
+import { DEFAULT_WORKSPACE_ISOLATION } from "../../src/workspaceIsolation/types.js";
+import type { WorkerRun } from "../../src/delegate/types.js";
+
+function gitT(cwd: string, ...a: string[]): SpawnSyncReturns<string> {
+  const r = spawnSync("git", a, { cwd, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
+  return r;
+}
+async function tddRepo(): Promise<string> {
+  const root = await mkdtemp(path.join(tmpdir(), "tddrepo-"));
+  gitT(root, "init", "-q"); gitT(root, "config", "user.email", "t@t"); gitT(root, "config", "user.name", "t");
+  await writeFile(path.join(root, "src.ts"), "base\n", "utf8");
+  await writeFile(path.join(root, ".gitignore"), ".deepcoder/\n", "utf8");
+  gitT(root, "add", "-A"); gitT(root, "-c", "commit.gpgsign=false", "commit", "-qm", "b");
+  return root;
+}
+
+test("9L.2 seed: runWorkerTdd passes a NON-TDD worker through unchanged (returns a WorkerRun)", async () => {
+  const root = await tddRepo();
+  try {
+    const w = worker({ tdd: undefined, allowedPaths: ["src.ts"] });
+    const plan2: DelegationPlan = { id: "p1", task: "t", createdAt: "", status: "planned", workers: [w], dependencies: [], globalChecks: [], riskNotes: [] };
+    const out = await runWorkerTdd({
+      realRoot: root, plan: plan2, worker: w, signal: new AbortController().signal,
+      mainEntry: "x", provider: "fake",
+      isolationConfig: { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch", provision: [] },
+      spawnWorker: async (i) => { writeFileSync(path.join(i.cwd, "src.ts"), "x\n"); return { exitCode: 0, signal: null, timedOut: false, truncated: false, captured: "" }; },
+    });
+    assert.ok(out && typeof out === "object", "returns a WorkerRun");
+    assert.equal(gitT(root, "status", "--porcelain").stdout.trim(), "", "real repo untouched");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9L.4 seed: applyWorker refuses a TDD-required worker without green_confirmed", async () => {
+  const root = await tddRepo();
+  try {
+    const w = worker({ allowedPaths: ["src.ts"], status: "passed", tdd: { required: true, allowedTestPaths: ["test/"] } });
+    const plan2: DelegationPlan = { id: "p1", task: "t", createdAt: "", status: "planned", workers: [w], dependencies: [], globalChecks: [], riskNotes: [] };
+    await savePlan(root, plan2);
+    const dir = path.join(root, ".deepcoder", "delegations", "p1", "runs", "w1");
+    await mkdir(dir, { recursive: true });
+    const run: WorkerRun = { planId: "p1", workerId: "w1", sessionId: "s", worktreePath: "/tmp", startedAt: "", exitCode: 0, checkPassed: true, changedFiles: ["src.ts"], patchPath: "", patchSha256: "", summary: "", warnings: [] /* no tdd green */ };
+    await writeFile(path.join(dir, "run.json"), JSON.stringify(run), "utf8");
+    await writeFile(path.join(dir, "patch.diff"), "--- a/src.ts\n+++ b/src.ts\n@@ -1 +1 @@\n-base\n+fixed\n", "utf8");
+    const r = await applyWorker(root, "p1", "w1", { isTTY: true, confirmResult: true });
+    assert.equal(r.ok, false, "TDD-required worker without green proof must not apply");
+    assert.match(r.message, /tdd|green/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
