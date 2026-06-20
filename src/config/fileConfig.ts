@@ -20,7 +20,7 @@ export interface CheckConfig {
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
-import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig } from "./config.js";
+import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig } from "./config.js";
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
@@ -33,6 +33,7 @@ export interface FileConfig {
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
   delegate?: Partial<DelegateConfig>;
+  testTargeting?: Partial<TestTargetingConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -232,7 +233,34 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "delegate": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate };
+  const rawTestTargeting = (parsed as { testTargeting?: unknown }).testTargeting;
+  let testTargeting: Partial<TestTargetingConfig> | undefined;
+  if (rawTestTargeting && typeof rawTestTargeting === "object") {
+    const raw = rawTestTargeting as Record<string, unknown>;
+    testTargeting = {
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
+      mode: typeof raw.mode === "string" && ["off", "suggest", "targeted-first", "targeted-only"].includes(raw.mode)
+        ? (raw.mode as TestTargetingConfig["mode"])
+        : undefined,
+      fallbackCheck: typeof raw.fallbackCheck === "string" ? raw.fallbackCheck : undefined,
+      maxTargets: typeof raw.maxTargets === "number" && raw.maxTargets > 0 ? raw.maxTargets : undefined,
+      minConfidence: typeof raw.minConfidence === "string" && ["high", "medium", "low", "none"].includes(raw.minConfidence)
+        ? (raw.minConfidence as TestTargetingConfig["minConfidence"])
+        : undefined,
+      runFullAfterTargetedPass: typeof raw.runFullAfterTargetedPass === "boolean" ? raw.runFullAfterTargetedPass : undefined,
+      languageCommands: raw.languageCommands && typeof raw.languageCommands === "object"
+        ? (raw.languageCommands as Record<string, string>)
+        : undefined,
+      pathRules: Array.isArray(raw.pathRules)
+        ? raw.pathRules.filter(
+            (r: unknown): r is { changed: string; tests: string[] } =>
+              typeof r === "object" && r !== null && typeof (r as Record<string, unknown>).changed === "string" && Array.isArray((r as Record<string, unknown>).tests),
+          )
+        : undefined,
+    };
+  }
+
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, testTargeting };
 }
 
 function warn(msg: string): void {

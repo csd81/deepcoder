@@ -119,6 +119,7 @@ export interface Config {
   skills: SkillsConfig;
   dependencyHealing: DependencyHealingConfig;
   delegate: DelegateConfig;
+  testTargeting: TestTargetingConfig;
 }
 
 export interface QualityGateOptions {
@@ -133,6 +134,34 @@ export interface QualityGateOptions {
 export interface DelegateConfig {
   qualityGate: QualityGateOptions;
 }
+
+export type TestTargetingMode = "off" | "suggest" | "targeted-first" | "targeted-only";
+
+export interface TestTargetingConfig {
+  enabled: boolean;
+  mode: TestTargetingMode;
+  fallbackCheck: string;
+  maxTargets: number;
+  minConfidence: "high" | "medium" | "low" | "none";
+  runFullAfterTargetedPass: boolean;
+  languageCommands: Record<string, string>;
+  pathRules: { changed: string; tests: string[] }[];
+}
+
+export const DEFAULT_TEST_TARGETING: TestTargetingConfig = {
+  enabled: false,
+  mode: "off",
+  fallbackCheck: "phase",
+  maxTargets: 8,
+  minConfidence: "medium",
+  runFullAfterTargetedPass: false,
+  languageCommands: {
+    typescript: "node --import tsx --test {files}",
+    javascript: "node --test {files}",
+    python: "python -m pytest -q {files}",
+  },
+  pathRules: [{ changed: "src/**", tests: ["test/**/*.test.ts"] }],
+};
 
 export const DEFAULT_QUALITY_GATE: QualityGateOptions = {
   enabled: false,
@@ -393,6 +422,24 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     qualityGate,
   };
 
+  // Phase 10H — test targeting config: default < file < env.
+  const fileTestTargeting = file.testTargeting ?? {};
+  const ttEnv = (process.env.DEEPCODER_TEST_TARGETING ?? "").toLowerCase();
+  const testTargeting: TestTargetingConfig = {
+    enabled: ttEnv !== ""
+      ? ["1", "true", "yes", "suggest", "targeted-first", "targeted-only"].includes(ttEnv)
+      : (fileTestTargeting.enabled ?? DEFAULT_TEST_TARGETING.enabled),
+    mode: ttEnv !== "" && ["off", "suggest", "targeted-first", "targeted-only"].includes(ttEnv)
+      ? (ttEnv as TestTargetingMode)
+      : (fileTestTargeting.mode ?? DEFAULT_TEST_TARGETING.mode),
+    fallbackCheck: fileTestTargeting.fallbackCheck ?? DEFAULT_TEST_TARGETING.fallbackCheck,
+    maxTargets: fileTestTargeting.maxTargets ?? DEFAULT_TEST_TARGETING.maxTargets,
+    minConfidence: fileTestTargeting.minConfidence ?? DEFAULT_TEST_TARGETING.minConfidence,
+    runFullAfterTargetedPass: fileTestTargeting.runFullAfterTargetedPass ?? DEFAULT_TEST_TARGETING.runFullAfterTargetedPass,
+    languageCommands: fileTestTargeting.languageCommands ?? DEFAULT_TEST_TARGETING.languageCommands,
+    pathRules: fileTestTargeting.pathRules ?? DEFAULT_TEST_TARGETING.pathRules,
+  };
+
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
   // Validate the provider BEFORE requiring a key, so a typo'd provider reports
   // "unknown provider" rather than a misleading "missing API key".
@@ -486,5 +533,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     skills: { ...skills, ...(overrides.skills ?? {}) },
     dependencyHealing: { ...dependencyHealing, ...(overrides.dependencyHealing ?? {}) },
     delegate,
+    testTargeting,
   };
 }

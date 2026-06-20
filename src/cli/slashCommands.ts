@@ -16,6 +16,8 @@ import { runExplorer } from "../subagents/contextExplorer.js";
 import { buildDeterministicPlan } from "../context/contextPlanner.js";
 import { renderExplorerBrief } from "../context/explorerBrief.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
+import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
+import { runTargetedChecks } from "../checks/targetedCheck.js";
 import { resolveBackend } from "../sandbox/index.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { loadStartupMemory, listTopics, remember, forget } from "../memory/store.js";
@@ -1437,6 +1439,168 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "tests": {
+      // Phase 10H — automatic minimal test targeting.
+      // Subcommands: target, plan, run-targeted
+      const [sub, ...subArgs] = arg.split(/\s+/);
+      const root = session.executionRoot ?? config.workspaceRoot;
+
+      if (sub === "target") {
+        // /tests target <file> [<file> ...] — show what tests would be targeted
+        const files = subArgs.filter(Boolean);
+        if (files.length === 0) {
+          console.log(chalk.dim("usage: /tests target <file> [<file> ...]  — show targeted tests for changed files"));
+          return { consumed: true };
+        }
+        const saved = await loadIndex(root);
+        const index = saved?.index ?? undefined;
+        const plan = buildTestTargetPlan({
+          changedFiles: files,
+          index,
+          maxTargets: config.testTargeting.maxTargets,
+          pathRules: config.testTargeting.pathRules,
+          languageCommands: config.testTargeting.languageCommands,
+          fallbackCheck: config.testTargeting.fallbackCheck,
+        });
+        console.log(chalk.bold(`Test Target Plan (confidence: ${plan.confidence})`));
+        console.log(chalk.dim(`  fallbackRequired: ${plan.fallbackRequired}`));
+        if (plan.fallbackCheck) console.log(chalk.dim(`  fallbackCheck: ${plan.fallbackCheck}`));
+        if (plan.targetFiles.length) {
+          console.log(chalk.dim(`  target files (${plan.targetFiles.length}):`));
+          for (const f of plan.targetFiles) console.log(chalk.dim(`    ${f}`));
+        }
+        if (plan.commands.length) {
+          console.log(chalk.dim("  commands:"));
+          for (const c of plan.commands) {
+            const icon = c.confidence === "high" ? chalk.green("✓") : c.confidence === "medium" ? chalk.yellow("~") : chalk.dim("?");
+            console.log(`    ${icon} ${c.label}: ${c.command}`);
+          }
+        }
+        if (plan.reasons.length) {
+          console.log(chalk.dim("  reasons:"));
+          for (const r of plan.reasons) console.log(chalk.dim(`    - ${r}`));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "plan") {
+        // /tests plan — build a plan from the current write tracker (changed files)
+        const changedFiles = [...session.writeTracker].map((p) => {
+          if (p.startsWith(root)) return p.slice(root.length + 1);
+          return p;
+        });
+        if (changedFiles.length === 0) {
+          console.log(chalk.dim("No changed files tracked. Use /tests target <file> ... to specify files."));
+          return { consumed: true };
+        }
+        const saved = await loadIndex(root);
+        const index = saved?.index ?? undefined;
+        const plan = buildTestTargetPlan({
+          changedFiles,
+          index,
+          maxTargets: config.testTargeting.maxTargets,
+          pathRules: config.testTargeting.pathRules,
+          languageCommands: config.testTargeting.languageCommands,
+          fallbackCheck: config.testTargeting.fallbackCheck,
+        });
+        console.log(chalk.bold(`Test Target Plan (confidence: ${plan.confidence})`));
+        console.log(chalk.dim(`  changed files: ${changedFiles.join(", ")}`));
+        console.log(chalk.dim(`  fallbackRequired: ${plan.fallbackRequired}`));
+        if (plan.fallbackCheck) console.log(chalk.dim(`  fallbackCheck: ${plan.fallbackCheck}`));
+        if (plan.targetFiles.length) {
+          console.log(chalk.dim(`  target files (${plan.targetFiles.length}):`));
+          for (const f of plan.targetFiles) console.log(chalk.dim(`    ${f}`));
+        }
+        if (plan.commands.length) {
+          console.log(chalk.dim("  commands:"));
+          for (const c of plan.commands) {
+            const icon = c.confidence === "high" ? chalk.green("✓") : c.confidence === "medium" ? chalk.yellow("~") : chalk.dim("?");
+            console.log(`    ${icon} ${c.label}: ${c.command}`);
+          }
+        }
+        if (plan.reasons.length) {
+          console.log(chalk.dim("  reasons:"));
+          for (const r of plan.reasons) console.log(chalk.dim(`    - ${r}`));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "run-targeted") {
+        // /tests run-targeted — build plan from write tracker and run targeted checks
+        const changedFiles = [...session.writeTracker].map((p) => {
+          if (p.startsWith(root)) return p.slice(root.length + 1);
+          return p;
+        });
+        if (changedFiles.length === 0) {
+          console.log(chalk.dim("No changed files tracked. Use /tests target <file> ... to specify files first."));
+          return { consumed: true };
+        }
+        const saved = await loadIndex(root);
+        const index = saved?.index ?? undefined;
+        const plan = buildTestTargetPlan({
+          changedFiles,
+          index,
+          maxTargets: config.testTargeting.maxTargets,
+          pathRules: config.testTargeting.pathRules,
+          languageCommands: config.testTargeting.languageCommands,
+          fallbackCheck: config.testTargeting.fallbackCheck,
+        });
+
+        if (plan.commands.length === 0) {
+          console.log(chalk.yellow("No targeted commands to run. Use fallback check instead."));
+          if (plan.fallbackCheck) {
+            console.log(chalk.dim(`Suggested fallback: /check ${plan.fallbackCheck}`));
+          }
+          return { consumed: true };
+        }
+
+        console.log(chalk.bold(`Running ${plan.commands.length} targeted command(s)…`));
+        const result = await runTargetedChecks(plan, {
+          workspaceRoot: root,
+          signal: new AbortController().signal,
+          onData: (chunk) => stdout.write(chunk),
+          sandbox: config.sandbox,
+          dependencyHealing: config.dependencyHealing,
+          timeoutMs: 180_000,
+        });
+
+        for (const { command: cmd, run } of result.targetedRuns) {
+          const status = run.timedOut
+            ? chalk.red("timed out")
+            : run.exitCode === 0
+              ? chalk.green("passed (exit 0)")
+              : chalk.red(`failed (exit ${run.exitCode ?? "?"}${run.signal ? `, ${run.signal}` : ""})`);
+          console.log(`${chalk.cyan(cmd.label)} ${status} · ${Math.round(run.durationMs)}ms`);
+        }
+
+        if (result.refused.length) {
+          console.log(chalk.yellow(`Refused by policy: ${result.refused.map((c) => c.label).join(", ")}`));
+        }
+
+        if (result.fallbackRequired) {
+          console.log(chalk.yellow("Fallback required — some targets were not covered."));
+          if (result.fallbackCheck) {
+            console.log(chalk.dim(`Suggested fallback: /check ${result.fallbackCheck}`));
+          }
+        }
+        return { consumed: true };
+      }
+
+      // Show status
+      const tt = config.testTargeting;
+      console.log(
+        `testTargeting: ${tt.enabled ? chalk.green("enabled") : chalk.dim("disabled")}\n` +
+          `  mode: ${tt.mode}\n` +
+          `  fallbackCheck: ${tt.fallbackCheck}\n` +
+          `  maxTargets: ${tt.maxTargets}\n` +
+          `  minConfidence: ${tt.minConfidence}\n` +
+          `  runFullAfterTargetedPass: ${tt.runFullAfterTargetedPass}\n` +
+          `  pathRules: ${tt.pathRules.length} rule(s)\n` +
+          chalk.dim("usage: /tests [target <file>... | plan | run-targeted]"),
+      );
+      return { consumed: true };
+    }
+
     case "help":
       console.log(
         [
@@ -1475,6 +1639,7 @@ export async function handleSlashCommand(
           "/delegate review <plan-id>  show full plan for human review",
           "/delegate apply <plan-id> <worker-id>  apply a passed worker's patch to the real repo",
           "/delegate discard <plan-id> <worker-id>  discard a worker (mark as discarded)",
+          "/tests [target|plan|run-targeted]  Phase 10H — automatic minimal test targeting",
         ].join("\n"),
       );
       return { consumed: true };
