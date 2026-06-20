@@ -113,6 +113,19 @@ export interface RunWorkerTddInput {
   runCoverageProbe?: CoverageProbe;
 }
 
+/**
+ * Resolve the isolation config for a TDD worktree. The real-worker path needs
+ * node_modules provisioned (the worker runs `node --import tsx …` and the
+ * coverage probe runs the test command inside the worktree) — so the default
+ * keeps DEFAULT_WORKSPACE_ISOLATION.provision (["node_modules"]). Tests pass an
+ * explicit override (with a fake spawn, no deps needed).
+ */
+export function tddIsolationConfig(
+  override?: WorkspaceIsolationConfig,
+): WorkspaceIsolationConfig {
+  return override ?? { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" };
+}
+
 /* ------------------------------------------------------------------ */
 /*  runWorkerTdd                                                       */
 /* ------------------------------------------------------------------ */
@@ -153,11 +166,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   // Create an isolated worktree for the repro phase.
   const reproIso = await createIsolatedWorkspace(
     input.realRoot,
-    input.isolationConfig ?? {
-      ...DEFAULT_WORKSPACE_ISOLATION,
-      mode: "patch",
-      provision: [],
-    },
+    tddIsolationConfig(input.isolationConfig),
   );
 
   const reproPrompt = buildReproPhasePrompt(worker, input.plan);
@@ -229,11 +238,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   // Create a fresh baseline worktree, apply the repro patch, run the check.
   const baselineIso = await createIsolatedWorkspace(
     input.realRoot,
-    input.isolationConfig ?? {
-      ...DEFAULT_WORKSPACE_ISOLATION,
-      mode: "patch",
-      provision: [],
-    },
+    tddIsolationConfig(input.isolationConfig),
   );
 
   let redConfirmed = false;
@@ -386,11 +391,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   // Create a new worktree for the fix phase.
   const fixIso = await createIsolatedWorkspace(
     input.realRoot,
-    input.isolationConfig ?? {
-      ...DEFAULT_WORKSPACE_ISOLATION,
-      mode: "patch",
-      provision: [],
-    },
+    tddIsolationConfig(input.isolationConfig),
   );
 
   // Apply the repro patch first so the worker has the repro test.

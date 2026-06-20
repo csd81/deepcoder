@@ -380,3 +380,19 @@ test("9M: a refused (classifier-denied) test command fails the red gate, runs no
     assert.match(out.run.tdd?.warnings.join(" ") ?? "", /refus/i);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+/* ---- 9M infra: TDD worktrees must provision node_modules (live-worker path) ---- */
+
+import { tddIsolationConfig } from "../../src/delegate/tdd.js";
+import { DEFAULT_WORKSPACE_ISOLATION } from "../../src/workspaceIsolation/types.js";
+
+test("9M infra: default TDD isolation provisions node_modules (worker + probe need tsx)", () => {
+  const cfg = tddIsolationConfig();
+  assert.deepEqual(cfg.provision, ["node_modules"], "worktree must symlink node_modules or `node --import tsx` fails");
+  assert.equal(cfg.mode, "patch");
+});
+
+test("9M infra: an explicit isolation override is honored verbatim", () => {
+  const override = { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" as const, provision: [] };
+  assert.equal(tddIsolationConfig(override), override);
+});
