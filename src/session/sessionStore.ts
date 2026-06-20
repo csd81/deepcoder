@@ -26,6 +26,7 @@ export interface PersistedSession {
   reviews?: SubagentRunRecord[];
   /** Explorer brief records — quarantined metadata, NOT part of model context. */
   briefs?: BriefRunRecord[];
+  activatedSkills?: import("../skills/types.js").ActivatedSkillRecord[];
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +44,7 @@ export interface SessionSnapshot {
   pendingCheckpoint: CheckpointFile[];
   reviews: SubagentRunRecord[];
   briefs: BriefRunRecord[];
+  activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -83,6 +85,7 @@ export class SessionStore {
       pendingCheckpoint: snapshot.pendingCheckpoint ?? [],
       reviews: snapshot.reviews ?? [],
       briefs: snapshot.briefs ?? [],
+      activatedSkills: snapshot.activatedSkills ?? [],
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };

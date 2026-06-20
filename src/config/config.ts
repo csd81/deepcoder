@@ -116,7 +116,24 @@ export interface Config {
    * legacy first-match loader. Off by default (gate: DEEPCODER_INSTRUCTION_GRAPH=1).
    */
   context: ContextConfig;
+  skills: SkillsConfig;
 }
+
+export interface SkillsConfig {
+  enabled: boolean;
+  trustWorkspaceSkills: boolean;
+  catalogMaxChars: number;
+  activationMaxBytes: number;
+  disabled: string[];
+}
+
+const DEFAULT_SKILLS: SkillsConfig = {
+  enabled: true,
+  trustWorkspaceSkills: false,
+  catalogMaxChars: 4000,
+  activationMaxBytes: 65536,
+  disabled: [],
+};
 
 export interface ContextConfig {
   instructionGraph: boolean;
@@ -194,11 +211,12 @@ const PROVIDER_ENV_PREFIX: Record<string, string> = {
   anthropic: "ANTHROPIC",
 };
 
-export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks">> & {
+export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "skills">> & {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
   context?: Partial<ContextConfig>;
+  skills?: Partial<SkillsConfig>;
 };
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
@@ -257,6 +275,30 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...(["0", "false", "no"].includes(igEnv) ? { instructionGraph: false } : {}),
     ...(["1", "true", "yes"].includes(pfEnv) ? { preflight: true } : {}),
     ...(["0", "false", "no"].includes(pfEnv) ? { preflight: false } : {}),
+  };
+
+  // Skills: default < config file < env gate.
+  const skillsEnv = process.env.DEEPCODER_SKILLS;
+  const trustWorkspaceEnv = process.env.DEEPCODER_SKILLS_TRUST_WORKSPACE;
+  const catalogCharsEnv = process.env.DEEPCODER_SKILLS_CATALOG_CHARS;
+  const activationBytesEnv = process.env.DEEPCODER_SKILLS_ACTIVATION_BYTES;
+
+  const fileSkills = file.skills ?? {};
+
+  const skills: SkillsConfig = {
+    enabled: skillsEnv !== undefined
+      ? ["1", "true", "yes"].includes(skillsEnv.toLowerCase())
+      : (fileSkills.enabled ?? DEFAULT_SKILLS.enabled),
+    trustWorkspaceSkills: trustWorkspaceEnv !== undefined
+      ? ["1", "true", "yes"].includes(trustWorkspaceEnv.toLowerCase())
+      : (fileSkills.trustWorkspaceSkills ?? DEFAULT_SKILLS.trustWorkspaceSkills),
+    catalogMaxChars: catalogCharsEnv !== undefined
+      ? numEnv(catalogCharsEnv, DEFAULT_SKILLS.catalogMaxChars)
+      : (fileSkills.catalogMaxChars ?? DEFAULT_SKILLS.catalogMaxChars),
+    activationMaxBytes: activationBytesEnv !== undefined
+      ? numEnv(activationBytesEnv, DEFAULT_SKILLS.activationMaxBytes)
+      : (fileSkills.activationMaxBytes ?? DEFAULT_SKILLS.activationMaxBytes),
+    disabled: fileSkills.disabled ?? DEFAULT_SKILLS.disabled,
   };
 
   const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
@@ -349,5 +391,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     workspaceIsolation: { ...workspaceIsolation, ...(wsIsoOverride ?? {}) },
     hooks: { ...hooks, ...(overrides.hooks ?? {}) },
     context: { ...context, ...(overrides.context ?? {}) },
+    skills: { ...skills, ...(overrides.skills ?? {}) },
   };
 }

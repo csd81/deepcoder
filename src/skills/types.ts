@@ -26,3 +26,23 @@ export interface SkillSummary {
   /** From frontmatter: the user may invoke this skill via /skills. */
   userInvocable: boolean;
 }
+
+export interface SkillDefinition extends SkillSummary {
+  body: string;
+  directory: string;
+  allowedTools: string[];
+  bodyBytes: number;
+  bodyHash: string;
+}
+
+export interface ActivatedSkillRecord {
+  name: string;
+  path: string;
+  source: "user" | "workspace";
+  activatedAt: string;
+  arguments: string;
+  bodyHash: string;
+  modelRequested: boolean;
+  bodyBytes: number;
+}
+

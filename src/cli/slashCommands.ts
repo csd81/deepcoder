@@ -32,7 +32,8 @@ import { stdout } from "node:process";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
-import { resolveInstructions } from "./repl.js";
+import { resolveInstructions, skillsRuntime } from "./repl.js";
+import { activateSkill } from "../skills/activation.js";
 import { buildPlan } from "../delegate/planner.js";
 import { buildContextAwarePlan } from "../delegate/contextPlan.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
@@ -62,6 +63,21 @@ export async function handleSlashCommand(
   runAgent?: () => Promise<void>,
 ): Promise<SlashOutcome> {
   if (!input.startsWith("/")) return { consumed: false };
+
+  // Phase 7C2: `/$<skill-name> [arguments]` shorthand for `/skills activate`.
+  // Detected before the normal command switch.
+  if (input.startsWith("/$")) {
+    const body = input.slice(2).trim();
+    const sp = body.indexOf(" ");
+    const name = sp === -1 ? body : body.slice(0, sp);
+    const skillArgs = sp === -1 ? "" : body.slice(sp + 1).trim();
+    if (!name) {
+      console.log(chalk.dim("usage: /$<skill-name> [arguments]"));
+      return { consumed: true };
+    }
+    await activateSkillSlash(session, name, skillArgs);
+    return { consumed: true };
+  }
 
   const [cmd, ...rest] = input.slice(1).split(/\s+/);
   const arg = rest.join(" ").trim();
@@ -633,8 +649,27 @@ export async function handleSlashCommand(
     }
 
     case "skills": {
-      // 7C1: discover + list. `reload` is a no-op marker (discovery is on-demand).
-      const skills = await discoverSkills(config.workspaceRoot);
+      const sub = rest[0]?.trim();
+      // `/skills activate <name> [args]` — explicit user activation (7C2).
+      if (sub === "activate") {
+        const name = rest[1]?.trim();
+        if (!name) {
+          console.log(chalk.dim("usage: /skills activate <name> [arguments]"));
+          return { consumed: true };
+        }
+        const skillArgs = rest.slice(2).join(" ").trim();
+        await activateSkillSlash(session, name, skillArgs);
+        return { consumed: true };
+      }
+
+      // `/skills` and `/skills reload` both rediscover (discovery is on-demand).
+      if (!config.skills.enabled) {
+        console.log(chalk.dim("Skills are disabled (config skills.enabled=false)."));
+        return { consumed: true };
+      }
+      const disabled = new Set(config.skills.disabled);
+      const skills = (await discoverSkills(config.workspaceRoot)).filter((s) => !disabled.has(s.name));
+      if (sub === "reload") console.log(chalk.dim(`Reloaded — ${skills.length} skill(s) discovered.`));
       if (skills.length === 0) {
         console.log(
           chalk.dim("No skills found. Add .deepcoder/skills/<name>/SKILL.md (YAML frontmatter with a description + a markdown body)."),
@@ -648,7 +683,7 @@ export async function handleSlashCommand(
           .join(", ");
         console.log(`  ${chalk.bold(s.name)} ${chalk.dim(`(${s.source})`)}  ${s.description}${flags ? chalk.dim(` [${flags}]`) : ""}`);
       }
-      console.log(chalk.dim("(activation lands in a follow-up; this is the 7C1 discovery slice)"));
+      console.log(chalk.dim("Activate with /skills activate <name> [args]  or  /$<name> [args]"));
       return { consumed: true };
     }
 
@@ -1416,4 +1451,26 @@ function printInstructionGraph(session: Session, sub: string): void {
     console.log(chalk.dim("\n— JIT path-local additions —"));
     for (const t of jit) console.log(t);
   }
+}
+
+/**
+ * Shared `/skills activate` + `/$` slash activation (Phase 7C2). Slash invocation
+ * is modelRequested:false (so disableModelInvocation skills are allowed but
+ * userInvocable:false ones are refused). On success the bounded, redacted skill
+ * text is injected as a normal user message — it becomes part of the transcript
+ * (and is preserved verbatim on resume), without mutating the system prompt.
+ */
+async function activateSkillSlash(session: Session, name: string, args: string): Promise<void> {
+  const res = await activateSkill(
+    { name, arguments: args, modelRequested: false },
+    skillsRuntime(session),
+  );
+  if (!res.ok || !res.modelText) {
+    console.log(chalk.red(res.message));
+    return;
+  }
+  session.messages.push({ role: "user", content: res.modelText });
+  const rec = res.record;
+  console.log(chalk.green(res.message));
+  if (rec) console.log(chalk.dim(`body: ${(rec.bodyBytes / 1024).toFixed(1)} KiB${rec.arguments ? `, arguments: ${rec.arguments}` : ""}`));
 }

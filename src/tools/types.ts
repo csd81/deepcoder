@@ -66,6 +66,7 @@ export interface ToolContext {
    * tests can omit it.
    */
   history?: { role: string; content: string }[];
+  skills?: import("../skills/activation.js").ActivateSkillRuntime;
 }
 
 /** What a tool will do, computed before execution for approval prompts. */

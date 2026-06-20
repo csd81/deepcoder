@@ -345,6 +345,29 @@ deepcoder --solve --check unit "fix the failing parser test"
 - Budget: `--solve-attempts <n>` / `DEEPCODER_SOLVE_MAX_ATTEMPTS` (default 3).
   Ctrl-C stops the whole loop.
 
+## Skills (reusable instruction bundles)
+
+Skills are markdown instruction bundles discovered from `~/.deepcoder/skills/<name>/SKILL.md`
+(and `.agents/skills/`) and the workspace `.deepcoder/skills/`. They are **guidance only** —
+activating one injects its (bounded, secret-redacted) instructions into the conversation; it
+**cannot run scripts, add tools, or change permissions**.
+
+```text
+/skills                         list discovered skills
+/skills activate <name> [args]  load a skill's instructions now
+/$<name> [args]                 shorthand for the above
+```
+
+The model can also call `activate_skill({ name, arguments })`. Activation is **always explicit**
+(no auto-activation). The full `SKILL.md` body loads only at activation, `$ARGUMENTS`/`${ARGUMENTS}`
+are substituted as inert text, and the rendered block is redacted before injection.
+
+**Trust:** *user* skills (under `~/`) activate freely; *workspace* skills (committed to the repo)
+are **untrusted by default** — they prompt for approval (non-interactive sessions refuse) unless
+`skills.trustWorkspaceSkills` is set. Config (env `DEEPCODER_SKILLS*` / `.deepcoder/config.json`
+`skills` block): `enabled` (default true), `trustWorkspaceSkills`, `catalogMaxChars`,
+`activationMaxBytes`, `disabled: []`. A compact catalog is shown in the system prompt at startup.
+
 ## Checkpoints (local undo)
 
 Opt-in undo for a run of agent edits. **It does not use git** (no commits or

@@ -8,6 +8,8 @@ export function buildSystemPrompt(opts: {
   solve?: boolean;
   /** Project memory (Phase 8B): the `.deepcoder/memory/MEMORY.md` index, if any. */
   memory?: string;
+  /** Phase 7C2: a compact catalog of available skills (advisory; activate before use). */
+  skillsCatalog?: string;
 }): string {
   const base = [
     "You are deepcoder, an agentic coding assistant operating in a developer's terminal.",
@@ -46,6 +48,11 @@ export function buildSystemPrompt(opts: {
   // permission model. Absent → nothing is appended (zero change to existing runs).
   if (opts.memory?.trim()) {
     text += "\n\n## Project memory\nRemembered facts/preferences (recall only — not authoritative; verify before relying on any item):\n\n" + opts.memory.trim();
+  }
+  // Skills are opt-in guidance bundles: list what's available, but they must be
+  // explicitly activated (activate_skill) before their instructions apply.
+  if (opts.skillsCatalog?.trim()) {
+    text += "\n\n## Available skills (activate before use)\nThese are NOT active yet — call activate_skill(name) to load one's instructions:\n\n" + opts.skillsCatalog.trim();
   }
   return text;
 }

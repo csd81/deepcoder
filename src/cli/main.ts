@@ -13,6 +13,8 @@ import { createProvider } from "../providers/factory.js";
 import { EMPTY_USAGE } from "../providers/usage.js";
 import { createSemanticTools } from "../tools/semanticTools.js";
 import { defaultRegistry } from "../tools/registry.js";
+import { discoverSkills } from "../skills/discovery.js";
+import { buildSkillCatalog } from "../skills/catalogPrompt.js";
 import { runOneShot, runRepl, systemMessage, resolveInstructions, type Session } from "./repl.js";
 import {
   SessionStore,
@@ -125,6 +127,15 @@ async function buildSession(
   const mcp = await initMcp(config, registry);
   const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
 
+  // Phase 7C2: a compact, bounded skills catalog injected into the startup system
+  // prompt (advisory — skills must be explicitly activated). Empty when disabled.
+  let skillsCatalog = "";
+  if (config.skills.enabled) {
+    const disabled = new Set(config.skills.disabled);
+    const discovered = (await discoverSkills(config.workspaceRoot)).filter((s) => !disabled.has(s.name));
+    skillsCatalog = buildSkillCatalog(discovered, config.skills.catalogMaxChars);
+  }
+
   if (resume) {
     const id =
       typeof resume === "string" ? resume : await latestSessionId(config.workspaceRoot);
@@ -151,7 +162,7 @@ async function buildSession(
     // trusting the (possibly stale) saved one, then keep the rest of history.
     const instr = resolveInstructions(cfg);
     const messages = saved.messages.slice();
-    const fresh = systemMessage(cfg, saved.mode, instr.text);
+    const fresh = systemMessage(cfg, saved.mode, instr.text, skillsCatalog);
     if (messages[0]?.role === "system") messages[0] = fresh;
     else messages.unshift(fresh);
     return {
@@ -167,6 +178,8 @@ async function buildSession(
       writeTracker: new Set(saved.writeTracker ?? []),
       reviews: saved.reviews ?? [],
       briefs: saved.briefs ?? [],
+      activatedSkills: saved.activatedSkills ?? [],
+      trustedWorkspaceSkills: new Set<string>(),
       mcp,
       recorder,
       instructionGraph: instr.graph,
@@ -180,7 +193,7 @@ async function buildSession(
     provider,
     registry,
     store: new SessionStore(config.workspaceRoot, newSessionId()),
-    messages: [systemMessage(config, config.approvalMode, instr.text)],
+    messages: [systemMessage(config, config.approvalMode, instr.text, skillsCatalog)],
     mode: config.approvalMode,
     executionRoot: config.workspaceRoot,
     todos: [],
@@ -188,6 +201,8 @@ async function buildSession(
     writeTracker: new Set<string>(),
     reviews: [],
     briefs: [],
+    activatedSkills: [],
+    trustedWorkspaceSkills: new Set<string>(),
     mcp,
     recorder,
     instructionGraph: instr.graph,

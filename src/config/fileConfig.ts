@@ -20,7 +20,7 @@ export interface CheckConfig {
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
-import type { ContextConfig } from "./config.js";
+import type { ContextConfig, SkillsConfig } from "./config.js";
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
@@ -30,6 +30,7 @@ export interface FileConfig {
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
   context?: Partial<ContextConfig>;
+  skills?: Partial<SkillsConfig>;
 }
 
 const mcpServerSchema = z.object({
@@ -89,6 +90,14 @@ const contextSchema = z.object({
   preflight: z.boolean().optional(),
   preflightMaxBytes: z.number().int().min(0).optional(),
   explorerMaxTurns: z.number().int().min(1).max(50).optional(),
+});
+
+const skillsSchema = z.object({
+  enabled: z.boolean().optional(),
+  trustWorkspaceSkills: z.boolean().optional(),
+  catalogMaxChars: z.number().int().min(0).optional(),
+  activationMaxBytes: z.number().int().min(0).optional(),
+  disabled: z.array(z.string()).optional(),
 });
 
 /**
@@ -174,7 +183,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "context": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context };
+  const rawSkills = (parsed as { skills?: unknown }).skills;
+  let skills: Partial<SkillsConfig> | undefined;
+  if (rawSkills && typeof rawSkills === "object") {
+    const result = skillsSchema.safeParse(rawSkills);
+    if (result.success) skills = result.data;
+    else warn(`ignoring "skills": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills };
 }
 
 function warn(msg: string): void {

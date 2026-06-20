@@ -11,6 +11,7 @@ import { runBashTool } from "./runBash.js";
 import { todoWriteTool } from "./todoWrite.js";
 import { repoMapTool, findSymbolsTool, listRecentContextTool } from "./contextTools.js";
 import { repoIndexTool, findReferencesTool, impactGraphTool, targetTestsTool } from "./repoIndexTools.js";
+import { activateSkillTool } from "./activateSkill.js";
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
@@ -64,6 +65,8 @@ const NATIVE_TOOLS: Tool[] = [
   findReferencesTool,
   impactGraphTool,
   targetTestsTool,
+  // Phase 7C2: always registered; activation enforces enabled/trust/disabled.
+  activateSkillTool,
 ];
 
 /** The full native tool set. */

@@ -19,7 +19,8 @@ import {
   commitJitSource,
   type InstructionGraph,
 } from "../context/instructionGraph.js";
-import { promptForApproval } from "../permissions/prompt.js";
+import { promptForApproval, confirm } from "../permissions/prompt.js";
+import type { ActivateSkillRuntime } from "../skills/activation.js";
 import { handleSlashCommand } from "./slashCommands.js";
 import { runSolveCommand } from "./solveRunner.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
@@ -56,6 +57,8 @@ export interface Session {
   reviews: SubagentRunRecord[];
   /** Explorer brief records — quarantined metadata, NEVER sent to the model. */
   briefs: BriefRunRecord[];
+  activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
+  trustedWorkspaceSkills: Set<string>;
   /**
    * Phase 8A instruction graph (only when config.context.instructionGraph). The
    * live graph is mutated as JIT path-local sources load; `/instructions` and
@@ -144,6 +147,26 @@ function jitContext(session: Session): AgentDeps["jitContext"] {
   };
 }
 
+/**
+ * Build the skills-activation runtime for a session (Phase 7C2). Shared by the
+ * `activate_skill` tool and the `/skills activate` / `/$` slash commands so both
+ * paths enforce the same trust/enable/disable rules. The workspace-skill trust
+ * prompt uses the interactive `confirm` (non-TTY returns false → refuse).
+ */
+export function skillsRuntime(session: Session): ActivateSkillRuntime {
+  return {
+    workspaceRoot: session.config.workspaceRoot,
+    skillsConfig: session.config.skills,
+    activatedSkills: session.activatedSkills,
+    trustedWorkspaceSkills: session.trustedWorkspaceSkills,
+    confirmWorkspaceSkill: (p, name) =>
+      confirm(
+        `Activate workspace skill "${name}" from ${p}?\n` +
+          "Skill instructions can influence the model but cannot change permissions.",
+      ),
+  };
+}
+
 /** Fire a session-level advisory event (no matcher keys); returns injected context. */
 async function fireSessionEvent(session: Session, event: HookEvent, payload: Record<string, unknown> = {}): Promise<string[]> {
   const list = hooksFor(session, event);
@@ -173,14 +196,26 @@ export function resolveInstructions(config: Config): { text: string; graph?: Ins
   return { text: loadInstructions(config.workspaceRoot).text };
 }
 
-export function systemMessage(config: Config, mode: ApprovalMode, instructionsText?: string): AgentMessage {
+export function systemMessage(
+  config: Config,
+  mode: ApprovalMode,
+  instructionsText?: string,
+  skillsCatalog?: string,
+): AgentMessage {
   const text = instructionsText ?? resolveInstructions(config).text;
   // Project memory (8B): the control plane is the real workspace root, so memory
   // persists/loads there even under workspace isolation.
   const memory = loadStartupMemorySync(config.workspaceRoot);
   return {
     role: "system",
-    content: buildSystemPrompt({ workspaceRoot: config.workspaceRoot, mode, instructions: text, solve: config.solve, memory }),
+    content: buildSystemPrompt({
+      workspaceRoot: config.workspaceRoot,
+      mode,
+      instructions: text,
+      solve: config.solve,
+      memory,
+      skillsCatalog,
+    }),
   };
 }
 
@@ -206,6 +241,7 @@ function snapshot(session: Session): SessionSnapshot {
     pendingCheckpoint: session.recorder?.serialize() ?? [],
     reviews: session.reviews,
     briefs: session.briefs,
+    activatedSkills: session.activatedSkills,
   };
 }
 
@@ -227,6 +263,7 @@ async function runTask(session: Session): Promise<void> {
     recordPostWrite: checkpointing ? (p) => session.recorder!.recordPostWrite(p) : undefined,
     todos: session.todos,
     history: session.messages,
+    skills: skillsRuntime(session),
   };
 
   let streaming = false;

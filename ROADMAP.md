@@ -132,11 +132,20 @@ See `plans/phase5-verification-workflows-plan.md`.
   (`provision`, default `["node_modules"]`) into the worktree; composes with 7A (symlink targets are
   auto-added as read-only sandbox `extraMounts` so they resolve inside bwrap); separators/`..`
   rejected; never shadows tracked files; cleanup keeps the real targets. Unblocks isolated `--solve`.
-- [~] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`): 7C1-core shipped (`src/skills/`)
-  — discovery of `.deepcoder/skills/<name>/SKILL.md` (+`.agents/skills/` alias; user<workspace
-  precedence; malformed skipped), YAML-frontmatter parsing (no dep), a token-bounded progressive-
-  disclosure catalog, and `/skills` listing. Deferred: the `activate_skill` tool, system-prompt
-  catalog injection, session persistence, trust-approval flow, and script-backed skills (7C2).
+- [x] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`, `…7c2-skills-activation-implementation-plan.md`):
+  - **7C1** — discovery of `.deepcoder/skills/<name>/SKILL.md` (+`.agents/skills/` alias; user<workspace
+    precedence; malformed skipped), YAML-frontmatter parsing (no dep), a token-bounded progressive-
+    disclosure catalog, and `/skills` listing.
+  - **7C2 activation** (`src/skills/activation.ts`, `src/tools/activateSkill.ts`): explicit, auditable,
+    lazy-loaded instruction bundles. `/skills activate <name> [args]`, `/$<name> [args]` shorthand, and
+    a model-callable `activate_skill` tool. Full `SKILL.md` body loaded only at activation, bounded
+    (`activationMaxBytes`), `$ARGUMENTS`/`${ARGUMENTS}` substituted as inert text, and **redacted**
+    before injection (as a normal user message). Workspace skills are **untrusted by default**
+    (config `trustWorkspaceSkills` / session approval / non-TTY refuses); `disableModelInvocation`
+    blocks the tool, `userInvocable:false` blocks slash; config `disabled` hides skills. Activation
+    metadata persists for audit (resume never re-reads changed skill files). A compact catalog is
+    injected into the startup system prompt. Skills are guidance ONLY — never run scripts, grant tools,
+    or change permissions. Deferred (7C follow-ups): `allowedTools` enforcement, script-backed skills.
 
 ## Phase 8 — Context intelligence (in progress)
 
