@@ -25,6 +25,7 @@ export interface BuildPlanOptions {
   changedFiles?: string[];
   /** Maximum number of worker tasks (1-5, default 5). */
   maxWorkers?: number;
+  tdd?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -87,6 +88,12 @@ export function buildPlan(task: string, opts: BuildPlanOptions = {}): Delegation
   // Detect dependency cycles (should not happen with our sequential chain,
   // but guard against future changes).
   detectCycle(workers, dependencies);
+
+  if (opts.tdd) {
+    for (const w of workers) {
+      w.tdd = { required: true, allowedTestPaths: ["test/", "tests/"] };
+    }
+  }
 
   const riskNotes: string[] = [];
   if (workerCount === 1 && areas.length > 1) {

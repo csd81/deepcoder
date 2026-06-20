@@ -37,6 +37,8 @@ export interface EvaluateCompletenessInput {
    * (fail closed — cannot prove existence => not satisfied).
    */
   fileExists?: (relPath: string) => boolean;
+  /** Optional TDD repro paths from the worker run. */
+  reproPaths?: string[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -54,7 +56,7 @@ export interface EvaluateCompletenessInput {
  * - `evidence`: record of what was checked and the outcome.
  */
 export function evaluateCompleteness(input: EvaluateCompletenessInput): CompletenessResult {
-  const { task, changedPaths, patchText, selfAudit, fileExists } = input;
+  const { task, changedPaths, patchText, selfAudit, fileExists, reproPaths } = input;
 
   const failures: CompletenessFailure[] = [];
   const warnings: string[] = [];
@@ -176,7 +178,17 @@ export function evaluateCompleteness(input: EvaluateCompletenessInput): Complete
   const expectedTests = task.expectedTests ?? [];
 
   for (const et of expectedTests) {
-    const hasChanged = changedPaths.some((cp) => pathUnderPrefix(cp, et.pathPrefix));
+    let hasChanged = changedPaths.some((cp) => pathUnderPrefix(cp, et.pathPrefix));
+
+    if (!hasChanged && task.tdd) {
+      const allowedTestPaths = task.tdd.allowedTestPaths ?? [];
+      const rPaths = reproPaths ?? [];
+      const reproPathHints = task.tdd.reproPathHints ?? [];
+      const tddPaths = [...allowedTestPaths, ...rPaths, ...reproPathHints];
+      hasChanged = changedPaths.some((cp) => {
+        return tddPaths.some((tp) => pathUnderPrefix(cp, tp));
+      });
+    }
 
     if (!hasChanged) {
       failures.push({

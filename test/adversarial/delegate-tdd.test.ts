@@ -202,3 +202,87 @@ test("9L.5: an empty repro patch is blocked when TDD is required", async () => {
     assert.notEqual(out.run.tdd?.status, "green_confirmed");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+import { handleSlashCommand } from "../../src/cli/slashCommands.js";
+import { SessionStore, newSessionId } from "../../src/session/sessionStore.js";
+import { defaultRegistry } from "../../src/tools/registry.js";
+import type { Session } from "../../src/cli/repl.js";
+import type { Config } from "../../src/config/config.js";
+import { loadPlan } from "../../src/delegate/store.js";
+
+test("9L.5 CLI: /delegate plan --tdd creates a TDD-required plan", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tddcli-"));
+  try {
+    const config: Config = {
+      provider: "fake",
+      apiKey: "test",
+      baseUrl: "https://example.com",
+      model: "fake-model",
+      maxTurns: 20,
+      approvalMode: "ask",
+      contextBudgetTokens: 64000,
+      compactAt: 0.8,
+      workspaceRoot: root,
+      mcpServers: {},
+      mcpExecuteEnabled: false,
+      checks: {
+        phase: { command: "echo ok" }
+      }
+    };
+    const session: Session = {
+      config,
+      provider: { chat: async () => ({ text: "", toolCalls: [] }) },
+      registry: defaultRegistry(),
+      store: new SessionStore(root, newSessionId()),
+      messages: [],
+      mode: "ask",
+      todos: [],
+      readTracker: new Set(),
+      writeTracker: new Set(),
+      reviews: [],
+    };
+
+    const res = await handleSlashCommand("/delegate plan --tdd fix the bug", session, async () => {});
+    assert.equal(res.consumed, true);
+
+    // Find the saved plan
+    const planDir = path.join(root, ".deepcoder", "delegations");
+    const { readdirSync } = await import("node:fs");
+    const dirs = readdirSync(planDir);
+    assert.equal(dirs.length, 1);
+    const planId = dirs[0];
+
+    const plan = await loadPlan(root, planId);
+    assert.ok(plan);
+    assert.ok(plan.workers.length >= 1);
+    for (const w of plan.workers) {
+      assert.equal(w.tdd?.required, true, "worker must be TDD-required");
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+/* ---- 9L.5: completeness honors repro/tdd test paths ---- */
+
+import { evaluateCompleteness } from "../../src/delegate/completeness.js";
+
+test("9L.5 completeness: a repro test under tdd.allowedTestPaths satisfies an expected test in a different prefix", () => {
+  const wf = worker({
+    expectedTests: [{ pathPrefix: "spec/", description: "regression test required" }],
+    tdd: { required: true, allowedTestPaths: ["test/"] },
+  });
+  // The repro lives under test/ (a tdd path), not spec/ — still satisfied.
+  const ok = evaluateCompleteness({
+    task: wf, changedPaths: ["src.ts", "test/repro.test.ts"], patchText: "x",
+    reproPaths: ["test/repro.test.ts"],
+  });
+  assert.ok(!ok.failures.some((f) => f.code === "missing_required_test"), JSON.stringify(ok.failures));
+
+  // No test at all → still flagged missing_required_test.
+  const bad = evaluateCompleteness({
+    task: wf, changedPaths: ["src.ts"], patchText: "x", reproPaths: [],
+  });
+  assert.ok(bad.failures.some((f) => f.code === "missing_required_test"));
+});

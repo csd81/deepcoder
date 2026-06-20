@@ -187,6 +187,7 @@ export function validateWorkerResult(input: ValidateWorkerInput): WorkerValidati
       patchText,
       selfAudit: null, // We'll cross-check self-audit separately in Gate 5
       fileExists,
+      reproPaths: run.tdd?.reproPaths,
     });
 
     if (!completenessResult.complete) {

@@ -38,10 +38,12 @@ import { buildPlan } from "../delegate/planner.js";
 import { buildContextAwarePlan } from "../delegate/contextPlan.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
 import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
+import { runWorkerTdd } from "../delegate/tdd.js";
+import { readTddRecord } from "../delegate/tddArtifacts.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
 import { autoApplyIfEligible } from "../delegate/autoApply.js";
 import { runRunnable, runRunnableConcurrent, detectFileConflicts } from "../delegate/orchestrator.js";
-import type { WorkerRun } from "../delegate/types.js";
+import type { WorkerRun, DelegationPlan, WorkerTask } from "../delegate/types.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -826,7 +828,7 @@ export async function handleSlashCommand(
 
       if (sub === "plan") {
         if (!subArg) {
-          console.log(chalk.dim("usage: /delegate plan <task>  |  /delegate plan preflight <task>"));
+          console.log(chalk.dim("usage: /delegate plan [--tdd] <task>  |  /delegate plan preflight <task>"));
           return { consumed: true };
         }
 
@@ -873,7 +875,22 @@ export async function handleSlashCommand(
         }
 
         // Plain deterministic plan (existing behavior).
-        const plan = buildPlan(subArg, { checkNames: Object.keys(config.checks) });
+        let isTdd = false;
+        let taskArg = subArg;
+        if (subArgs[0] === "--tdd") {
+          isTdd = true;
+          taskArg = subArgs.slice(1).join(" ").trim();
+        } else if (subArgs.includes("--tdd")) {
+          isTdd = true;
+          taskArg = subArgs.filter(x => x !== "--tdd").join(" ").trim();
+        }
+
+        if (!taskArg) {
+          console.log(chalk.dim("usage: /delegate plan [--tdd] <task>"));
+          return { consumed: true };
+        }
+
+        const plan = buildPlan(taskArg, { tdd: isTdd, checkNames: Object.keys(config.checks) });
         await savePlan(root, plan);
         console.log(chalk.bold("\nDelegation Plan:"));
         console.log(chalk.dim(`  id: ${plan.id}`));
@@ -940,6 +957,85 @@ export async function handleSlashCommand(
             const shared = c.paths.slice(0, 20).join(", ");
             const more = c.paths.length > 20 ? ` … (+${c.paths.length - 20})` : "";
             console.log(chalk.yellow(`  - ${c.a} ↔ ${c.b}: ${shared}${more}`));
+          }
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "tdd") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate tdd <plan-id> <worker-id>  — show TDD status for a worker"));
+          return { consumed: true };
+        }
+        const plan = await loadPlan(root, planId);
+        if (!plan) {
+          console.log(chalk.red(`Plan "${planId}" not found or corrupt.`));
+          return { consumed: true };
+        }
+        const worker = plan.workers.find((w) => w.id === workerId);
+        if (!worker) {
+          console.log(chalk.red(`Worker "${workerId}" not found in plan "${planId}".`));
+          return { consumed: true };
+        }
+
+        const tddRecord = await readTddRecord(root, planId, workerId);
+        if (!tddRecord) {
+          console.log(chalk.yellow(`No TDD record found for worker "${workerId}" in plan "${planId}".`));
+          return { consumed: true };
+        }
+
+        console.log(chalk.bold(`\nTDD ${workerId}`));
+        console.log(`  repro: ${tddRecord.reproPaths.join(", ") || "none"}`);
+
+        const redStatus = tddRecord.status === "red_confirmed" || tddRecord.status === "green_failed" || tddRecord.status === "green_confirmed"
+          ? chalk.green("confirmed")
+          : tddRecord.status === "red_failed"
+          ? chalk.red("failed")
+          : chalk.dim("not_started");
+        const redRun = tddRecord.redRunId ? ` · run ${tddRecord.redRunId}` : "";
+        const redOutcome = tddRecord.status === "red_confirmed" || tddRecord.status === "green_failed" || tddRecord.status === "green_confirmed"
+          ? " · failed as expected"
+          : tddRecord.status === "red_failed"
+          ? " · passed on baseline (unexpected)"
+          : "";
+        console.log(`  red:   ${redStatus}${redRun}${redOutcome}`);
+
+        const greenStatus = tddRecord.status === "green_confirmed"
+          ? chalk.green("confirmed")
+          : tddRecord.status === "green_failed"
+          ? chalk.red("failed")
+          : chalk.dim("not_started");
+        const greenRun = tddRecord.greenRunId ? ` · run ${tddRecord.greenRunId}` : "";
+        const greenOutcome = tddRecord.status === "green_confirmed"
+          ? " · passed"
+          : tddRecord.status === "green_failed"
+          ? " · failed"
+          : "";
+        console.log(`  green: ${greenStatus}${greenRun}${greenOutcome}`);
+
+        const runDir = path.join(root, ".deepcoder", "delegations", planId, "runs", workerId);
+        const getPatchSizeStr = async (filename: string): Promise<string | null> => {
+          try {
+            const stat = await fs.stat(path.join(runDir, filename));
+            const kb = (stat.size / 1024).toFixed(1);
+            return `${filename} ${kb}KB`;
+          } catch {
+            return null;
+          }
+        };
+
+        const reproPatchStr = await getPatchSizeStr("repro.patch");
+        const fixPatchStr = await getPatchSizeStr("fix.patch");
+        const patchesList = [reproPatchStr, fixPatchStr].filter(Boolean).join(" · ");
+        if (patchesList) {
+          console.log(`  patches: ${patchesList}`);
+        }
+        if (tddRecord.warnings.length) {
+          console.log(chalk.yellow("  warnings:"));
+          for (const w of tddRecord.warnings) {
+            console.log(chalk.yellow(`    - ${w}`));
           }
         }
         return { consumed: true };
@@ -1017,15 +1113,16 @@ export async function handleSlashCommand(
       if (sub === "run") {
         // Parse flags out of the args so positionals (plan-id, worker-id) are clean.
         // `--parallel` and `--max-concurrency <n>` only apply to the run-all form.
+        const isTddRun = subArgs.includes("--tdd");
         const parallel = subArgs.includes("--parallel");
         const mcIdx = subArgs.indexOf("--max-concurrency");
         const rawMc = mcIdx !== -1 ? Number(subArgs[mcIdx + 1]) : NaN;
         const maxConcurrency = Number.isFinite(rawMc) ? Math.min(8, Math.max(1, Math.trunc(rawMc))) : 2;
-        const positional = subArgs.filter((a, i) => !a.startsWith("--") && !(mcIdx !== -1 && i === mcIdx + 1));
+        const positional = subArgs.filter((a, i) => a !== "--tdd" && !a.startsWith("--") && !(mcIdx !== -1 && i === mcIdx + 1));
         const planId = positional[0];
         const workerId = positional[1];
         if (!planId) {
-          console.log(chalk.dim("usage: /delegate run <plan-id> [worker-id]  — run one worker or all runnable workers sequentially (no auto-apply)"));
+          console.log(chalk.dim("usage: /delegate run [--tdd] <plan-id> [worker-id]  — run one worker or all runnable workers sequentially (no auto-apply)"));
           return { consumed: true };
         }
         // Nested-delegation guard: a process that is itself a delegated worker
@@ -1056,27 +1153,41 @@ export async function handleSlashCommand(
             console.log(chalk.red(`Worker "${workerId}" is not runnable (status: ${worker.status}).`));
             return { consumed: true };
           }
-          console.log(chalk.yellow(`\nThis spawns a live Deepcoder worker (provider: ${config.provider}) in an isolated worktree.`));
+          const modeLabel = isTddRun ? "in TDD mode" : "in an isolated worktree";
+          console.log(chalk.yellow(`\nThis spawns a live Deepcoder worker (provider: ${config.provider}) ${modeLabel}.`));
           console.log(chalk.dim(`  check:  ${worker.checkName}`));
           console.log(chalk.dim(`  prompt: ${worker.prompt.slice(0, 120)}${worker.prompt.length > 120 ? "…" : ""}`));
           console.log(chalk.dim("  The patch will NOT be applied — review it with /delegate review afterwards."));
-          if (!(await confirm(`Run worker "${workerId}"?`))) {
+          const confirmMsg = isTddRun ? `Run worker "${workerId}" in TDD mode?` : `Run worker "${workerId}"?`;
+          if (!(await confirm(confirmMsg))) {
             console.log(chalk.dim("Cancelled."));
             return { consumed: true };
           }
           const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
           const ac = new AbortController();
           try {
-            const { run } = await runWorker({
-              realRoot: root,
-              plan,
-              worker,
-              signal: ac.signal,
-              mainEntry,
-              provider: config.provider,
-              delegateDepth: depth,
-              onData: (c) => process.stdout.write(c),
-            });
+            const { run } = isTddRun
+              ? await runWorkerTdd({
+                  realRoot: root,
+                  plan,
+                  worker,
+                  signal: ac.signal,
+                  mainEntry,
+                  provider: config.provider,
+                  delegateDepth: depth,
+                  onData: (c) => process.stdout.write(c),
+                  checks: config.checks,
+                })
+              : await runWorker({
+                  realRoot: root,
+                  plan,
+                  worker,
+                  signal: ac.signal,
+                  mainEntry,
+                  provider: config.provider,
+                  delegateDepth: depth,
+                  onData: (c) => process.stdout.write(c),
+                });
             console.log("");
             console.log(run.checkPassed ? chalk.green(`✓ ${run.summary}`) : chalk.red(`✗ ${run.summary}`));
             if (run.changedFiles.length) {
@@ -1115,10 +1226,14 @@ export async function handleSlashCommand(
         }
 
         const modeLabel = parallel ? `in parallel (max ${maxConcurrency})` : "sequentially";
-        console.log(chalk.yellow(`\nThis spawns live Deepcoder workers (provider: ${config.provider}) ${modeLabel} in isolated worktrees.`));
+        const tddLabel = isTddRun ? " in TDD mode" : "";
+        console.log(chalk.yellow(`\nThis spawns live Deepcoder workers (provider: ${config.provider})${tddLabel} ${modeLabel} in isolated worktrees.`));
         console.log(chalk.dim("  Only runnable workers (planned/failed with all deps applied) will run."));
         console.log(chalk.dim("  No patch will be applied automatically."));
-        if (!(await confirm(`Run all runnable workers in plan "${planId}"?`))) {
+        const confirmMsg = isTddRun
+          ? `Run all runnable workers in plan "${planId}" in TDD mode?`
+          : `Run all runnable workers in plan "${planId}"?`;
+        if (!(await confirm(confirmMsg))) {
           console.log(chalk.dim("Cancelled."));
           return { consumed: true };
         }
@@ -1126,6 +1241,23 @@ export async function handleSlashCommand(
         const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
         const ac = new AbortController();
         try {
+          const runOne = isTddRun
+            ? async (runPlan: DelegationPlan, worker: WorkerTask): Promise<WorkerRun> => {
+                const out = await runWorkerTdd({
+                  realRoot: root,
+                  plan: runPlan,
+                  worker,
+                  signal: ac.signal,
+                  mainEntry,
+                  provider: config.provider,
+                  delegateDepth: depth,
+                  onData: (c) => process.stdout.write(c),
+                  checks: config.checks,
+                });
+                return out.run;
+              }
+            : undefined;
+
           const driverOpts = {
             realRoot: root,
             signal: ac.signal,
@@ -1133,6 +1265,7 @@ export async function handleSlashCommand(
             provider: config.provider,
             delegateDepth: depth,
             onData: (c: string) => process.stdout.write(c),
+            runOne,
           };
           const res = parallel
             ? await runRunnableConcurrent(plan, { ...driverOpts, maxConcurrency })
