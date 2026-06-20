@@ -265,3 +265,37 @@ test("FLIP apply: applyWorker refuses (requireValidatedTest) a worker without gr
     assert.equal(await readFile(path.join(root, "src", "foo.ts"), "utf8"), "a\n", "repo untouched");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+/* ---- 9M: manifest coverage gate at the apply boundary ---- */
+
+import type { CoverageEntry } from "../../src/delegate/types.js";
+
+const covRed: CoverageEntry[] = [
+  { deliverableId: "d1", tests: ["[d1] a"], red: true },
+  { deliverableId: "d2", tests: ["[d2] b"], red: true },
+];
+
+test("9M: a green_confirmed worker that is coverage-complete is applyable", () => {
+  const tdd: WorkerTddRun = { ...tddGreen, coverage: covRed, coverageComplete: true };
+  const v = validateWorkerResult(vinput({ requireValidatedTest: true, run: run({ tdd }) }));
+  assert.equal(v.applyable, true, JSON.stringify(v.failures));
+});
+
+test("9M: a green worker whose coverage is INCOMPLETE is refused even with green_confirmed", () => {
+  // status says green, but a deliverable was never red → must not apply.
+  const tdd: WorkerTddRun = {
+    ...tddGreen, coverage: [covRed[0]], coverageComplete: false, uncoveredDeliverables: ["d2"],
+  };
+  const v = validateWorkerResult(vinput({ requireValidatedTest: true, run: run({ tdd }) }));
+  assert.equal(v.applyable, false, "incomplete coverage must block apply");
+  assert.ok(codes(v).includes("missing_validated_test"));
+});
+
+test("9M: a green worker with a vacuous (nonRed) deliverable is refused", () => {
+  const tdd: WorkerTddRun = {
+    ...tddGreen, coverage: covRed, coverageComplete: false, nonRedDeliverables: ["d2"],
+  };
+  const v = validateWorkerResult(vinput({ requireValidatedTest: true, run: run({ tdd }) }));
+  assert.equal(v.applyable, false);
+  assert.match(v.failures.map((f) => f.message).join(" "), /baseline|coverage/i);
+});

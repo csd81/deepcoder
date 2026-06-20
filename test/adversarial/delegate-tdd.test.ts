@@ -286,3 +286,97 @@ test("9L.5 completeness: a repro test under tdd.allowedTestPaths satisfies an ex
   });
   assert.ok(bad.failures.some((f) => f.code === "missing_required_test"));
 });
+
+/* ---- 9M: manifest coverage gate (forces a red test per deliverable) ---- */
+
+import type { CoverageProbeResult } from "../../src/delegate/tdd.js";
+import type { WorkerDeliverableSpec } from "../../src/delegate/coverage.js";
+
+const M_DELIVS: WorkerDeliverableSpec[] = [
+  { id: "d1", acceptance: "first deliverable" },
+  { id: "d2", acceptance: "second deliverable" },
+];
+
+function manifestWorker(over: Partial<WorkerTask> = {}): WorkerTask {
+  return worker({
+    checkName: "tddchk", allowedPaths: ["value.txt", "test/repro.test.ts"], status: "planned",
+    tdd: {
+      required: true, allowedTestPaths: ["test/"],
+      deliverables: M_DELIVS, testCommand: "node --test test/repro.test.ts",
+    }, ...over,
+  });
+}
+
+/** Probe seam: call 1 = baseline (red) TAP, call 2 = fixed (green) TAP. */
+function phasedProbe(redTap: string, redExit: number, greenTap: string, greenExit: number) {
+  let n = 0;
+  return async (): Promise<CoverageProbeResult> => {
+    n++;
+    return n === 1
+      ? { tap: redTap, exitCode: redExit, refused: false, runId: "red" }
+      : { tap: greenTap, exitCode: greenExit, refused: false, runId: "green" };
+  };
+}
+
+function manifestOpts(root: string, probe: ReturnType<typeof phasedProbe>) {
+  const w = manifestWorker();
+  return {
+    realRoot: root, plan: tddPlan(w), worker: w, signal: new AbortController().signal,
+    mainEntry: "x", provider: "fake",
+    isolationConfig: { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" as const, provision: [] },
+    spawnWorker: phasedSpawn("FIXED") as unknown as SpawnFn,
+    runCoverageProbe: probe,
+  };
+}
+
+const RED_BOTH = "not ok 1 - [d1] a\nnot ok 2 - [d2] b";
+const GREEN_BOTH = "ok 1 - [d1] a\nok 2 - [d2] b";
+
+test("9M: all deliverables red→green → green_confirmed + coverageComplete", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    const out = await runWorkerTdd(manifestOpts(root, phasedProbe(RED_BOTH, 1, GREEN_BOTH, 0)));
+    assert.equal(out.run.tdd?.status, "green_confirmed", JSON.stringify(out.run.tdd));
+    assert.equal(out.run.tdd?.coverageComplete, true);
+    assert.equal(gitT(root, "status", "--porcelain").stdout.trim(), "", "real repo untouched");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9M: a deliverable with NO failing test → red_failed (never reaches fix)", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    // Only d1 covered; d2 has no tagged test.
+    const out = await runWorkerTdd(manifestOpts(root, phasedProbe("not ok 1 - [d1] a", 1, GREEN_BOTH, 0)));
+    assert.equal(out.run.tdd?.status, "red_failed", JSON.stringify(out.run.tdd));
+    assert.deepEqual(out.run.tdd?.uncoveredDeliverables, ["d2"]);
+    assert.notEqual(out.run.checkPassed, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9M: a tagged test that PASSES on baseline (vacuous) → red_failed (nonRed)", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    const out = await runWorkerTdd(manifestOpts(root, phasedProbe("not ok 1 - [d1] a\nok 2 - [d2] vacuous", 1, GREEN_BOTH, 0)));
+    assert.equal(out.run.tdd?.status, "red_failed", JSON.stringify(out.run.tdd));
+    assert.deepEqual(out.run.tdd?.nonRedDeliverables, ["d2"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9M: red passes but a deliverable stays failing after fix → green_failed", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    const out = await runWorkerTdd(manifestOpts(root, phasedProbe(RED_BOTH, 1, "ok 1 - [d1] a\nnot ok 2 - [d2] still broken", 1)));
+    assert.equal(out.run.tdd?.status, "green_failed", JSON.stringify(out.run.tdd));
+    assert.notEqual(out.run.tdd?.coverageComplete, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9M: a refused (classifier-denied) test command fails the red gate, runs nothing further", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    const refusedProbe = async (): Promise<CoverageProbeResult> => ({ tap: "", exitCode: 126, refused: true });
+    const out = await runWorkerTdd(manifestOpts(root, refusedProbe as ReturnType<typeof phasedProbe>));
+    assert.equal(out.run.tdd?.status, "red_failed", JSON.stringify(out.run.tdd));
+    assert.match(out.run.tdd?.warnings.join(" ") ?? "", /refus/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

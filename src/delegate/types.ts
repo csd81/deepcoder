@@ -6,6 +6,10 @@
  * are stored in any of these types.
  */
 
+import type { WorkerDeliverableSpec, CoverageEntry } from "./coverage.js";
+
+export type { WorkerDeliverableSpec, CoverageEntry } from "./coverage.js";
+
 /* ------------------------------------------------------------------ */
 /*  WorkerTask                                                         */
 /* ------------------------------------------------------------------ */
@@ -49,6 +53,18 @@ export interface WorkerTddRequirement {
   baselineCheckName?: string;
   finalCheckName?: string;
   allowNoReproJustification?: boolean;
+  /**
+   * Phase 9M — manifest coverage gate. When present, the worker must author a
+   * failing test tagged `[<id>]` for EVERY deliverable before it may implement.
+   * The spec checklist (ids + acceptance), NOT seeded test code.
+   */
+  deliverables?: WorkerDeliverableSpec[];
+  /**
+   * Config-derived command (never model output) that runs the authored tests
+   * and emits TAP, e.g. `node --import tsx --test test/foo.test.ts`. Used for
+   * the red coverage proof and the green proof.
+   */
+  testCommand?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -152,6 +168,14 @@ export interface WorkerTddRun {
   fixPatchPath?: string;
   noReproJustification?: string;
   warnings: string[];
+  /** Phase 9M — per-deliverable coverage (manifest mode only). */
+  coverage?: CoverageEntry[];
+  /** True iff every manifest deliverable is covered AND red-on-baseline. */
+  coverageComplete?: boolean;
+  /** Deliverables with no tagged test. */
+  uncoveredDeliverables?: string[];
+  /** Deliverables whose tagged test passed on baseline (vacuous/self-grading). */
+  nonRedDeliverables?: string[];
 }
 
 /* ------------------------------------------------------------------ */

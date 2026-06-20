@@ -55,6 +55,60 @@ export interface SlashOutcome {
 const MODES: ApprovalMode[] = ["ask", "auto", "readonly"];
 
 /**
+ * Phase 9M — load + validate a deliverable coverage manifest from a workspace
+ * file. Shape: { deliverables: [{ id, acceptance }], testCommand, allowedTestPaths? }.
+ * The manifest is the spec checklist (ids + acceptance), NOT seeded test code.
+ */
+type LoadedManifest =
+  | { ok: true; deliverables: { id: string; acceptance: string }[]; testCommand: string; allowedTestPaths?: string[] }
+  | { ok: false; error: string };
+
+export async function loadCoverageManifest(root: string, relPath: string): Promise<LoadedManifest> {
+  let abs: string;
+  try {
+    abs = resolveReadPathInWorkspace(root, relPath);
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+  let raw: string;
+  try {
+    raw = await fs.readFile(abs, "utf8");
+  } catch {
+    return { ok: false, error: `cannot read ${relPath}` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "not valid JSON" };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const testCommand = obj.testCommand;
+  if (typeof testCommand !== "string" || testCommand.trim().length === 0) {
+    return { ok: false, error: "missing string `testCommand`" };
+  }
+  if (!Array.isArray(obj.deliverables) || obj.deliverables.length === 0) {
+    return { ok: false, error: "missing non-empty `deliverables` array" };
+  }
+  const deliverables: { id: string; acceptance: string }[] = [];
+  const seen = new Set<string>();
+  for (const d of obj.deliverables) {
+    const id = (d as Record<string, unknown>)?.id;
+    const acceptance = (d as Record<string, unknown>)?.acceptance;
+    if (typeof id !== "string" || !/^[A-Za-z0-9._-]+$/.test(id)) {
+      return { ok: false, error: `deliverable id must match [A-Za-z0-9._-]+ (got ${JSON.stringify(id)})` };
+    }
+    if (seen.has(id)) return { ok: false, error: `duplicate deliverable id "${id}"` };
+    seen.add(id);
+    deliverables.push({ id, acceptance: typeof acceptance === "string" ? acceptance : "" });
+  }
+  const allowedTestPaths = Array.isArray(obj.allowedTestPaths)
+    ? obj.allowedTestPaths.filter((x): x is string => typeof x === "string")
+    : undefined;
+  return { ok: true, deliverables, testCommand, allowedTestPaths };
+}
+
+/**
  * Handle a `/command`. Returns consumed=false if the input wasn't a slash
  * command (so the REPL should treat it as a prompt).
  */
@@ -1118,7 +1172,17 @@ export async function handleSlashCommand(
         const mcIdx = subArgs.indexOf("--max-concurrency");
         const rawMc = mcIdx !== -1 ? Number(subArgs[mcIdx + 1]) : NaN;
         const maxConcurrency = Number.isFinite(rawMc) ? Math.min(8, Math.max(1, Math.trunc(rawMc))) : 2;
-        const positional = subArgs.filter((a, i) => a !== "--tdd" && !a.startsWith("--") && !(mcIdx !== -1 && i === mcIdx + 1));
+        // Phase 9M — `--manifest <file.json>` attaches a deliverable coverage
+        // manifest to the target worker(s): { deliverables:[{id,acceptance}], testCommand, allowedTestPaths? }.
+        const manIdx = subArgs.indexOf("--manifest");
+        const manifestPath = manIdx !== -1 ? subArgs[manIdx + 1] : undefined;
+        const positional = subArgs.filter(
+          (a, i) =>
+            a !== "--tdd" &&
+            !a.startsWith("--") &&
+            !(mcIdx !== -1 && i === mcIdx + 1) &&
+            !(manIdx !== -1 && i === manIdx + 1),
+        );
         const planId = positional[0];
         const workerId = positional[1];
         if (!planId) {
@@ -1152,6 +1216,27 @@ export async function handleSlashCommand(
           if (worker.status !== "planned" && worker.status !== "failed") {
             console.log(chalk.red(`Worker "${workerId}" is not runnable (status: ${worker.status}).`));
             return { consumed: true };
+          }
+          // Phase 9M — apply a deliverable coverage manifest (forces the worker
+          // to author a red test per deliverable before it may implement).
+          if (manifestPath) {
+            if (!isTddRun) {
+              console.log(chalk.red("--manifest requires --tdd (manifest coverage is a TDD-mode gate)."));
+              return { consumed: true };
+            }
+            const loaded = await loadCoverageManifest(root, manifestPath);
+            if (!loaded.ok) {
+              console.log(chalk.red(`Invalid --manifest: ${loaded.error}`));
+              return { consumed: true };
+            }
+            worker.tdd = {
+              ...(worker.tdd ?? { required: true }),
+              required: true,
+              deliverables: loaded.deliverables,
+              testCommand: loaded.testCommand,
+              allowedTestPaths: loaded.allowedTestPaths ?? worker.tdd?.allowedTestPaths ?? ["test/", "tests/"],
+            };
+            console.log(chalk.dim(`  manifest: ${loaded.deliverables.length} deliverable(s); test command: ${loaded.testCommand}`));
           }
           const modeLabel = isTddRun ? "in TDD mode" : "in an isolated worktree";
           console.log(chalk.yellow(`\nThis spawns a live Deepcoder worker (provider: ${config.provider}) ${modeLabel}.`));

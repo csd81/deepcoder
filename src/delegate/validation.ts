@@ -374,10 +374,33 @@ export function validateWorkerResult(input: ValidateWorkerInput): WorkerValidati
           `A required test must be shown red on baseline, then green after the fix — it cannot self-grade.`,
         source: "completeness",
       });
+    } else if (
+      // Phase 9M — manifest coverage: a green_confirmed worker that declared
+      // deliverables MUST also be coverage-complete (a red test per deliverable).
+      // Defensive: runWorkerTdd already withholds green_confirmed when coverage
+      // is incomplete, but the apply gate refuses to trust a self-reported pass.
+      Array.isArray(tdd.coverage) && tdd.coverageComplete !== true
+    ) {
+      const gaps = [
+        ...(tdd.uncoveredDeliverables ?? []).map((d) => `${d} (no failing test)`),
+        ...(tdd.nonRedDeliverables ?? []).map((d) => `${d} (test passes on baseline)`),
+      ];
+      failures.push({
+        code: "missing_validated_test",
+        message:
+          `Worker "${worker.id}" is green but its deliverable coverage is incomplete` +
+          (gaps.length > 0 ? `: ${gaps.join(", ")}` : "") +
+          `. Every declared deliverable needs a test shown red on baseline.`,
+        source: "completeness",
+      });
     } else {
+      const cov =
+        Array.isArray(tdd.coverage) && tdd.coverage.length > 0
+          ? `; coverage ${tdd.coverage.length} deliverable(s) complete`
+          : "";
       evidence.push({
         source: "completeness",
-        note: `Validated test proof present (TDD ${tdd.status}; repro ${tdd.reproPaths.join(", ") || "—"})`,
+        note: `Validated test proof present (TDD ${tdd.status}; repro ${tdd.reproPaths.join(", ") || "—"}${cov})`,
       });
     }
   }

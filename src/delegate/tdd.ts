@@ -24,8 +24,63 @@ import { buildReproPhasePrompt, buildFixPhasePrompt } from "./tddPrompts.js";
 import { writeTddRecord, saveTddCheckRun } from "./tddArtifacts.js";
 import { validatePatch } from "./patchValidator.js";
 import { runWorker, type RunWorkerResult, type SpawnFn } from "./workerRunner.js";
+import { parseTapResults, computeCoverage, deliverablesNotGreen } from "./coverage.js";
+import type { CoverageReport } from "./coverage.js";
 import type { DelegationPlan, WorkerRun, WorkerTask, WorkerTddRun, WorkerIsolationRecord } from "./types.js";
 import type { CheckConfig } from "../config/fileConfig.js";
+
+/* ------------------------------------------------------------------ */
+/*  Coverage probe (Phase 9M)                                          */
+/* ------------------------------------------------------------------ */
+
+export interface CoverageProbeResult {
+  /** Captured TAP output of the authored test command. */
+  tap: string;
+  exitCode: number;
+  /** True iff the (config-derived) command was refused by the classifier. */
+  refused: boolean;
+  runId?: string;
+}
+
+/**
+ * Runs the configured `testCommand` in a worktree and returns its TAP output.
+ * Injectable so orchestration tests can drive the manifest flow without a real
+ * test run. The default routes through `runCheck` (classifier-gated, bounded,
+ * logged) and reads back the persisted log.
+ */
+export type CoverageProbe = (args: {
+  workspaceRoot: string;
+  testCommand: string;
+  signal: AbortSignal;
+}) => Promise<CoverageProbeResult>;
+
+async function defaultCoverageProbe(args: {
+  workspaceRoot: string;
+  testCommand: string;
+  signal: AbortSignal;
+}): Promise<CoverageProbeResult> {
+  const { workspaceRoot, testCommand, signal } = args;
+  try {
+    const run = await runCheck(
+      "tdd-coverage",
+      { command: testCommand },
+      { workspaceRoot, signal },
+    );
+    let tap = "";
+    try {
+      tap = await fs.readFile(path.join(workspaceRoot, run.logPath), "utf8");
+    } catch {
+      // No log → empty TAP; coverage will read as uncovered (fails closed).
+    }
+    return { tap, exitCode: run.exitCode ?? 1, refused: false, runId: run.id };
+  } catch (err) {
+    if (err instanceof CheckRefusedError) {
+      // A config-derived command was refused — fail closed, do not run it elsewhere.
+      return { tap: "", exitCode: 126, refused: true };
+    }
+    throw err;
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -54,6 +109,8 @@ export interface RunWorkerTddInput {
   timeoutMs?: number;
   /** Named checks available for red/green proof. */
   checks?: Record<string, CheckConfig>;
+  /** Phase 9M — injectable coverage probe (manifest mode). Tests inject a fake. */
+  runCoverageProbe?: CoverageProbe;
 }
 
 /* ------------------------------------------------------------------ */
@@ -183,6 +240,12 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   let redRunId: string | undefined;
   let redSummary = "";
 
+  // Phase 9M — manifest coverage mode.
+  const deliverables = tdd.deliverables ?? [];
+  const manifestMode = deliverables.length > 0;
+  const coverageProbe = input.runCoverageProbe ?? defaultCoverageProbe;
+  let coverageReport: CoverageReport | undefined;
+
   try {
     // Apply repro patch to baseline worktree.
     if (reproPatch.trim().length > 0) {
@@ -208,8 +271,46 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
       await fs.rm(path.join(baselineIso.isolatedRoot, "__repro.patch"), { force: true });
     }
 
-    // Run the baseline check to prove red.
-    if (!redSummary) {
+    // Manifest mode: prove every deliverable is covered AND red on baseline.
+    if (!redSummary && manifestMode) {
+      const testCommand = tdd.testCommand;
+      if (!testCommand) {
+        redSummary = "manifest coverage requires tdd.testCommand (none configured)";
+        redConfirmed = false;
+      } else {
+        const probe = await coverageProbe({
+          workspaceRoot: baselineIso.isolatedRoot,
+          testCommand,
+          signal: input.signal,
+        });
+        redRunId = probe.runId;
+        if (probe.refused) {
+          redSummary = "coverage test command was refused by the classifier";
+          redConfirmed = false;
+        } else {
+          coverageReport = computeCoverage(deliverables, parseTapResults(probe.tap));
+          if (coverageReport.complete) {
+            redConfirmed = true;
+            redSummary = `coverage complete: ${deliverables.length} deliverable(s) each covered by a red test`;
+          } else {
+            redConfirmed = false;
+            const parts: string[] = [];
+            if (coverageReport.uncovered.length > 0) {
+              parts.push(`no failing test for: ${coverageReport.uncovered.join(", ")}`);
+            }
+            if (coverageReport.nonRed.length > 0) {
+              parts.push(
+                `test passes on baseline (vacuous/self-grading) for: ${coverageReport.nonRed.join(", ")}`,
+              );
+            }
+            redSummary = `coverage incomplete — ${parts.join("; ")}`;
+          }
+        }
+      }
+    }
+
+    // Run the baseline check to prove red (single-repro mode).
+    if (!redSummary && !manifestMode) {
       const checkName = tdd.baselineCheckName ?? worker.checkName;
       const checkConfig = input.checks?.[checkName];
       if (checkConfig) {
@@ -269,6 +370,10 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
       reproPaths,
       redRunId,
       warnings: [redSummary],
+      coverage: coverageReport?.entries,
+      coverageComplete: manifestMode ? false : undefined,
+      uncoveredDeliverables: coverageReport?.uncovered,
+      nonRedDeliverables: coverageReport?.nonRed,
     };
     await writeTddRecord(input.realRoot, input.plan.id, worker.id, tddRun);
     worker.status = "failed";
@@ -367,11 +472,32 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   // ── Step 4: Green Proof ──────────────────────────────────────────
   let greenConfirmed = false;
   let greenRunId: string | undefined;
+  // Phase 9M — in manifest mode the green proof re-runs the authored suite and
+  // requires every (previously-red) deliverable to now pass.
+  let greenCoverageComplete = !manifestMode; // single-repro mode: not applicable.
 
   const finalCheckName = tdd.finalCheckName ?? worker.checkName;
   const finalCheckConfig = input.checks?.[finalCheckName];
 
-  if (finalCheckConfig) {
+  if (manifestMode && tdd.testCommand) {
+    const probe = await coverageProbe({
+      workspaceRoot: fixIso.isolatedRoot,
+      testCommand: tdd.testCommand,
+      signal: input.signal,
+    });
+    greenRunId = probe.runId;
+    if (probe.refused) {
+      warnings.push("green coverage test command was refused by the classifier");
+      greenConfirmed = false;
+    } else {
+      const notGreen = deliverablesNotGreen(deliverables, parseTapResults(probe.tap));
+      greenCoverageComplete = notGreen.length === 0;
+      greenConfirmed = probe.exitCode === 0 && greenCoverageComplete;
+      if (!greenConfirmed && notGreen.length > 0) {
+        warnings.push(`deliverables still not green: ${notGreen.join(", ")}`);
+      }
+    }
+  } else if (finalCheckConfig) {
     try {
       const checkRun = await runCheck(finalCheckName, finalCheckConfig, {
         workspaceRoot: fixIso.isolatedRoot,
@@ -418,8 +544,13 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   if (!greenConfirmed) warnings.push("green check did not pass");
   if (!hasPatch) warnings.push("empty patch (worker produced no changes)");
 
-  // Build TDD run record.
-  const tddStatus = greenConfirmed ? "green_confirmed" : "green_failed";
+  // Build TDD run record. In manifest mode, green_confirmed requires the full
+  // coverage proof (every deliverable red-on-baseline then green-after-fix).
+  const coverageComplete = manifestMode
+    ? !!coverageReport?.complete && greenCoverageComplete
+    : undefined;
+  const manifestSatisfied = !manifestMode || coverageComplete === true;
+  const tddStatus = checkPassed && manifestSatisfied ? "green_confirmed" : "green_failed";
   const tddRun: WorkerTddRun = {
     required: true,
     status: tddStatus,
@@ -429,6 +560,10 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
     redPatchPath: "repro.patch",
     fixPatchPath: hasPatch ? "fix.patch" : undefined,
     warnings,
+    coverage: coverageReport?.entries,
+    coverageComplete,
+    uncoveredDeliverables: coverageReport?.uncovered,
+    nonRedDeliverables: coverageReport?.nonRed,
   };
   await writeTddRecord(input.realRoot, input.plan.id, worker.id, tddRun);
 
