@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadConfig } from "../../src/config/config.js";
+import { createProvider } from "../../src/providers/factory.js";
 import { redactSecrets, mapProviderError, temperatureField } from "../../src/providers/openaiCompatible.js";
 import { SessionStore, newSessionId, loadSession } from "../../src/session/sessionStore.js";
 
@@ -157,6 +158,18 @@ test("temperatureField sends a number but OMITS the field when temperature is un
   assert.deepEqual(temperatureField(0.7, 0), { temperature: 0.7 }); // per-call wins
   const omitted = temperatureField(undefined, undefined);
   assert.equal("temperature" in omitted, false, "must not send temperature at all when omitted");
+});
+
+test("openai-responses: resolves OPENAI_* keys, default model gpt-5.3-codex, builds a non-streaming provider", () => {
+  withEnv({ DEEPCODER_PROVIDER: "openai-responses", OPENAI_API_KEY: "sk-o", OPENAI_BASE_URL: "https://api.openai.com/v1" }, () => {
+    const cfg = loadConfig({ workspaceRoot: "/tmp" });
+    assert.equal(cfg.provider, "openai-responses");
+    assert.equal(cfg.apiKey, "sk-o");
+    assert.equal(cfg.model, "gpt-5.3-codex");
+    const p = createProvider(cfg);
+    assert.equal(p.constructor.name, "OpenAIResponsesProvider");
+    assert.equal(typeof p.streamChat, "undefined", "v1 is non-streaming → loop falls back to chat()");
+  });
 });
 
 test("DEEPCODER_REASONING_EFFORT resolves (default medium, validated)", () => {

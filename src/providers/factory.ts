@@ -1,5 +1,6 @@
 import type { ModelProvider } from "./types.js";
 import { OpenAICompatibleProvider } from "./openaiCompatible.js";
+import { OpenAIResponsesProvider } from "./openaiResponses.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { DEEPSEEK_DEFAULT_BASE_URL } from "./deepseek.js";
 import type { Config } from "../config/config.js";
@@ -7,6 +8,7 @@ import type { Config } from "../config/config.js";
 export const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1";
 export const QWEN_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 export const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+export const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
 /**
  * Build a provider from config. All providers map onto the same
@@ -61,6 +63,16 @@ export function createProvider(config: Config): ModelProvider {
         baseUrl: config.baseUrl,
         label: "OpenAI-compatible",
         temperature: config.temperature,
+      });
+
+    case "openai-responses":
+      // OpenAI Responses API (/v1/responses) — required for codex / responses-only
+      // models. Reuses the OpenAI key/base URL; defaults to api.openai.com.
+      return new OpenAIResponsesProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl || OPENAI_DEFAULT_BASE_URL,
+        label: "OpenAI Responses",
+        reasoningEffort: config.reasoningEffort,
       });
 
     case "anthropic":
