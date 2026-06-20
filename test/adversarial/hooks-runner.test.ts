@@ -122,15 +122,22 @@ test("loadConfig parses a hooks block from .deepcoder/config.json (disabled by d
       }),
       "utf8",
     );
+    // Hooks execute code, so they are honoured only for a TRUSTED workspace.
+    process.env.DEEPCODER_TRUST_WORKSPACE = "1";
     const cfg = loadConfig({ workspaceRoot: root, apiKey: "fixture" });
     assert.equal(cfg.hooks.enabled, true);
     assert.equal(cfg.hooks.events.PreToolUse?.[0]?.name, "block");
+    delete process.env.DEEPCODER_TRUST_WORKSPACE;
+
+    // Same config from an UNTRUSTED workspace → neutralized (trust gate).
+    assert.equal(loadConfig({ workspaceRoot: root, apiKey: "fixture" }).hooks.enabled, false);
 
     // A workspace with no config → hooks disabled by default.
     const bare = await mkdtemp(path.join(tmpdir(), "hooks-bare-"));
     assert.equal(loadConfig({ workspaceRoot: bare, apiKey: "fixture" }).hooks.enabled, false);
     await rm(bare, { recursive: true, force: true });
   } finally {
+    delete process.env.DEEPCODER_TRUST_WORKSPACE;
     await rm(root, { recursive: true, force: true });
   }
 });

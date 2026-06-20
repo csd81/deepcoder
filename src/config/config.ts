@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { loadFileConfig, type McpServerConfig, type CheckConfig } from "./fileConfig.js";
+import { isWorkspaceTrusted } from "./trust.js";
 import { DEFAULT_SANDBOX, type SandboxConfig, type SandboxMode } from "../sandbox/types.js";
 import {
   DEFAULT_WORKSPACE_ISOLATION,
@@ -205,6 +206,25 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";
   const workspaceRoot = overrides.workspaceRoot ?? process.cwd();
   const file = loadFileConfig(workspaceRoot);
+
+  // Trust gate (security): a workspace's `.deepcoder/config.json` can define MCP
+  // servers (spawned at startup) and hooks (run on session events) that EXECUTE
+  // CODE before the user approves anything. Do NOT honour those from an untrusted
+  // workspace — neutralize them unless the workspace is explicitly trusted.
+  if (!isWorkspaceTrusted(workspaceRoot)) {
+    const hadMcp = Object.keys(file.mcpServers ?? {}).length > 0;
+    const hadHooks = file.hooks?.enabled === true;
+    if (hadMcp || hadHooks) {
+      const what = [hadMcp ? "MCP servers" : "", hadHooks ? "hooks" : ""].filter(Boolean).join(" and ");
+      process.stderr.write(
+        `Warning: this workspace's .deepcoder/config.json defines ${what} that execute code. ` +
+          `They are DISABLED because the workspace is not trusted. ` +
+          `Set DEEPCODER_TRUST_WORKSPACE=1 (or add the path to ~/.deepcoder/trusted-workspaces) to enable.\n`,
+      );
+    }
+    file.mcpServers = {};
+    file.hooks = { enabled: false };
+  }
 
   // Sandbox: default < config file < env < CLI override (applied last via overrides).
   const envMode = (process.env.DEEPCODER_SANDBOX || "").toLowerCase();
