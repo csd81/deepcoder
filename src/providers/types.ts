@@ -10,6 +10,13 @@ export interface ToolCall {
   name: string;
   /** Already-parsed arguments (the adapter is responsible for JSON parsing). */
   arguments: Record<string, unknown>;
+  /**
+   * Opaque provider-specific metadata that must round-trip across turns — e.g.
+   * Gemini 3.x's `extra_content.google.thought_signature`, which the model
+   * requires echoed back or it 400s. Captured on parse, replayed on serialize;
+   * absent for providers that don't emit it.
+   */
+  providerMeta?: Record<string, unknown>;
 }
 
 export interface AgentMessage {

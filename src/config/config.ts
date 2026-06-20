@@ -155,10 +155,8 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   "openai-compatible": "gpt-4o-mini",
   "openai-responses": "gpt-5.3-codex",
   qwen: "qwen2.5-coder-32b-instruct",
-  // gemini-2.5-pro: most capable Gemini that works with deepcoder's tool loop.
-  // The 3.x models (3.5-flash, flash-latest) 400 on multi-turn tool use
-  // ("missing thought_signature", a Gemini extension the OpenAI-compat format
-  // doesn't carry); 2.5-pro / 2.5-flash do not require it.
+  // Default Gemini. 3.x models (3.5-flash, etc.) also work now that the provider
+  // captures/replays Gemini's thought_signature; 2.5-pro is the chosen default.
   gemini: "gemini-2.5-pro",
   anthropic: "claude-3-5-sonnet-latest",
 };

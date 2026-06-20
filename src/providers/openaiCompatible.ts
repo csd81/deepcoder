@@ -83,7 +83,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const choice = res.choices[0]?.message;
     const toolCalls: ToolCall[] = (choice?.tool_calls ?? []).flatMap((tc) => {
       if (tc.type !== "function") return [];
-      return [{ id: tc.id, name: tc.function.name, arguments: safeParseArgs(tc.function.arguments) }];
+      return [parseWireToolCall(tc)];
     });
 
     return { text: choice?.content ?? "", toolCalls };
@@ -133,6 +133,29 @@ export interface ToolCallDelta {
   index: number;
   id?: string;
   function?: { name?: string; arguments?: string };
+  /** Provider-specific passthrough (e.g. Gemini 3.x `extra_content.google.*`). */
+  extra_content?: unknown;
+}
+
+/**
+ * Convert one wire tool_call (OpenAI/Gemini shape) to a ToolCall, capturing any
+ * non-standard `extra_content` (Gemini 3.x's thought_signature lives there) into
+ * `providerMeta` so it can be replayed next turn.
+ */
+export function parseWireToolCall(tc: {
+  id?: string;
+  function?: { name?: string; arguments?: string };
+  extra_content?: unknown;
+}): ToolCall {
+  const call: ToolCall = {
+    id: tc.id ?? "",
+    name: tc.function?.name ?? "",
+    arguments: safeParseArgs(tc.function?.arguments ?? ""),
+  };
+  if (tc.extra_content !== undefined && tc.extra_content !== null) {
+    call.providerMeta = { extra_content: tc.extra_content };
+  }
+  return call;
 }
 
 /**
@@ -142,13 +165,14 @@ export interface ToolCallDelta {
  * duplicate). Nameless entries are dropped on finalize.
  */
 export function createToolCallAccumulator() {
-  const acc = new Map<number, { id: string; name: string; args: string }>();
+  const acc = new Map<number, { id: string; name: string; args: string; extra?: unknown }>();
   return {
     push(delta: ToolCallDelta): void {
       const cur = acc.get(delta.index) ?? { id: "", name: "", args: "" };
       if (delta.id) cur.id = delta.id;
       if (delta.function?.name) cur.name = delta.function.name;
       if (delta.function?.arguments) cur.args += delta.function.arguments;
+      if (delta.extra_content !== undefined && delta.extra_content !== null) cur.extra = delta.extra_content;
       acc.set(delta.index, cur);
     },
     finalize(): ToolCall[] {
@@ -156,12 +180,16 @@ export function createToolCallAccumulator() {
         .sort((a, b) => a[0] - b[0])
         .map(([, v]) => v)
         .filter((v) => v.name)
-        .map((v) => ({ id: v.id, name: v.name, arguments: safeParseArgs(v.args) }));
+        .map((v) => {
+          const call: ToolCall = { id: v.id, name: v.name, arguments: safeParseArgs(v.args) };
+          if (v.extra !== undefined) call.providerMeta = { extra_content: v.extra };
+          return call;
+        });
     },
   };
 }
 
-function toWireMessage(m: AgentMessage): ChatCompletionMessageParam {
+export function toWireMessage(m: AgentMessage): ChatCompletionMessageParam {
   switch (m.role) {
     case "tool":
       return { role: "tool", tool_call_id: m.toolCallId!, content: m.content };
@@ -169,12 +197,19 @@ function toWireMessage(m: AgentMessage): ChatCompletionMessageParam {
       return {
         role: "assistant",
         content: m.content || null,
-        tool_calls: m.toolCalls?.map((c) => ({
-          id: c.id,
-          type: "function",
-          function: { name: c.name, arguments: JSON.stringify(c.arguments) },
-        })),
-      };
+        tool_calls: m.toolCalls?.map((c) => {
+          const wire: Record<string, unknown> = {
+            id: c.id,
+            type: "function",
+            function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+          };
+          // Replay provider passthrough (Gemini 3.x thought_signature) verbatim.
+          const extra = (c.providerMeta as { extra_content?: unknown } | undefined)?.extra_content;
+          if (extra !== undefined) wire.extra_content = extra;
+          return wire;
+        }),
+        // extra_content is a non-standard passthrough; cast over the SDK type.
+      } as unknown as ChatCompletionMessageParam;
     case "system":
       return { role: "system", content: m.content };
     default:
