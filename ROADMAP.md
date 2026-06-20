@@ -233,9 +233,20 @@ every patch before anything touches the repo. Plans/runs persist under
   that mutates the live repo). `/delegate run` + `review` print the isolation boundary + a "live repo
   was not modified" line. (Discard-removes-kept-worktree: follow-up.)
 
+- [x] **9I concurrent orchestration** (`src/delegate/orchestrator.ts`, `plans/phase9i-…-plan.md`):
+  run independent workers in parallel batches without weakening the safety model. Pure helpers
+  `workerLockSet` (from expectedFiles/allowedPaths; empty → "." serializes), `locksConflict`
+  (exact + prefix + "." wildcard), `buildRunnableBatches` (deterministic first-fit; only deps-applied
+  runnable workers; bounded concurrency, default 2) + a `runRunnableConcurrent` driver (own isolated
+  worktree per worker, `Promise.allSettled`, a `PlanSaveQueue` serializing plan/trace writes,
+  post-run changed-file conflict marking, transitive-dependent skipping, stopOnFirstFailure, abort);
+  an `orchestration.json` trace. NEVER applies (apply stays separate, one worker at a time);
+  sequential `runRunnable` is unchanged + remains the default. `/delegate run <plan> --parallel
+  [--max-concurrency N]`. Deferred: cross-process plan locking, config-gated default.
+
 Built largely *by* delegated workers (DeepSeek, OpenAI codex via the Responses provider, Gemini) with
 parent review closing recurring gaps (skipped/thin/hallucinated tests). Deferred: model-callable /
-autonomous delegation, parallel workers, the `delegate` config block + remaining env wiring.
+autonomous delegation, the `delegate` config block + remaining env wiring.
 
 ## Non-goals (for now)
 

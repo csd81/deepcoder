@@ -40,7 +40,7 @@ import { savePlan, loadPlan } from "../delegate/store.js";
 import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
 import { autoApplyIfEligible } from "../delegate/autoApply.js";
-import { runRunnable, detectFileConflicts } from "../delegate/orchestrator.js";
+import { runRunnable, runRunnableConcurrent, detectFileConflicts } from "../delegate/orchestrator.js";
 import type { WorkerRun } from "../delegate/types.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1015,8 +1015,15 @@ export async function handleSlashCommand(
       }
 
       if (sub === "run") {
-        const planId = subArgs[0];
-        const workerId = subArgs[1];
+        // Parse flags out of the args so positionals (plan-id, worker-id) are clean.
+        // `--parallel` and `--max-concurrency <n>` only apply to the run-all form.
+        const parallel = subArgs.includes("--parallel");
+        const mcIdx = subArgs.indexOf("--max-concurrency");
+        const rawMc = mcIdx !== -1 ? Number(subArgs[mcIdx + 1]) : NaN;
+        const maxConcurrency = Number.isFinite(rawMc) ? Math.min(8, Math.max(1, Math.trunc(rawMc))) : 2;
+        const positional = subArgs.filter((a, i) => !a.startsWith("--") && !(mcIdx !== -1 && i === mcIdx + 1));
+        const planId = positional[0];
+        const workerId = positional[1];
         if (!planId) {
           console.log(chalk.dim("usage: /delegate run <plan-id> [worker-id]  — run one worker or all runnable workers sequentially (no auto-apply)"));
           return { consumed: true };
@@ -1107,7 +1114,8 @@ export async function handleSlashCommand(
           return { consumed: true };
         }
 
-        console.log(chalk.yellow(`\nThis spawns live Deepcoder workers (provider: ${config.provider}) sequentially in isolated worktrees.`));
+        const modeLabel = parallel ? `in parallel (max ${maxConcurrency})` : "sequentially";
+        console.log(chalk.yellow(`\nThis spawns live Deepcoder workers (provider: ${config.provider}) ${modeLabel} in isolated worktrees.`));
         console.log(chalk.dim("  Only runnable workers (planned/failed with all deps applied) will run."));
         console.log(chalk.dim("  No patch will be applied automatically."));
         if (!(await confirm(`Run all runnable workers in plan "${planId}"?`))) {
@@ -1118,14 +1126,17 @@ export async function handleSlashCommand(
         const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
         const ac = new AbortController();
         try {
-          const res = await runRunnable(plan, {
+          const driverOpts = {
             realRoot: root,
             signal: ac.signal,
             mainEntry,
             provider: config.provider,
             delegateDepth: depth,
-            onData: (c) => process.stdout.write(c),
-          });
+            onData: (c: string) => process.stdout.write(c),
+          };
+          const res = parallel
+            ? await runRunnableConcurrent(plan, { ...driverOpts, maxConcurrency })
+            : await runRunnable(plan, driverOpts);
 
           console.log("");
           for (const r of res.ran) {

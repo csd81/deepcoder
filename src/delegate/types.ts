@@ -353,3 +353,34 @@ export interface ApplyRecord {
   /** Human-readable note. */
   note?: string;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Phase 9I — Concurrent Subagent Orchestration                       */
+/* ------------------------------------------------------------------ */
+
+export interface WorkerLockSet {
+  workerId: string;
+  paths: string[];
+  reasonByPath: Record<string, string>;
+}
+
+export interface WorkerBatch {
+  id: string;
+  workerIds: string[];
+  locks: WorkerLockSet[];
+}
+
+export interface OrchestrationTrace {
+  planId: string;
+  startedAt: string;
+  finishedAt?: string;
+  mode: "sequential" | "parallel";
+  maxConcurrency: number;
+  batches: {
+    id: string;
+    workerIds: string[];
+    startedAt: string;
+    finishedAt?: string;
+  }[];
+}
+
