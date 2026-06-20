@@ -433,3 +433,16 @@ test("9M: pickWorkerCheckConfig returns null when there are no checks / invalid 
   assert.equal(pickWorkerCheckConfig("{not json"), null);
   assert.equal(pickWorkerCheckConfig(JSON.stringify({ checks: {} })), null);
 });
+
+/* ---- 9M: focused fix-phase check (fast per-test feedback, no gate weakening) ---- */
+
+test("9M: fix phase can solve against a FOCUSED check name (not the whole suite)", () => {
+  const cmd = buildTddWorkerCommand("/m/main.ts", "PROMPT", "fix", "tdd-target");
+  assert.ok(cmd.args.includes("--solve"));
+  assert.equal(cmd.args[cmd.args.indexOf("--check") + 1], "tdd-target", "fix solves against the focused test command, not phase");
+});
+
+test("9M: fix-phase check defaults to phase when no focused check is given", () => {
+  const cmd = buildTddWorkerCommand("/m/main.ts", "PROMPT", "fix");
+  assert.equal(cmd.args[cmd.args.indexOf("--check") + 1], "phase");
+});

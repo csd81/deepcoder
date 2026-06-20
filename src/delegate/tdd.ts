@@ -111,6 +111,8 @@ export interface RunWorkerTddInput {
   checks?: Record<string, CheckConfig>;
   /** Phase 9M — injectable coverage probe (manifest mode). Tests inject a fake. */
   runCoverageProbe?: CoverageProbe;
+  /** Phase 9M — max solve attempts for the fix phase (CLI default when unset). */
+  solveAttempts?: number;
 }
 
 /**
@@ -149,17 +151,36 @@ export function pickWorkerCheckConfig(raw: string): string | null {
   return JSON.stringify({ checks }, null, 2);
 }
 
-/** Copy the project's named `checks` (only) into a worker worktree (best-effort). */
-async function provisionCheckConfig(realRoot: string, worktreeRoot: string): Promise<void> {
+/** Name of the focused check provisioned for the manifest fix phase. */
+const TDD_TARGET_CHECK = "tdd-target";
+
+/**
+ * Copy the project's named `checks` into a worker worktree (best-effort), plus
+ * any `extraChecks` (e.g. the focused manifest test command so the fix phase
+ * solves against just the authored tests — fast, per-test feedback). Only the
+ * `checks` block crosses over — never MCP servers/hooks.
+ */
+async function provisionCheckConfig(
+  realRoot: string,
+  worktreeRoot: string,
+  extraChecks?: Record<string, CheckConfig>,
+): Promise<void> {
+  let checks: Record<string, unknown> = {};
   try {
     const raw = await fs.readFile(path.join(realRoot, ".deepcoder", "config.json"), "utf8");
     const picked = pickWorkerCheckConfig(raw);
-    if (!picked) return;
+    if (picked) checks = (JSON.parse(picked) as { checks: Record<string, unknown> }).checks;
+  } catch {
+    // No project config (or unreadable) → start from nothing.
+  }
+  if (extraChecks) checks = { ...checks, ...extraChecks };
+  if (Object.keys(checks).length === 0) return;
+  try {
     const destDir = path.join(worktreeRoot, ".deepcoder");
     await fs.mkdir(destDir, { recursive: true });
-    await fs.writeFile(path.join(destDir, "config.json"), picked, "utf8");
+    await fs.writeFile(path.join(destDir, "config.json"), JSON.stringify({ checks }, null, 2), "utf8");
   } catch {
-    // No project config (or unreadable) → worker falls back to defaults.
+    // Best-effort; the worker falls back to defaults if this fails.
   }
 }
 
@@ -432,7 +453,15 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
     input.realRoot,
     tddIsolationConfig(input.isolationConfig),
   );
-  await provisionCheckConfig(input.realRoot, fixIso.isolatedRoot);
+  // Manifest mode: provision a focused check (just the authored tests) so the
+  // fix worker solves against fast, per-test TAP feedback instead of the whole
+  // suite. The model still never runs a command itself — the gated solve loop does.
+  const focusedFix = manifestMode && tdd.testCommand;
+  await provisionCheckConfig(
+    input.realRoot,
+    fixIso.isolatedRoot,
+    focusedFix ? { [TDD_TARGET_CHECK]: { command: tdd.testCommand! } } : undefined,
+  );
 
   // Apply the repro patch first so the worker has the repro test.
   if (reproPatch.trim().length > 0) {
@@ -458,7 +487,13 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   }
 
   const fixPrompt = buildFixPhasePrompt(worker, input.plan, redSummary);
-  const fixCmd = buildTddWorkerCommand(input.mainEntry, fixPrompt, "fix");
+  const fixCmd = buildTddWorkerCommand(
+    input.mainEntry,
+    fixPrompt,
+    "fix",
+    focusedFix ? TDD_TARGET_CHECK : "phase",
+    input.solveAttempts,
+  );
 
   let fixResult: BoundedProcessResult;
   try {
@@ -536,6 +571,26 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
       greenConfirmed = probe.exitCode === 0 && greenCoverageComplete;
       if (!greenConfirmed && notGreen.length > 0) {
         warnings.push(`deliverables still not green: ${notGreen.join(", ")}`);
+      }
+      // Regression gate: the fix worker solved against only the focused tests,
+      // so run the full suite once at green time (if available) to catch
+      // regressions the narrow check would miss. Required for green_confirmed.
+      if (greenConfirmed && finalCheckConfig) {
+        try {
+          const full = await runCheck(finalCheckName, finalCheckConfig, {
+            workspaceRoot: fixIso.isolatedRoot,
+            signal: input.signal,
+          });
+          await saveTddCheckRun(input.realRoot, input.plan.id, worker.id, "green", full, "");
+          if (!(full.exitCode === 0 && !full.timedOut)) {
+            greenConfirmed = false;
+            warnings.push(`full check "${finalCheckName}" failed after fix (regression) — exit ${full.exitCode}`);
+          }
+        } catch (err) {
+          const msg = err instanceof CheckRefusedError ? err.message : (err as Error).message;
+          greenConfirmed = false;
+          warnings.push(`full regression check error: ${msg}`);
+        }
       }
     }
   } else if (finalCheckConfig) {
@@ -663,11 +718,17 @@ export function buildTddWorkerCommand(
   mainEntry: string,
   prompt: string,
   mode: "author" | "fix",
+  checkName = "phase",
+  solveAttempts?: number,
 ): { file: string; args: string[] } {
   const base = ["--import", "tsx", mainEntry];
+  const attempts =
+    mode === "fix" && solveAttempts && solveAttempts > 0
+      ? ["--solve-attempts", String(Math.trunc(solveAttempts))]
+      : [];
   const args =
     mode === "fix"
-      ? [...base, "--solve", "--check", "phase", prompt]
+      ? [...base, "--solve", "--check", checkName, ...attempts, prompt]
       : [...base, prompt];
   return { file: process.execPath, args };
 }
