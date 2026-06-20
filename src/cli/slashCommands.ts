@@ -45,6 +45,9 @@ import { readTddRecord } from "../delegate/tddArtifacts.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
 import { autoApplyIfEligible } from "../delegate/autoApply.js";
 import { runRunnable, runRunnableConcurrent, detectFileConflicts } from "../delegate/orchestrator.js";
+import { getDelegationReviewOverview, getWorkerReviewDetail, previewApplyGates } from "../delegate/reviewBrowser.js";
+import { renderReviewOverview, renderWorkerReview, renderPatchStat, renderGatePreview } from "../delegate/reviewRender.js";
+import { loadWorkerArtifacts } from "../delegate/artifacts.js";
 import type { WorkerRun, DelegationPlan, WorkerTask } from "../delegate/types.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1415,6 +1418,112 @@ export async function handleSlashCommand(
           }
         } else {
           console.log(chalk.red(result.message));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "browse") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        if (!planId) {
+          console.log(chalk.dim("usage: /delegate browse <plan-id> [worker-id]"));
+          return { consumed: true };
+        }
+        if (!workerId) {
+          const overview = await getDelegationReviewOverview(root, planId, { checks: config.checks });
+          if (!overview) {
+            console.log(chalk.red(`Plan "${planId}" not found or corrupt.`));
+            return { consumed: true };
+          }
+          console.log(renderReviewOverview(overview));
+        } else {
+          const detail = await getWorkerReviewDetail(root, planId, workerId, { checks: config.checks });
+          if (!detail) {
+            console.log(chalk.red(`Worker "${workerId}" not found in plan "${planId}".`));
+            return { consumed: true };
+          }
+          console.log(renderWorkerReview(detail));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "diff") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        const mode = subArgs[2] || "--stat";
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate diff <plan-id> <worker-id> [--stat|--files|--full]"));
+          return { consumed: true };
+        }
+        const detail = await getWorkerReviewDetail(root, planId, workerId, { checks: config.checks });
+        if (!detail) {
+          console.log(chalk.red(`Worker "${workerId}" not found in plan "${planId}".`));
+          return { consumed: true };
+        }
+        if (mode === "--stat") {
+          console.log(renderPatchStat(detail.patchStat));
+        } else if (mode === "--files") {
+          if (detail.changedFiles.length === 0) {
+            console.log("No files changed.");
+          } else {
+            for (const f of detail.changedFiles) {
+              const stat = detail.patchStat.find(s => s.path === f);
+              console.log(`${f} (${stat?.kind || "unknown"})`);
+            }
+          }
+        } else if (mode === "--full") {
+          console.log(detail.patchPreview);
+        } else {
+          console.log(chalk.red(`Unknown diff mode: ${mode}`));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "gates") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate gates <plan-id> <worker-id>"));
+          return { consumed: true };
+        }
+        const preview = await previewApplyGates(root, planId, workerId, { checks: config.checks, runGitCheck: true });
+        console.log(renderGatePreview(preview));
+        return { consumed: true };
+      }
+
+      if (sub === "log") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        const tailArg = subArgs.indexOf("--tail");
+        let tailBytes = 40 * 1024;
+        if (tailArg !== -1 && subArgs[tailArg + 1]) {
+          tailBytes = parseInt(subArgs[tailArg + 1]!, 10) * 1024;
+        }
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate log <plan-id> <worker-id> [--tail N]"));
+          return { consumed: true };
+        }
+        const artifacts = await loadWorkerArtifacts(root, planId, workerId, { logTailBytes: tailBytes });
+        if (artifacts.runLogPreview) {
+          console.log(artifacts.runLogPreview);
+        } else {
+          console.log(chalk.dim("No run log available."));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "telemetry") {
+        const planId = subArgs[0];
+        const workerId = subArgs[1];
+        if (!planId || !workerId) {
+          console.log(chalk.dim("usage: /delegate telemetry <plan-id> <worker-id>"));
+          return { consumed: true };
+        }
+        const artifacts = await loadWorkerArtifacts(root, planId, workerId);
+        if (artifacts.telemetryPreview) {
+          console.log(artifacts.telemetryPreview);
+        } else {
+          console.log(chalk.dim("No telemetry available."));
         }
         return { consumed: true };
       }
