@@ -38,6 +38,7 @@ import { buildContextAwarePlan } from "../delegate/contextPlan.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
 import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
+import { autoApplyIfEligible } from "../delegate/autoApply.js";
 import { runRunnable, detectFileConflicts } from "../delegate/orchestrator.js";
 import type { WorkerRun } from "../delegate/types.js";
 import path from "node:path";
@@ -1030,6 +1031,23 @@ export async function handleSlashCommand(
             }
             if (run.patchPath) console.log(chalk.dim(`  patch:   ${run.patchPath}`));
             for (const w of run.warnings.slice(0, 10)) console.log(chalk.yellow(`  ! ${w}`));
+
+            const auto = ["1", "true", "yes"].includes((process.env.DEEPCODER_DELEGATE_AUTO_APPLY ?? "").toLowerCase());
+            if (run.checkPassed && auto) {
+              console.log(chalk.dim("\nAttempting optional auto-apply…"));
+              const autoApplyResult = await autoApplyIfEligible(root, planId, workerId, { autoApply: auto, checks: config.checks });
+              if (autoApplyResult.applied) {
+                console.log(chalk.green(`✓ Auto-applied: ${autoApplyResult.reason}`));
+                if (autoApplyResult.result?.globalCheckResults?.length) {
+                  for (const g of autoApplyResult.result.globalCheckResults) {
+                    const icon = g.passed ? chalk.green("✓") : chalk.red("✗");
+                    console.log(`  ${icon} ${g.name}: ${g.summary}`);
+                  }
+                }
+              } else {
+                console.log(chalk.yellow(`✗ Auto-apply refused: ${autoApplyResult.reason}`));
+              }
+            }
           } catch (err) {
             console.log(chalk.red(`Worker run failed: ${(err as Error).message}`));
           }
