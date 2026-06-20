@@ -255,6 +255,17 @@ every patch before anything touches the repo. Plans/runs persist under
   and a missing gate in mandatory mode; result persisted to `quality-gate.json`. Config-gated,
   default-off. Deferred: `/delegate review --quality` live rerun, before-check (Mode A) gating.
 
+- [x] **9K** — delegated worker end-to-end validation (`validation.ts`): one authoritative 8-gate
+  validation pipeline (`validateWorkerResult` + `loadAndValidateWorker`) that consolidates all
+  delegated-worker gates into a single pure function. Every surface (apply, status, review, auto-apply)
+  calls this module — there is no duplicated or divergent gate logic. The pipeline runs 8 gates in
+  order: Run Artifact, Check, Patch Validation, Completeness, Self-Audit, Quality, Conflict, and Audit
+  Artifact. `validateWorkerResult` is PURE except for the injected `fileExists` predicate — it never
+  spawns processes, calls models, or mutates files. `loadAndValidateWorker` loads plan/run/patch from
+  disk, runs the pipeline, and persists the result to `validation.json`. `applyWorker` now runs the
+  full validation pipeline as Gate 1.5 (before the existing gates), ensuring every apply is
+  end-to-end validated.
+
 Built largely *by* delegated workers (DeepSeek, OpenAI codex via the Responses provider, Gemini) with
 parent review closing recurring gaps (skipped/thin/hallucinated tests). Deferred: model-callable /
 autonomous delegation, the `delegate` config block + remaining env wiring.

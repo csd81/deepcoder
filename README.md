@@ -81,6 +81,12 @@ Slash commands in the REPL: `/help`, `/exit`, `/clear`, `/mode [ask|auto|readonl
 `/check <name>`, `/checkpoint`, `/checkpoints`, `/rollback <id>`, `/save`,
 `/status`, `/diff`.
 
+**Delegated workers** (Phase 9): break a large task into bounded, isolated worker
+subprocesses. Every worker patch passes through an 8-gate validation pipeline
+before it can be applied — run artifact, check, patch validation, completeness,
+self-audit, quality, conflict, and audit artifact gates. See `ROADMAP.md` for the
+full design.
+
 ## Providers
 
 DeepSeek is the default, but any OpenAI-compatible backend works behind the same

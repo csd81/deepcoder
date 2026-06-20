@@ -70,7 +70,7 @@ test("applyWorker refuses a MISSING gate in mandatory mode", async () => {
     await writeArtifacts(root); // no qualityGate
     const r = await applyWorker(root, "p1", "w1", { isTTY: true, confirmResult: true, requireQualityGate: true });
     assert.equal(r.ok, false);
-    assert.match(r.message, /quality gate required but missing/i);
+    assert.match(r.message, /quality gate (is )?required but missing|quality_gate_missing/i);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

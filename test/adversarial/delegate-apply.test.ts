@@ -168,7 +168,7 @@ test("2. refuse apply when the worker check did not pass", async () => {
 
     const result = await applyWorker(root, "p1", "w1", { isTTY: true, confirmResult: true });
     assert.equal(result.ok, false);
-    assert.ok(result.message.includes("check did not pass"));
+    assert.ok(result.message.includes("check_failed"), result.message);
     // The real repo must be untouched.
     assert.equal(await readFile(path.join(root, "file.txt"), "utf8"), "base\n");
   } finally {

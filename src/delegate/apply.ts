@@ -23,6 +23,7 @@ import { stdin } from "node:process";
 import { assertSafeId } from "../workspace/paths.js";
 import { loadPlan, savePlan } from "./store.js";
 import { validatePatch } from "./patchValidator.js";
+import { validateWorkerResult } from "./validation.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { confirm } from "../permissions/prompt.js";
 import type { CheckConfig } from "../config/fileConfig.js";
@@ -152,6 +153,27 @@ export async function applyWorker(
     return { ok: false, message: `Patch file for worker "${workerId}" not found.` };
   }
 
+  // ── Gate 1.5 (9K): Run the full validation pipeline ─────────────
+  const validation = validateWorkerResult({
+    root,
+    plan,
+    worker,
+    run,
+    patchText,
+    alreadyChangedPaths,
+    qualityGateRequired: opts.requireQualityGate ?? false,
+  });
+
+  if (!validation.applyable) {
+    const details = validation.failures
+      .map((f) => `  [${f.code}]${f.path ? ` ${f.path}` : ""}: ${f.message}`)
+      .join("\n");
+    return {
+      ok: false,
+      message: `Validation failed for worker "${workerId}":\n${details}`,
+    };
+  }
+
   // ── Gate 2: Check must have passed ───────────────────────────────
   if (!run.checkPassed) {
     return {
@@ -167,14 +189,14 @@ export async function applyWorker(
   }
 
   // ── Gate 3: Re-validate the patch ────────────────────────────────
-  const validation = validatePatch({
+  const patchVal = validatePatch({
     patchText,
     allowedPaths: worker.allowedPaths,
     forbiddenPaths: worker.forbiddenPaths,
     alreadyChangedPaths,
   });
-  if (!validation.ok) {
-    const details = validation.failures
+  if (!patchVal.ok) {
+    const details = patchVal.failures
       .map((f) => `  [${f.code}]${f.path ? ` ${f.path}` : ""}: ${f.message}`)
       .join("\n");
     return {
@@ -225,7 +247,7 @@ export async function applyWorker(
   }
 
   const approved = opts.confirmResult ?? (await confirm(
-    `Apply patch for worker "${workerId}" (${validation.changedPaths.length} file(s))?`,
+    `Apply patch for worker "${workerId}" (${patchVal.changedPaths.length} file(s))?`,
   ));
   if (!approved) {
     return { ok: false, message: `Apply cancelled by user.` };
@@ -300,7 +322,7 @@ export async function applyWorker(
 
   return {
     ok: true,
-    message: `Applied patch for worker "${workerId}" (${validation.changedPaths.length} file(s)).${note}`,
+    message: `Applied patch for worker "${workerId}" (${patchVal.changedPaths.length} file(s)).${note}`,
     record,
     globalCheckResults: globalCheckResults.length > 0 ? globalCheckResults : undefined,
   };
