@@ -119,6 +119,7 @@ export interface WorkerRun {
   warnings: string[];
   isolation?: WorkerIsolationRecord;
   qualityGate?: WorkerQualityGate | "skipped_deterministic_failure";
+  validation?: WorkerValidation;
 }
 
 /* ------------------------------------------------------------------ */
@@ -408,4 +409,53 @@ export interface OrchestrationTrace {
     finishedAt?: string;
   }[];
 }
+
+/* ------------------------------------------------------------------ */
+/*  Phase 9K — Delegated Worker End-to-End Validation                 */
+/* ------------------------------------------------------------------ */
+
+export type WorkerValidationStatus =
+  | "not_run"
+  | "pending"
+  | "valid"
+  | "invalid"
+  | "blocked"
+  | "conflict";
+
+export interface WorkerValidation {
+  status: WorkerValidationStatus;
+  applyable: boolean;
+  evaluatedAt: string;
+  failures: WorkerValidationFailure[];
+  warnings: string[];
+  evidence: WorkerValidationEvidence[];
+}
+
+export interface WorkerValidationFailure {
+  code:
+    | "missing_run"
+    | "not_isolated"
+    | "check_failed"
+    | "empty_patch"
+    | "patch_validation_failed"
+    | "completeness_failed"
+    | "missing_self_audit"
+    | "malformed_self_audit"
+    | "quality_gate_blocked"
+    | "quality_gate_missing"
+    | "conflict"
+    | "missing_artifact"
+    | "run_timed_out"
+    | "run_truncated";
+  message: string;
+  path?: string;
+  source?: "run" | "patch" | "completeness" | "quality" | "conflict" | "artifact";
+}
+
+export interface WorkerValidationEvidence {
+  source: string;
+  note: string;
+  path?: string;
+}
+
 
