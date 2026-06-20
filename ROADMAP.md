@@ -174,6 +174,43 @@ See `plans/phase5-verification-workflows-plan.md`.
   `/memory show|remember|forget` (remember refuses secret-looking content; forget previews then
   applies). Deferred: auto-memory candidate generation, inbox, config block, session extraction.
 
+## Phase 9 — Self-orchestration & delegated workers
+
+Delegate a large task to bounded, isolated Deepcoder worker subprocesses; the parent reviews
+every patch before anything touches the repo. Plans/runs persist under
+`.deepcoder/delegations/<plan-id>/`. Design: `plans/phase9-self-orchestration-delegated-workers-plan.md`
+(+ `phase9g-...`, `phase9b-worker-runner-design-plan.md`).
+
+- [x] **9A** — delegation data model + deterministic planner + store; read-only
+  `/delegate plan|status|review` (`src/delegate/{types,planner,store}.ts`). `assertSafeId` on every
+  id→path; defensive load (corrupt → null); cycle detection throws.
+- [x] **9B** — single worker runner (`src/delegate/workerRunner.ts`): runs one worker as a
+  subprocess in an isolated worktree the runner owns; strict env allowlist (provider key as env only,
+  never argv), `shell:false` (prompt is one literal arg), own process-group SIGKILL on timeout/abort,
+  bounded+redacted capture (shared `src/process/runBoundedProcess.ts`), no auto-apply,
+  nested-delegation depth guard. `/delegate run <plan> <worker>` (TTY-gated).
+- [x] **9C** — patch validation (`patchValidator.ts`: out-of-scope/forbidden/sensitive/generated/
+  too-large/overlap, fail-closed, reports all failures) + apply (`apply.ts`): one fail-closed gate
+  chain — check-passed → re-validate → `git apply --check` → TTY+confirm → apply → global checks →
+  audit; `/delegate apply|discard`.
+- [x] **9D** — multi-worker orchestration (`orchestrator.ts`): topo sort + own cycle detection,
+  runnable = deps applied, transitive failed-worker isolation, deterministic conflict detection;
+  `/delegate run <plan>` runs all runnable sequentially; never applies.
+- [x] **9E** — context-aware delegation (`contextPlan.ts`): enriches the plan with a bounded+redacted
+  explorer brief (reuses 8D `runExplorer`/`renderExplorerBrief`); fail-closed fallback to the
+  deterministic plan; brief stored with the plan, not memory; `/delegate plan preflight <task>`.
+- [x] **9F** — optional gated auto-apply (`autoApply.ts`, **default off**): applies without
+  confirmation only when explicitly enabled (`DEEPCODER_DELEGATE_AUTO_APPLY`) AND every gate passes
+  (single worker, check passed, size cap, validate) — then delegates to the 9C `applyWorker` (no gate
+  reimplemented/weakened).
+- [x] **9G** — deterministic completeness gates (`completeness.ts`, `selfAudit.ts`): task-packet
+  deliverables/expected-files/tests + worker self-audit cross-check, between "check passed" and
+  "apply" (the 8D lesson: a worker can pass its check while skipping deliverables).
+
+Built largely *by* delegated workers (DeepSeek, OpenAI codex via the Responses provider, Gemini) with
+parent review closing recurring gaps (skipped/thin/hallucinated tests). Deferred: model-callable /
+autonomous delegation, parallel workers, the `delegate` config block + remaining env wiring.
+
 ## Non-goals (for now)
 
 - IDE/GUI integration — this is a terminal-first tool
