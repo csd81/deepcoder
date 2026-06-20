@@ -39,6 +39,7 @@ export function classifyCommand(command: string): ApprovalDecision {
   if (/:\s*\(\s*\)\s*\{/.test(cmd)) return "deny"; // fork bomb
   if (/\|\s*(sh|bash|zsh|dash)\b/.test(cmd)) return "deny"; // pipe anything into a shell
   if (/>>?\s*\/(?!dev\/null\b)/.test(cmd)) return "deny"; // redirect to an absolute path
+  if (/(^|\s)(?:--pre(-glob)?(=|\s|$)|--search-zip\b)/.test(cmd)) return "deny";
 
   // 2. Redirects and backgrounding are never auto-allowed (side effects / escape).
   const hasRedirect = />/.test(cmd) || /(^|\s)<(?!\()/.test(cmd);
@@ -56,6 +57,7 @@ export function classifyCommand(command: string): ApprovalDecision {
   // (its basename, so `/bin/rm` and `sudo` are caught) — but a dangerous word as
   // an OPERAND (e.g. `grep rm file`) is not, avoiding false-positive denials.
   if (segments.some(isDangerousSegment)) return "deny";
+  if (segments.some(isShellSegment)) return "deny";
 
   const allSafe = segments.every(isReadOnlySegment);
   if (allSafe && !hasRedirect && !hasBackground && !hasExpansion) return "allow";
@@ -64,12 +66,45 @@ export function classifyCommand(command: string): ApprovalDecision {
   return "ask";
 }
 
+function cleanHead(head: string): string {
+  let cleaned = head;
+  if (cleaned.startsWith("\\")) {
+    cleaned = cleaned.slice(1);
+  }
+  if ((cleaned.startsWith("'") && cleaned.endsWith("'")) || (cleaned.startsWith('"') && cleaned.endsWith('"'))) {
+    cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned;
+}
+
+const SHELL_TOKENS = new Set(["sh", "bash", "zsh", "dash"]);
+
+function isShellSegment(segment: string): boolean {
+  const head = segment.split(/\s+/).filter(Boolean)[0];
+  if (!head) return false;
+  const cleaned = cleanHead(head);
+  const base = cleaned.replace(/^.*\//, "");
+  return SHELL_TOKENS.has(base);
+}
+
 /** True if a segment's leading command (by basename) is a dangerous token. */
 function isDangerousSegment(segment: string): boolean {
   const head = segment.split(/\s+/).filter(Boolean)[0];
   if (!head) return false;
-  const base = head.replace(/^.*\//, ""); // strip a path like /bin/rm or ./rm
+  const cleaned = cleanHead(head);
+  const base = cleaned.replace(/^.*\//, ""); // strip a path like /bin/rm or ./rm
   return DANGEROUS_TOKENS.includes(base);
+}
+
+const RECURSIVE_LONG_FLAGS = new Set(["--recursive", "--hidden", "--no-ignore", "--no-ignore-vcs"]);
+
+function isValidOperand(a: string): boolean {
+  if (a === "/dev/null") return true;
+  if (a.startsWith("/")) return false; // absolute path
+  if (a.split("/").includes("..")) return false; // parent escape
+  if (isSensitivePath(a)) return false; // .env and other secrets → not auto-allowed
+  if (/[\*\?\[]/.test(a)) return false; // glob metacharacters
+  return true;
 }
 
 function isReadOnlySegment(segment: string): boolean {
@@ -92,11 +127,25 @@ function isReadOnlySegment(segment: string): boolean {
   // Operands must not reach outside the workspace or touch secret files.
   const args = head === "git" ? operands.slice(1) : operands;
   for (const a of args) {
-    if (a.startsWith("-")) continue; // remaining flags are fine
-    if (a === "/dev/null") continue;
-    if (a.startsWith("/")) return false; // absolute path
-    if (a.split("/").includes("..")) return false; // parent escape
-    if (isSensitivePath(a)) return false; // .env and other secrets → not auto-allowed
+    if (a.startsWith("-")) {
+      if (RECURSIVE_LONG_FLAGS.has(a)) return false;
+      if (a.startsWith("--")) {
+        const eqIdx = a.indexOf("=");
+        const flagName = eqIdx !== -1 ? a.slice(0, eqIdx) : a;
+        if (RECURSIVE_LONG_FLAGS.has(flagName)) return false;
+      } else {
+        if (/[rR]/.test(a)) return false;
+      }
+
+      if (a.includes("=")) {
+        const eqIdx = a.indexOf("=");
+        const val = a.slice(eqIdx + 1);
+        if (!isValidOperand(val)) return false;
+      }
+      continue; // remaining flags are fine
+    }
+
+    if (!isValidOperand(a)) return false;
   }
   return true;
 }

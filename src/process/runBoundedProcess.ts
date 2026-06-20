@@ -60,7 +60,6 @@ export function runBoundedProcess(input: BoundedProcessInput): Promise<BoundedPr
       if (nl !== -1) {
         linePending = chunk.slice(nl + 1);
         linePendingOverflow = false;
-        input.onData?.(redactSecrets(chunk.slice(0, nl + 1)));
       }
       return;
     }
