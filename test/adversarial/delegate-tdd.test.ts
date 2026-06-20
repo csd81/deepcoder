@@ -113,3 +113,92 @@ test("9L.4 seed: applyWorker refuses a TDD-required worker without green_confirm
     assert.match(r.message, /tdd|green/i);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+/* ---- 9L.5: orchestration red→green verification (drives real runWorkerTdd) ---- */
+
+import { mkdirSync } from "node:fs";
+
+async function tddFixtureRepo(baseline = "BUG"): Promise<string> {
+  const root = await mkdtemp(path.join(tmpdir(), "tddfix-"));
+  gitT(root, "init", "-q"); gitT(root, "config", "user.email", "t@t"); gitT(root, "config", "user.name", "t");
+  await writeFile(path.join(root, "value.txt"), baseline + "\n", "utf8");
+  await writeFile(path.join(root, ".gitignore"), ".deepcoder/\n", "utf8");
+  gitT(root, "add", "-A"); gitT(root, "-c", "commit.gpgsign=false", "commit", "-qm", "b");
+  return root;
+}
+function tddWorker(over: Partial<WorkerTask> = {}): WorkerTask {
+  return worker({
+    checkName: "tddchk", allowedPaths: ["value.txt", "test/repro.test.ts"],
+    tdd: { required: true, allowedTestPaths: ["test/"] }, status: "planned", ...over,
+  });
+}
+function tddPlan(w: WorkerTask): DelegationPlan {
+  return { id: "p1", task: "t", createdAt: "", status: "planned", workers: [w], dependencies: [], globalChecks: [], riskNotes: [] };
+}
+/** A 2-phase fake: call 1 writes a repro test; call 2 writes the production fix value. */
+function phasedSpawn(fixValue: string | null) {
+  let n = 0;
+  return async (i: { cwd: string }) => {
+    n++;
+    if (n === 1) { mkdirSync(path.join(i.cwd, "test"), { recursive: true }); writeFileSync(path.join(i.cwd, "test", "repro.test.ts"), "// repro asserts value FIXED\n"); }
+    else if (fixValue !== null) { writeFileSync(path.join(i.cwd, "value.txt"), fixValue + "\n"); }
+    return { exitCode: 0, signal: null, timedOut: false, truncated: false, captured: "" };
+  };
+}
+function tddOpts(root: string, spawn: ReturnType<typeof phasedSpawn>, checkCmd: string) {
+  return {
+    realRoot: root, plan: tddPlan(tddWorker()), worker: tddWorker(), signal: new AbortController().signal,
+    mainEntry: "x", provider: "fake",
+    isolationConfig: { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" as const, provision: [] },
+    checks: { tddchk: { command: checkCmd } },
+    spawnWorker: spawn as unknown as SpawnFn,
+  };
+}
+
+test("9L.5: repro fails on baseline (red_confirmed) → fix → green_confirmed", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    const out = await runWorkerTdd(tddOpts(root, phasedSpawn("FIXED"), "grep -q FIXED value.txt"));
+    assert.equal(out.run.tdd?.status, "green_confirmed", JSON.stringify(out.run.tdd));
+    assert.equal(gitT(root, "status", "--porcelain").stdout.trim(), "", "real repo untouched (no apply)");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9L.5: a repro that PASSES on baseline cannot self-grade → red_failed (no fix)", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    // check passes on baseline (grep BUG) → repro does not fail → red_failed
+    const out = await runWorkerTdd(tddOpts(root, phasedSpawn("FIXED"), "grep -q BUG value.txt"));
+    assert.equal(out.run.tdd?.status, "red_failed", JSON.stringify(out.run.tdd));
+    assert.notEqual(out.run.checkPassed, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9L.5: green check still failing after fix → green_failed (not passed)", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    // red confirms (FIXED absent), but the fix writes the WRONG value → green fails
+    const out = await runWorkerTdd(tddOpts(root, phasedSpawn("STILL_BUGGED"), "grep -q FIXED value.txt"));
+    assert.equal(out.run.tdd?.status, "green_failed", JSON.stringify(out.run.tdd));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9L.5: repro phase touching a PRODUCTION file is blocked (not test-only)", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    // repro-phase fake writes value.txt (production) instead of a test → blocked
+    const badRepro = async (i: { cwd: string }) => { writeFileSync(path.join(i.cwd, "value.txt"), "X\n"); return { exitCode: 0, signal: null, timedOut: false, truncated: false, captured: "" }; };
+    const out = await runWorkerTdd(tddOpts(root, badRepro as unknown as ReturnType<typeof phasedSpawn>, "grep -q FIXED value.txt"));
+    assert.notEqual(out.run.tdd?.status, "green_confirmed");
+    assert.equal(gitT(root, "status", "--porcelain").stdout.trim(), "");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("9L.5: an empty repro patch is blocked when TDD is required", async () => {
+  const root = await tddFixtureRepo("BUG");
+  try {
+    const noRepro = async () => ({ exitCode: 0, signal: null, timedOut: false, truncated: false, captured: "" });
+    const out = await runWorkerTdd(tddOpts(root, noRepro as unknown as ReturnType<typeof phasedSpawn>, "grep -q FIXED value.txt"));
+    assert.notEqual(out.run.tdd?.status, "green_confirmed");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

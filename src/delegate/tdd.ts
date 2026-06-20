@@ -204,6 +204,8 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
         redSummary = "repro patch failed to apply on baseline";
         redConfirmed = false;
       }
+      // Don't leave the temp patch in the tree the baseline check inspects.
+      await fs.rm(path.join(baselineIso.isolatedRoot, "__repro.patch"), { force: true });
     }
 
     // Run the baseline check to prove red.
@@ -304,6 +306,9 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
       // If repro patch doesn't apply cleanly, the fix phase may still work.
       warnings.push("repro patch did not apply cleanly to fix worktree");
     }
+    // Remove the temp patch file so it does not pollute the fix-phase diff
+    // (otherwise fix-patch validation rejects an out-of-scope "__repro.patch").
+    await fs.rm(path.join(fixIso.isolatedRoot, "__repro.patch"), { force: true });
   }
 
   const fixPrompt = buildFixPhasePrompt(worker, input.plan, redSummary);
