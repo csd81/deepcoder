@@ -1,8 +1,8 @@
-import { openSync, readSync, fstatSync, closeSync } from "node:fs";
+import { promises as fs, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
 import { Git } from "../workspace/git.js";
-import { resolveReadPathInWorkspace, displayPath } from "../workspace/paths.js";
+import { resolveReadPathInWorkspace, displayPath, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { renderTodos } from "../tools/todoWrite.js";
@@ -37,6 +37,8 @@ import { buildPlan } from "../delegate/planner.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
 import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
+import { runRunnable, detectFileConflicts } from "../delegate/orchestrator.js";
+import type { WorkerRun } from "../delegate/types.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -831,6 +833,22 @@ export async function handleSlashCommand(
         if (plan.workers.length > 20) {
           console.log(chalk.dim(`  … and ${plan.workers.length - 20} more worker(s)`));
         }
+
+        const changedByWorker: Record<string, string[]> = {};
+        for (const w of plan.workers) {
+          const changed = await readWorkerRunChangedFiles(root, subArg, w.id);
+          if (changed && changed.length > 0) changedByWorker[w.id] = changed;
+        }
+        const conflicts = detectFileConflicts(changedByWorker);
+        if (conflicts.length > 0) {
+          console.log("");
+          console.log(chalk.yellow("conflicts:"));
+          for (const c of conflicts) {
+            const shared = c.paths.slice(0, 20).join(", ");
+            const more = c.paths.length > 20 ? ` … (+${c.paths.length - 20})` : "";
+            console.log(chalk.yellow(`  - ${c.a} ↔ ${c.b}: ${shared}${more}`));
+          }
+        }
         return { consumed: true };
       }
 
@@ -905,8 +923,8 @@ export async function handleSlashCommand(
       if (sub === "run") {
         const planId = subArgs[0];
         const workerId = subArgs[1];
-        if (!planId || !workerId) {
-          console.log(chalk.dim("usage: /delegate run <plan-id> <worker-id>  — run one worker in an isolated subprocess (no auto-apply)"));
+        if (!planId) {
+          console.log(chalk.dim("usage: /delegate run <plan-id> [worker-id]  — run one worker or all runnable workers sequentially (no auto-apply)"));
           return { consumed: true };
         }
         // Nested-delegation guard: a process that is itself a delegated worker
@@ -926,48 +944,104 @@ export async function handleSlashCommand(
           console.log(chalk.red(`Plan "${planId}" not found or corrupt.`));
           return { consumed: true };
         }
-        const worker = plan.workers.find((w) => w.id === workerId);
-        if (!worker) {
-          console.log(chalk.red(`Worker "${workerId}" not found in plan "${planId}".`));
+
+        if (workerId) {
+          const worker = plan.workers.find((w) => w.id === workerId);
+          if (!worker) {
+            console.log(chalk.red(`Worker "${workerId}" not found in plan "${planId}".`));
+            return { consumed: true };
+          }
+          if (worker.status !== "planned" && worker.status !== "failed") {
+            console.log(chalk.red(`Worker "${workerId}" is not runnable (status: ${worker.status}).`));
+            return { consumed: true };
+          }
+          console.log(chalk.yellow(`\nThis spawns a live Deepcoder worker (provider: ${config.provider}) in an isolated worktree.`));
+          console.log(chalk.dim(`  check:  ${worker.checkName}`));
+          console.log(chalk.dim(`  prompt: ${worker.prompt.slice(0, 120)}${worker.prompt.length > 120 ? "…" : ""}`));
+          console.log(chalk.dim("  The patch will NOT be applied — review it with /delegate review afterwards."));
+          if (!(await confirm(`Run worker "${workerId}"?`))) {
+            console.log(chalk.dim("Cancelled."));
+            return { consumed: true };
+          }
+          const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
+          const ac = new AbortController();
+          try {
+            const { run } = await runWorker({
+              realRoot: root,
+              plan,
+              worker,
+              signal: ac.signal,
+              mainEntry,
+              provider: config.provider,
+              delegateDepth: depth,
+              onData: (c) => process.stdout.write(c),
+            });
+            console.log("");
+            console.log(run.checkPassed ? chalk.green(`✓ ${run.summary}`) : chalk.red(`✗ ${run.summary}`));
+            if (run.changedFiles.length) {
+              const shown = run.changedFiles.slice(0, 20).join(", ");
+              const more = run.changedFiles.length > 20 ? ` … (+${run.changedFiles.length - 20})` : "";
+              console.log(chalk.dim(`  changed: ${shown}${more}`));
+            }
+            if (run.patchPath) console.log(chalk.dim(`  patch:   ${run.patchPath}`));
+            for (const w of run.warnings.slice(0, 10)) console.log(chalk.yellow(`  ! ${w}`));
+          } catch (err) {
+            console.log(chalk.red(`Worker run failed: ${(err as Error).message}`));
+          }
           return { consumed: true };
         }
-        if (worker.status !== "planned" && worker.status !== "failed") {
-          console.log(chalk.red(`Worker "${workerId}" is not runnable (status: ${worker.status}).`));
-          return { consumed: true };
-        }
-        console.log(chalk.yellow(`\nThis spawns a live Deepcoder worker (provider: ${config.provider}) in an isolated worktree.`));
-        console.log(chalk.dim(`  check:  ${worker.checkName}`));
-        console.log(chalk.dim(`  prompt: ${worker.prompt.slice(0, 120)}${worker.prompt.length > 120 ? "…" : ""}`));
-        console.log(chalk.dim("  The patch will NOT be applied — review it with /delegate review afterwards."));
-        if (!(await confirm(`Run worker "${workerId}"?`))) {
+
+        console.log(chalk.yellow(`\nThis spawns live Deepcoder workers (provider: ${config.provider}) sequentially in isolated worktrees.`));
+        console.log(chalk.dim("  Only runnable workers (planned/failed with all deps applied) will run."));
+        console.log(chalk.dim("  No patch will be applied automatically."));
+        if (!(await confirm(`Run all runnable workers in plan "${planId}"?`))) {
           console.log(chalk.dim("Cancelled."));
           return { consumed: true };
         }
+
         const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
         const ac = new AbortController();
         try {
-          const { run } = await runWorker({
+          const res = await runRunnable(plan, {
             realRoot: root,
-            plan,
-            worker,
             signal: ac.signal,
             mainEntry,
             provider: config.provider,
             delegateDepth: depth,
             onData: (c) => process.stdout.write(c),
           });
+
           console.log("");
-          console.log(run.checkPassed ? chalk.green(`✓ ${run.summary}`) : chalk.red(`✗ ${run.summary}`));
-          if (run.changedFiles.length) {
-            const shown = run.changedFiles.slice(0, 20).join(", ");
-            const more = run.changedFiles.length > 20 ? ` … (+${run.changedFiles.length - 20})` : "";
-            console.log(chalk.dim(`  changed: ${shown}${more}`));
+          for (const r of res.ran) {
+            const icon = r.passed ? chalk.green("✓") : chalk.red("✗");
+            const status = r.passed ? chalk.green("passed") : chalk.red("failed");
+            const changed = r.changedFiles.length
+              ? ` · changed: ${r.changedFiles.slice(0, 20).join(", ")}${r.changedFiles.length > 20 ? ` … (+${r.changedFiles.length - 20})` : ""}`
+              : "";
+            console.log(`${icon} ${chalk.cyan(r.workerId)} ${status}${changed}`);
           }
-          if (run.patchPath) console.log(chalk.dim(`  patch:   ${run.patchPath}`));
-          for (const w of run.warnings.slice(0, 10)) console.log(chalk.yellow(`  ! ${w}`));
+
+          if (res.skipped.length > 0) {
+            console.log("");
+            console.log(chalk.dim("skipped:"));
+            for (const s of res.skipped) {
+              console.log(chalk.dim(`  - ${s.workerId}: ${s.reason}`));
+            }
+          }
+
+          if (res.conflicts.length > 0) {
+            console.log("");
+            console.log(chalk.yellow("conflicts:"));
+            for (const c of res.conflicts) {
+              const shared = c.paths.slice(0, 20).join(", ");
+              const more = c.paths.length > 20 ? ` … (+${c.paths.length - 20})` : "";
+              console.log(chalk.yellow(`  - ${c.a} ↔ ${c.b}: ${shared}${more}`));
+            }
+          }
         } catch (err) {
           console.log(chalk.red(`Worker run failed: ${(err as Error).message}`));
         }
+
         return { consumed: true };
       }
 
@@ -1014,7 +1088,7 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
-      console.log(chalk.dim("usage: /delegate plan <task> | run <plan-id> <worker-id> | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id>"));
+      console.log(chalk.dim("usage: /delegate plan <task> | run <plan-id> [worker-id] | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id>"));
       return { consumed: true };
     }
 
@@ -1050,8 +1124,8 @@ export async function handleSlashCommand(
           "/status          git status",
           "/diff            git diff",
           "/delegate plan <task>  build a delegation plan",
-          "/delegate run <plan-id> <worker-id>  run a worker in an isolated subprocess",
-          "/delegate status <plan-id>  show worker status table",
+          "/delegate run <plan-id> [worker-id]  run one worker or all runnable workers sequentially",
+          "/delegate status <plan-id>  show worker status table (+ conflict hints from run artifacts)",
           "/delegate review <plan-id>  show full plan for human review",
           "/delegate apply <plan-id> <worker-id>  apply a passed worker's patch to the real repo",
           "/delegate discard <plan-id> <worker-id>  discard a worker (mark as discarded)",
@@ -1062,6 +1136,24 @@ export async function handleSlashCommand(
     default:
       console.log(chalk.dim(`Unknown command: /${cmd}. Try /help.`));
       return { consumed: true };
+  }
+}
+
+async function readWorkerRunChangedFiles(
+  root: string,
+  planId: string,
+  workerId: string,
+): Promise<string[] | null> {
+  try {
+    assertSafeId(planId);
+    assertSafeId(workerId);
+    const p = path.join(root, ".deepcoder", "delegations", planId, "runs", workerId, "run.json");
+    const raw = await fs.readFile(p, "utf8");
+    const parsed = JSON.parse(raw) as Partial<WorkerRun>;
+    if (!Array.isArray(parsed.changedFiles)) return null;
+    return parsed.changedFiles.filter((x): x is string => typeof x === "string");
+  } catch {
+    return null;
   }
 }
 
