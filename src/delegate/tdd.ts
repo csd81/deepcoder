@@ -126,6 +126,43 @@ export function tddIsolationConfig(
   return override ?? { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" };
 }
 
+/**
+ * From a raw `.deepcoder/config.json`, extract ONLY the `checks` block as the
+ * config a delegated worker needs. A git worktree of HEAD omits the gitignored
+ * `.deepcoder/`, so a worker spawned with `cwd: <worktree>` can't resolve named
+ * checks (e.g. `--check phase`). We copy only `checks` into the worktree — never
+ * MCP servers or hooks (which the trust gate guards against auto-executing) —
+ * so the worker gets strictly less capability than the parent, not more.
+ * Returns the JSON to write, or null when there is nothing to provision.
+ */
+export function pickWorkerCheckConfig(raw: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const checks = (parsed as Record<string, unknown> | null)?.checks;
+  if (!checks || typeof checks !== "object" || Object.keys(checks).length === 0) {
+    return null;
+  }
+  return JSON.stringify({ checks }, null, 2);
+}
+
+/** Copy the project's named `checks` (only) into a worker worktree (best-effort). */
+async function provisionCheckConfig(realRoot: string, worktreeRoot: string): Promise<void> {
+  try {
+    const raw = await fs.readFile(path.join(realRoot, ".deepcoder", "config.json"), "utf8");
+    const picked = pickWorkerCheckConfig(raw);
+    if (!picked) return;
+    const destDir = path.join(worktreeRoot, ".deepcoder");
+    await fs.mkdir(destDir, { recursive: true });
+    await fs.writeFile(path.join(destDir, "config.json"), picked, "utf8");
+  } catch {
+    // No project config (or unreadable) → worker falls back to defaults.
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  runWorkerTdd                                                       */
 /* ------------------------------------------------------------------ */
@@ -168,9 +205,10 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
     input.realRoot,
     tddIsolationConfig(input.isolationConfig),
   );
+  await provisionCheckConfig(input.realRoot, reproIso.isolatedRoot);
 
   const reproPrompt = buildReproPhasePrompt(worker, input.plan);
-  const reproCmd = buildTddWorkerCommand(input.mainEntry, reproPrompt);
+  const reproCmd = buildTddWorkerCommand(input.mainEntry, reproPrompt, "author");
 
   try {
     await spawnWorker({
@@ -240,6 +278,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
     input.realRoot,
     tddIsolationConfig(input.isolationConfig),
   );
+  await provisionCheckConfig(input.realRoot, baselineIso.isolatedRoot);
 
   let redConfirmed = false;
   let redRunId: string | undefined;
@@ -393,6 +432,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
     input.realRoot,
     tddIsolationConfig(input.isolationConfig),
   );
+  await provisionCheckConfig(input.realRoot, fixIso.isolatedRoot);
 
   // Apply the repro patch first so the worker has the repro test.
   if (reproPatch.trim().length > 0) {
@@ -418,7 +458,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
   }
 
   const fixPrompt = buildFixPhasePrompt(worker, input.plan, redSummary);
-  const fixCmd = buildTddWorkerCommand(input.mainEntry, fixPrompt);
+  const fixCmd = buildTddWorkerCommand(input.mainEntry, fixPrompt, "fix");
 
   let fixResult: BoundedProcessResult;
   try {
@@ -612,19 +652,24 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function buildTddWorkerCommand(mainEntry: string, prompt: string): { file: string; args: string[] } {
-  return {
-    file: process.execPath,
-    args: [
-      "--import",
-      "tsx",
-      mainEntry,
-      "--solve",
-      "--check",
-      "phase",
-      prompt,
-    ],
-  };
+/**
+ * Build the worker subprocess command for a TDD phase.
+ * - "author": a single agentic pass (no `--solve`) — write the failing tests and
+ *   stop. A solve loop here would be told to make `--check` GREEN, which fights
+ *   the author phase's job (author RED tests) and pushes forbidden production edits.
+ * - "fix": closed-loop `--solve --check phase` — drive production to green.
+ */
+export function buildTddWorkerCommand(
+  mainEntry: string,
+  prompt: string,
+  mode: "author" | "fix",
+): { file: string; args: string[] } {
+  const base = ["--import", "tsx", mainEntry];
+  const args =
+    mode === "fix"
+      ? [...base, "--solve", "--check", "phase", prompt]
+      : [...base, prompt];
+  return { file: process.execPath, args };
 }
 
 function buildTddWorkerEnv(

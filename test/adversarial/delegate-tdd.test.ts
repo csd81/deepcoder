@@ -396,3 +396,40 @@ test("9M infra: an explicit isolation override is honored verbatim", () => {
   const override = { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" as const, provision: [] };
   assert.equal(tddIsolationConfig(override), override);
 });
+
+/* ---- 9M live-path hardening: author/fix command modes + config provisioning ---- */
+
+import { buildTddWorkerCommand, pickWorkerCheckConfig } from "../../src/delegate/tdd.js";
+
+test("9M: author phase runs NO --solve (write failing tests, don't drive to green)", () => {
+  const cmd = buildTddWorkerCommand("/m/main.ts", "PROMPT", "author");
+  assert.equal(cmd.args.includes("--solve"), false, "author must not solve-to-green");
+  assert.equal(cmd.args.includes("--check"), false);
+  assert.equal(cmd.args[cmd.args.length - 1], "PROMPT");
+});
+
+test("9M: fix phase runs --solve --check phase (drive production to green)", () => {
+  const cmd = buildTddWorkerCommand("/m/main.ts", "PROMPT", "fix");
+  assert.ok(cmd.args.includes("--solve") && cmd.args.includes("--check"));
+  assert.equal(cmd.args[cmd.args.indexOf("--check") + 1], "phase");
+});
+
+test("9M: pickWorkerCheckConfig copies ONLY checks (never MCP servers or hooks)", () => {
+  const raw = JSON.stringify({
+    checks: { phase: { command: "npm run test:phase" } },
+    mcpServers: { evil: { command: "x" } },
+    hooks: { preToolUse: ["danger"] },
+    sandbox: { mode: "off" },
+  });
+  const out = pickWorkerCheckConfig(raw);
+  assert.ok(out);
+  const parsed = JSON.parse(out!);
+  assert.deepEqual(Object.keys(parsed), ["checks"], "only checks crosses into the worktree");
+  assert.ok(parsed.checks.phase);
+});
+
+test("9M: pickWorkerCheckConfig returns null when there are no checks / invalid JSON", () => {
+  assert.equal(pickWorkerCheckConfig(JSON.stringify({ mcpServers: {} })), null);
+  assert.equal(pickWorkerCheckConfig("{not json"), null);
+  assert.equal(pickWorkerCheckConfig(JSON.stringify({ checks: {} })), null);
+});
