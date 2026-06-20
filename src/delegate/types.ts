@@ -30,6 +30,13 @@ export interface WorkerTask {
   dependsOn: string[];
   expectedOutputs: string[];
   status: WorkerTaskStatus;
+
+  /* ---- Phase 9G optional fields ---- */
+  deliverables?: Deliverable[];
+  expectedFiles?: ExpectedFileRule[];
+  expectedSymbols?: ExpectedSymbolRule[];
+  expectedTests?: ExpectedTestRule[];
+  qualityRules?: QualityRule[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -168,6 +175,146 @@ function isWorkerTask(w: unknown): w is WorkerTask {
     if (typeof o !== "string") return false;
   }
   if (!VALID_WORKER_STATUSES.includes(v.status as WorkerTaskStatus)) return false;
+
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Phase 9G — Deliverables & Completeness Gates                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A deliverable describes a concrete, machine-checkable outcome a worker
+ * must produce. The `evidence` field determines how the harness verifies
+ * the deliverable without running a model.
+ */
+export type DeliverableEvidence =
+  | { kind: "file_exists"; path: string }
+  | { kind: "file_changed"; path: string }
+  | { kind: "path_prefix_changed"; prefix: string }
+  | { kind: "test_added"; pathPrefix?: string }
+  | { kind: "text_in_diff"; pattern: string }
+  | { kind: "json_field"; path: string; jsonPath: string }
+  | { kind: "manual_review" };
+
+export interface Deliverable {
+  id: string;
+  description: string;
+  required: boolean;
+  evidence: DeliverableEvidence;
+}
+
+export interface ExpectedFileRule {
+  path: string;
+  mode: "must_change" | "may_change" | "must_not_change" | "must_exist";
+}
+
+export interface ExpectedSymbolRule {
+  file: string;
+  symbol: string;
+  mode: "must_add_or_change";
+}
+
+export interface ExpectedTestRule {
+  pathPrefix: string;
+  mustGoRedOnBaseline?: boolean;
+  description: string;
+}
+
+export interface QualityRule {
+  id: string;
+  description: string;
+}
+
+export interface WorkerSelfAudit {
+  taskId: string;
+  completedDeliverables: { id: string; evidence: string }[];
+  skippedDeliverables: { id: string; reason: string }[];
+  changedFiles: string[];
+  testsRun: string[];
+  knownLimitations: string[];
+}
+
+export interface CompletenessFailure {
+  code:
+    | "missing_required_deliverable"
+    | "missing_expected_file_change"
+    | "forbidden_file_changed"
+    | "missing_required_test"
+    | "weak_regression_test"
+    | "missing_self_audit"
+    | "malformed_self_audit"
+    | "manual_review_required";
+  message: string;
+  deliverableId?: string;
+  path?: string;
+}
+
+export interface CompletenessEvidence {
+  deliverableId?: string;
+  path?: string;
+  note: string;
+}
+
+export interface CompletenessResult {
+  complete: boolean;
+  failures: CompletenessFailure[];
+  warnings: string[];
+  evidence: CompletenessEvidence[];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Type guard for WorkerSelfAudit                                     */
+/* ------------------------------------------------------------------ */
+
+const MAX_AUDIT_ARRAY_LENGTH = 200;
+
+/**
+ * Defensive type guard for WorkerSelfAudit. Validates the shape of an
+ * unknown value, bounding array lengths to prevent memory exhaustion.
+ * Returns null (rather than throwing) if the value is not a valid audit.
+ */
+export function isWorkerSelfAudit(x: unknown): x is WorkerSelfAudit {
+  if (!x || typeof x !== "object") return false;
+  const v = x as Record<string, unknown>;
+
+  if (typeof v.taskId !== "string") return false;
+
+  if (!Array.isArray(v.completedDeliverables)) return false;
+  if (v.completedDeliverables.length > MAX_AUDIT_ARRAY_LENGTH) return false;
+  for (const item of v.completedDeliverables as unknown[]) {
+    if (!item || typeof item !== "object") return false;
+    const i = item as Record<string, unknown>;
+    if (typeof i.id !== "string") return false;
+    if (typeof i.evidence !== "string") return false;
+  }
+
+  if (!Array.isArray(v.skippedDeliverables)) return false;
+  if (v.skippedDeliverables.length > MAX_AUDIT_ARRAY_LENGTH) return false;
+  for (const item of v.skippedDeliverables as unknown[]) {
+    if (!item || typeof item !== "object") return false;
+    const i = item as Record<string, unknown>;
+    if (typeof i.id !== "string") return false;
+    if (typeof i.reason !== "string") return false;
+  }
+
+  if (!Array.isArray(v.changedFiles)) return false;
+  if (v.changedFiles.length > MAX_AUDIT_ARRAY_LENGTH) return false;
+  for (const f of v.changedFiles as unknown[]) {
+    if (typeof f !== "string") return false;
+  }
+
+  if (!Array.isArray(v.testsRun)) return false;
+  if (v.testsRun.length > MAX_AUDIT_ARRAY_LENGTH) return false;
+  for (const t of v.testsRun as unknown[]) {
+    if (typeof t !== "string") return false;
+  }
+
+  if (!Array.isArray(v.knownLimitations)) return false;
+  if (v.knownLimitations.length > MAX_AUDIT_ARRAY_LENGTH) return false;
+  for (const l of v.knownLimitations as unknown[]) {
+    if (typeof l !== "string") return false;
+  }
 
   return true;
 }
