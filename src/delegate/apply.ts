@@ -26,6 +26,7 @@ import { validatePatch } from "./patchValidator.js";
 import { validateWorkerResult } from "./validation.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { confirm } from "../permissions/prompt.js";
+import { readTddRecord } from "./tddArtifacts.js";
 import type { CheckConfig } from "../config/fileConfig.js";
 import type { WorkerRun, ApplyRecord } from "./types.js";
 
@@ -221,6 +222,23 @@ export async function applyWorker(
       ok: false,
       message: `Quality gate required but missing for worker "${workerId}". Run /delegate review ${planId} ${workerId} --quality, or rerun the worker.`,
     };
+  }
+
+  // ── Gate 3.75 (9L): TDD gate — refuse if TDD-required without green_confirmed ──
+  if (worker.tdd?.required) {
+    const tddRec = await readTddRecord(root, planId, workerId);
+    if (!tddRec) {
+      return {
+        ok: false,
+        message: `TDD-required worker "${workerId}" has no TDD record. Run the worker with TDD enabled first.`,
+      };
+    }
+    if (tddRec.status !== "green_confirmed" && tddRec.status !== "waived") {
+      return {
+        ok: false,
+        message: `TDD-required worker "${workerId}" has status "${tddRec.status}", not "green_confirmed". Red/green proof is required before apply.`,
+      };
+    }
   }
 
   // ── Gate 4: git apply --check ────────────────────────────────────
