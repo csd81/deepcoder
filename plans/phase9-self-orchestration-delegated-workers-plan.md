@@ -327,6 +327,15 @@ DEEPCODER_DELEGATE_CHECK=phase
 6. 9E context-aware planning.
 7. 9F optional auto-apply only after repeated successful manual use.
 
+## Harness Hardening Follow-Up
+
+Phase 9G adds task-packet completeness gates on top of this plan. The key lesson from the
+Phase 8D delegated-worker experiment is that a worker can pass its configured check while
+still skipping required deliverables. See
+`plans/phase9g-delegation-harness-completeness-gates-plan.md` for the follow-up design:
+explicit deliverables, expected files/tests, worker self-audits, deterministic completeness
+evaluation, and reviewer-subagent downgrade checks before apply.
+
 ## Success Criteria
 
 A successful v1 can reproduce the Phase 8D workflow internally:
@@ -337,4 +346,3 @@ A successful v1 can reproduce the Phase 8D workflow internally:
 4. Parent refuses any out-of-scope or conflicting patch.
 5. Parent applies an approved patch.
 6. Full gate passes on the real repo.
-
