@@ -35,7 +35,16 @@ export async function runExplorer(
   question: string,
   opts: RunSubagentOptions,
 ): Promise<ExplorerOutput> {
-  const model = opts.subagentModel ?? opts.parentModel;
+  // Phase 10F: resolve model via router if available.
+  let model: string;
+  let provider = opts.provider;
+  if (opts.modelRouter && opts.providerPool) {
+    const route = opts.modelRouter.resolve(explorer.role ?? "explore");
+    model = route.model;
+    provider = opts.providerPool.providerFor(route);
+  } else {
+    model = opts.subagentModel ?? opts.parentModel;
+  }
   const registry = restrictedRegistry(explorer.allowedTools);
   const { text: instructions } = loadInstructions(opts.workspaceRoot);
 
@@ -72,7 +81,7 @@ export async function runExplorer(
 
   try {
     finalText = await runAgentLoop(messages, {
-      provider: opts.provider,
+      provider,
       registry,
       ctx,
       model,

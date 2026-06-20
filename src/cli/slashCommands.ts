@@ -1710,6 +1710,18 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "models": {
+      const routes = session.modelRouter.explain();
+      console.log(chalk.bold("Model Routing Table:"));
+      for (const r of routes) {
+        const src = r.source === "default" ? "" : chalk.dim(` [${r.source}]`);
+        const temp = r.temperature !== undefined ? ` · temp ${r.temperature}` : "";
+        const effort = r.reasoningEffort ? ` · effort ${r.reasoningEffort}` : "";
+        console.log(`  ${chalk.cyan(r.role.padEnd(14))} ${r.provider}/${r.model}${src}${temp}${effort}`);
+      }
+      return { consumed: true };
+    }
+
     case "help":
       console.log(
         [
@@ -1741,6 +1753,7 @@ export async function handleSlashCommand(
           "/save            save the session now",
           "/status          git status",
           "/diff            git diff",
+          "/models          show the model routing table (Phase 10F)",
           "/delegate plan <task>  build a delegation plan",
           "/delegate plan preflight <task>  build a context-aware delegation plan (runs explorer)",
           "/delegate run <plan-id> [worker-id]  run one worker or all runnable workers sequentially",

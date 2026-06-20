@@ -19,7 +19,16 @@ export async function runSubagent(
   task: string,
   opts: RunSubagentOptions,
 ): Promise<{ result: SubagentResult; trace: SubagentTrace; finalText?: string }> {
-  const model = opts.subagentModel ?? opts.parentModel;
+  // Phase 10F: resolve model via router if available, else fall back to legacy.
+  let model: string;
+  let provider = opts.provider;
+  if (opts.modelRouter && opts.providerPool) {
+    const route = opts.modelRouter.resolve(profile.role ?? "review");
+    model = route.model;
+    provider = opts.providerPool.providerFor(route);
+  } else {
+    model = opts.subagentModel ?? opts.parentModel;
+  }
   const registry = restrictedRegistry(profile.allowedTools);
   const { text: instructions } = loadInstructions(opts.workspaceRoot);
 
@@ -44,7 +53,7 @@ export async function runSubagent(
 
   try {
     finalText = await runAgentLoop(messages, {
-      provider: opts.provider,
+      provider,
       registry,
       ctx,
       model,

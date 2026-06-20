@@ -7,6 +7,8 @@ export interface SubagentProfile {
   contextBudgetTokens: number;
   /** Profile-specific output instructions appended to the boundary prompt. */
   outputGuidance?: string;
+  /** Phase 10F: model role for router-based model resolution. */
+  role?: import("../models/types.js").ModelRole;
 }
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -53,6 +55,10 @@ export interface RunSubagentOptions {
   provider: import("../providers/types.js").ModelProvider;
   parentModel: string;
   subagentModel?: string;
+  /** Phase 10F: model router for role-based model resolution. */
+  modelRouter?: import("../models/router.js").ModelRouter;
+  /** Phase 10F: provider pool to get a provider for a resolved route. */
+  providerPool?: import("../models/providerPool.js").ProviderPool;
   contextBudgetTokens: number;
   compactAt: number;
   signal: AbortSignal;

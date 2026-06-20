@@ -8,6 +8,7 @@ import {
   type WorkspaceIsolationMode,
 } from "../workspaceIsolation/types.js";
 import { DEFAULT_HOOKS, type HooksConfig } from "../hooks/types.js";
+import type { ModelsFileConfig } from "../models/types.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
@@ -120,6 +121,8 @@ export interface Config {
   dependencyHealing: DependencyHealingConfig;
   delegate: DelegateConfig;
   testTargeting: TestTargetingConfig;
+  /** Phase 10F — model/task router config (optional). */
+  models?: ModelsFileConfig;
 }
 
 export interface QualityGateOptions {
@@ -534,5 +537,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     dependencyHealing: { ...dependencyHealing, ...(overrides.dependencyHealing ?? {}) },
     delegate,
     testTargeting,
+    models: file.models,
   };
 }

@@ -13,6 +13,7 @@ export const reviewer: SubagentProfile = {
   allowedTools: READ_ONLY_TOOLS,
   maxTurns: 12,
   contextBudgetTokens: 48000,
+  role: "review",
   outputGuidance:
     "Each finding is a concrete bug, regression risk, or missing test. Use real severities: " +
     "critical/high for correctness or security issues, medium for risks, low for nits. Cite file:line in `evidence`.",
@@ -24,6 +25,7 @@ export const researcher: SubagentProfile = {
   allowedTools: READ_ONLY_TOOLS,
   maxTurns: 16,
   contextBudgetTokens: 48000,
+  role: "research",
   outputGuidance:
     "Answer the question from repository evidence. `summary` is the direct answer. Each finding is a key fact with a " +
     "file:line citation in `evidence`; distinguish facts from inference. Severity means importance, not bugs: " +
@@ -37,6 +39,7 @@ export const testTriage: SubagentProfile = {
   allowedTools: READ_ONLY_TOOLS,
   maxTurns: 14,
   contextBudgetTokens: 48000,
+  role: "triage",
   outputGuidance:
     "Diagnose the failure. `summary` is a concise diagnosis. Each finding is a ranked hypothesis with evidence " +
     "(cite file:line) — order by likelihood, using severity: critical = likely data-loss/security regression, " +
@@ -66,6 +69,7 @@ export const explorer: SubagentProfile = {
   ],
   maxTurns: 8,
   contextBudgetTokens: 32000,
+  role: "explore",
   outputGuidance:
     "Return a JSON ExplorerBrief with fields: summary, relevantFiles (each with path, reason, citations[]), " +
     "likelyFixLocations (each with path, confidence low|medium|high, reason), relevantTests (each with pathOrCommand, reason), " +

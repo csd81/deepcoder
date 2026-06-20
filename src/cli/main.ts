@@ -27,6 +27,8 @@ import { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../config/config.js";
+import { ModelRouter } from "../models/router.js";
+import { ProviderPool } from "../models/providerPool.js";
 
 const program = new Command();
 
@@ -119,6 +121,8 @@ async function buildSession(
   resume?: string | boolean,
 ): Promise<Session> {
   const provider = createProvider(config);
+  const modelRouter = new ModelRouter(config, config.models);
+  const providerPool = new ProviderPool(config);
   const registry = defaultRegistry();
   // Phase 8E: register the semantic tools only when opt-in is enabled (default off).
   if (config.semanticSearch.enabled) {
@@ -184,6 +188,8 @@ async function buildSession(
       recorder,
       instructionGraph: instr.graph,
       tokenUsage: { ...EMPTY_USAGE },
+      modelRouter,
+      providerPool,
     };
   }
 
@@ -207,6 +213,8 @@ async function buildSession(
     recorder,
     instructionGraph: instr.graph,
     tokenUsage: { ...EMPTY_USAGE },
+    modelRouter,
+    providerPool,
   };
 }
 

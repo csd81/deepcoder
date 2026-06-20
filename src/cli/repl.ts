@@ -28,6 +28,8 @@ import type { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
+import type { ModelRouter } from "../models/router.js";
+import type { ProviderPool } from "../models/providerPool.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -67,6 +69,10 @@ export interface Session {
   instructionGraph?: import("../context/instructionGraph.js").InstructionGraph;
   /** Cumulative token usage across this session's model calls. */
   tokenUsage: import("../providers/types.js").TokenUsage;
+  /** Phase 10F — model router for role-based model selection. */
+  modelRouter: ModelRouter;
+  /** Phase 10F — provider pool for caching provider instances. */
+  providerPool: ProviderPool;
 }
 
 /**

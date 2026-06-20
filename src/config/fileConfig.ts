@@ -21,6 +21,8 @@ import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
 import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig } from "./config.js";
+import type { ModelsFileConfig } from "../models/types.js";
+import { hasFallbackCycle } from "../models/router.js";
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
@@ -34,6 +36,7 @@ export interface FileConfig {
   dependencyHealing?: Partial<DependencyHealingConfig>;
   delegate?: Partial<DelegateConfig>;
   testTargeting?: Partial<TestTargetingConfig>;
+  models?: ModelsFileConfig;
 }
 
 const mcpServerSchema = z.object({
@@ -111,6 +114,27 @@ const dependencyHealingSchema = z.object({
   managers: z.array(z.string()).optional(),
   preferFrozenLockfile: z.boolean().optional(),
   timeoutMs: z.number().int().positive().optional(),
+});
+
+const KNOWN_MODEL_ROLES = [
+  "edit", "plan", "review", "research", "summarize", "triage",
+  "explore", "delegate", "qualityGate", "fallback",
+] as const;
+
+const modelRoleSchema = z.enum(KNOWN_MODEL_ROLES);
+
+const modelRouteConfigSchema = z.object({
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1),
+  baseUrl: z.string().optional(),
+  temperature: z.number().optional(),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
+  maxTurns: z.number().int().positive().optional(),
+});
+
+const modelsSchema = z.object({
+  roles: z.record(modelRoleSchema, modelRouteConfigSchema).optional(),
+  fallbacks: z.record(modelRoleSchema, z.array(modelRoleSchema)).optional(),
 });
 
 const qualityGateSchema = z.object({
@@ -233,6 +257,22 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "delegate": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
+  const rawModels = (parsed as { models?: unknown }).models;
+  let models: ModelsFileConfig | undefined;
+  if (rawModels && typeof rawModels === "object") {
+    const result = modelsSchema.safeParse(rawModels);
+    if (result.success) {
+      models = result.data as ModelsFileConfig;
+      // Reject a cyclic fallback graph (would loop forever at resolution).
+      if (hasFallbackCycle(models.fallbacks)) {
+        warn(`ignoring "models.fallbacks": fallback cycle detected`);
+        models = { ...models, fallbacks: undefined };
+      }
+    } else {
+      warn(`ignoring "models": ${result.error.issues.map((i) => i.message).join("; ")}`);
+    }
+  }
+
   const rawTestTargeting = (parsed as { testTargeting?: unknown }).testTargeting;
   let testTargeting: Partial<TestTargetingConfig> | undefined;
   if (rawTestTargeting && typeof rawTestTargeting === "object") {
@@ -260,7 +300,7 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     };
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, testTargeting };
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting };
 }
 
 function warn(msg: string): void {
