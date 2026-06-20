@@ -90,6 +90,8 @@ export interface ApplyOptions {
    * gate is refused only when this is set (mandatory mode).
    */
   requireQualityGate?: boolean;
+  /** Phase 9L flip: require a validated (red→green) test (green_confirmed) to apply. */
+  requireValidatedTest?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,6 +165,7 @@ export async function applyWorker(
     patchText,
     alreadyChangedPaths,
     qualityGateRequired: opts.requireQualityGate ?? false,
+    requireValidatedTest: opts.requireValidatedTest ?? false,
   });
 
   if (!validation.applyable) {

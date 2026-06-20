@@ -478,7 +478,8 @@ export interface WorkerValidationFailure {
     | "conflict"
     | "missing_artifact"
     | "run_timed_out"
-    | "run_truncated";
+    | "run_truncated"
+    | "missing_validated_test";
   message: string;
   path?: string;
   source?: "run" | "patch" | "completeness" | "quality" | "conflict" | "artifact";

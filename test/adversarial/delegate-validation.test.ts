@@ -223,3 +223,45 @@ test("APPLY: validation is RECOMPUTED at apply time (overlap appearing later ref
     assert.equal(await readFile(path.join(root, "src", "foo.ts"), "utf8"), "a\n", "not applied");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+/* ---- 9L flip: require a VALIDATED (red→green) test ---- */
+
+import type { WorkerTddRun } from "../../src/delegate/types.js";
+
+const tddGreen: WorkerTddRun = { required: true, status: "green_confirmed", reproPaths: ["test/r.test.ts"], redRunId: "r", greenRunId: "g", warnings: [] };
+
+test("FLIP: requireValidatedTest blocks a worker without a green-confirmed TDD proof", () => {
+  // worker passed its check + valid patch, but NO validated failing test
+  const v = validateWorkerResult(vinput({ requireValidatedTest: true }));
+  assert.equal(v.applyable, false, "must be invalid without a validated test");
+  assert.ok(codes(v).includes("missing_validated_test"));
+});
+
+test("FLIP: requireValidatedTest allows a worker WITH a green-confirmed TDD proof", () => {
+  const v = validateWorkerResult(vinput({ requireValidatedTest: true, run: run({ tdd: tddGreen }) }));
+  assert.equal(v.applyable, true, JSON.stringify(v.failures));
+});
+
+test("FLIP: a red_failed TDD run (repro didn't fail on baseline) is NOT a validated test", () => {
+  const redFailed: WorkerTddRun = { required: true, status: "red_failed", reproPaths: [], warnings: [] };
+  const v = validateWorkerResult(vinput({ requireValidatedTest: true, run: run({ tdd: redFailed }) }));
+  assert.equal(v.applyable, false);
+  assert.ok(codes(v).includes("missing_validated_test"), "self-graded/unvalidated test must not satisfy the gate");
+});
+
+test("FLIP off (default): no validated-test requirement — unchanged", () => {
+  const v = validateWorkerResult(vinput()); // requireValidatedTest defaults false
+  assert.equal(v.applyable, true);
+});
+
+test("FLIP apply: applyWorker refuses (requireValidatedTest) a worker without green_confirmed", async () => {
+  const root = await repo();
+  try {
+    await savePlan(root, planOf(w()));
+    await artifacts(root); // run.json has no tdd
+    const r = await applyWorker(root, "p1", "w1", { isTTY: true, confirmResult: true, requireValidatedTest: true });
+    assert.equal(r.ok, false);
+    assert.match(r.message, /missing_validated_test/);
+    assert.equal(await readFile(path.join(root, "src", "foo.ts"), "utf8"), "a\n", "repo untouched");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

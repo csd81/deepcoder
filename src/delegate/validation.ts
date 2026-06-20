@@ -48,6 +48,13 @@ export interface ValidateWorkerInput {
   patchText: string | null;
   alreadyChangedPaths: string[];
   qualityGateRequired: boolean;
+  /**
+   * Phase 9L flip: when true, the worker is invalid unless it shipped a test
+   * that was VALIDATED red-on-baseline then green (run.tdd.status ===
+   * "green_confirmed"). Ties "validated failing test" to the un-self-gradable
+   * 9L proof. Default false (no behavior change).
+   */
+  requireValidatedTest?: boolean;
   fileExists?: (relPath: string) => boolean;
 }
 
@@ -63,7 +70,7 @@ export interface ValidateWorkerInput {
  * processes, call models, or mutate files.
  */
 export function validateWorkerResult(input: ValidateWorkerInput): WorkerValidation {
-  const { worker, run, patchText, alreadyChangedPaths, qualityGateRequired, fileExists } = input;
+  const { worker, run, patchText, alreadyChangedPaths, qualityGateRequired, requireValidatedTest, fileExists } = input;
 
   const failures: WorkerValidationFailure[] = [];
   const warnings: string[] = [];
@@ -347,6 +354,31 @@ export function validateWorkerResult(input: ValidateWorkerInput): WorkerValidati
       source: "artifact",
       note: `Audit artifact gate: ${requiredArtifacts.filter((a) => a.exists).length}/${requiredArtifacts.length} artifacts present`,
     });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Gate 9 (9L flip): require a VALIDATED (red→green) test           */
+  /* ---------------------------------------------------------------- */
+
+  if (requireValidatedTest) {
+    const tdd = run && typeof run.tdd === "object" ? run.tdd : undefined;
+    // The ONLY trustworthy "validated failing test" is one proven to fail on a
+    // clean baseline and then pass — i.e. the 9L green_confirmed proof. A
+    // worker-authored test that was never red on baseline cannot self-grade.
+    if (!tdd || tdd.status !== "green_confirmed") {
+      failures.push({
+        code: "missing_validated_test",
+        message:
+          `Worker "${worker.id}" has no validated failing test (TDD green_confirmed proof). ` +
+          `A required test must be shown red on baseline, then green after the fix — it cannot self-grade.`,
+        source: "completeness",
+      });
+    } else {
+      evidence.push({
+        source: "completeness",
+        note: `Validated test proof present (TDD ${tdd.status}; repro ${tdd.reproPaths.join(", ") || "—"})`,
+      });
+    }
   }
 
   /* ---------------------------------------------------------------- */
