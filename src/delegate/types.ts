@@ -37,6 +37,18 @@ export interface WorkerTask {
   expectedSymbols?: ExpectedSymbolRule[];
   expectedTests?: ExpectedTestRule[];
   qualityRules?: QualityRule[];
+
+  /* ---- Phase 9L TDD fields ---- */
+  tdd?: WorkerTddRequirement;
+}
+
+export interface WorkerTddRequirement {
+  required: boolean;
+  reproPathHints?: string[];
+  allowedTestPaths?: string[];
+  baselineCheckName?: string;
+  finalCheckName?: string;
+  allowNoReproJustification?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -120,6 +132,26 @@ export interface WorkerRun {
   isolation?: WorkerIsolationRecord;
   qualityGate?: WorkerQualityGate | "skipped_deterministic_failure";
   validation?: WorkerValidation;
+  tdd?: WorkerTddRun;
+}
+
+export interface WorkerTddRun {
+  required: boolean;
+  status:
+    | "not_required"
+    | "repro_missing"
+    | "red_failed"
+    | "red_confirmed"
+    | "green_failed"
+    | "green_confirmed"
+    | "waived";
+  reproPaths: string[];
+  redRunId?: string;
+  greenRunId?: string;
+  redPatchPath?: string;
+  fixPatchPath?: string;
+  noReproJustification?: string;
+  warnings: string[];
 }
 
 /* ------------------------------------------------------------------ */
