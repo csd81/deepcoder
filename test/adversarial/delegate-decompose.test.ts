@@ -168,3 +168,50 @@ test("[decompose-run-order] runDecomposition runs accepted sub-tasks in dependen
   assert.deepEqual(order, ["a", "b"], "sub-tasks run in dependency order");
   assert.equal(res.ok, true);
 });
+
+import { topoOrder } from "../../src/delegate/decompose.js";
+
+test("runDecomposition passes the CUMULATIVE base to each sub-task", async () => {
+  const seen: string[] = [];
+  const plan = { task: "t", source: "model" as const, warnings: [], subtasks: [subtask("a", []), subtask("b", ["a"])] };
+  await runDecomposition(plan, {
+    realRoot: "/tmp", signal: new AbortController().signal,
+    runSubTask: async (st: SubTaskSpec, cumulative: string) => { seen.push(`${st.id}:${cumulative}`); return { accepted: true, patch: `P_${st.id}` }; },
+    runAssemblyCheck: async () => ({ ok: true }),
+  });
+  assert.equal(seen[0], "a:", "first sub-task sees an empty base");
+  assert.match(seen[1], /^b:.*P_a/, "second sub-task sees the first's patch");
+});
+
+test("a non-accepted sub-task STOPS the run (dependents do not run); ok=false", async () => {
+  const ran: string[] = [];
+  const plan = { task: "t", source: "model" as const, warnings: [], subtasks: [subtask("a", []), subtask("b", ["a"]), subtask("c", ["b"])] };
+  const res = await runDecomposition(plan, {
+    realRoot: "/tmp", signal: new AbortController().signal,
+    runSubTask: async (st: SubTaskSpec) => { ran.push(st.id); return st.id === "b" ? { accepted: false, patch: "", reason: "verify failed" } : { accepted: true, patch: "" }; },
+    runAssemblyCheck: async () => ({ ok: true }),
+  });
+  assert.deepEqual(ran, ["a", "b"], "c (dependent of b) must NOT run");
+  assert.equal(res.ok, false);
+  assert.equal(res.assemblyOk, false, "assembly is not attempted after a stop");
+  assert.match(res.warnings.join(" "), /stopping/);
+});
+
+test("a RED assembly is reported (assemblyOk=false, ok=false) and never auto-applied", async () => {
+  const plan = { task: "t", source: "model" as const, warnings: [], subtasks: [subtask("a", [])] };
+  const res = await runDecomposition(plan, {
+    realRoot: "/tmp", signal: new AbortController().signal,
+    runSubTask: async () => ({ accepted: true, patch: "P" }),
+    runAssemblyCheck: async () => ({ ok: false }), // full check red
+  });
+  assert.equal(res.assemblyOk, false);
+  assert.equal(res.ok, false);
+  assert.match(res.warnings.join(" "), /NOT applied/);
+});
+
+test("topoOrder respects dependencies (a before b,c; both before d)", () => {
+  const sts = [subtask("d", ["b", "c"]), subtask("b", ["a"]), subtask("c", ["a"]), subtask("a", [])];
+  const order = topoOrder(sts).map((s) => s.id);
+  assert.ok(order.indexOf("a") < order.indexOf("b") && order.indexOf("a") < order.indexOf("c"));
+  assert.ok(order.indexOf("b") < order.indexOf("d") && order.indexOf("c") < order.indexOf("d"));
+});

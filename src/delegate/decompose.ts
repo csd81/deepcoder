@@ -230,3 +230,126 @@ function fallbackToHeuristic(task: string, config: ValidateDecompositionConfig, 
     ]
   };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Phase 9O.3 + 9O.4 — execution + assembly                          */
+/*                                                                    */
+/*  Runs a validated sub-task DAG in dependency order on a CUMULATIVE */
+/*  base (each sub-task sees prior accepted patches), then assembles  */
+/*  and runs the full no-regression check. The model never executes;  */
+/*  this only orchestrates the injected, already-gated seams. A red    */
+/*  assembly is reported, NEVER auto-applied (we never call apply).    */
+/*  The DEFAULT seams (runWorker→verify→force wiring) land with the    */
+/*  9O.5 CLI slice, where realRoot/provider/mainEntry are available;   */
+/*  callers and tests inject them.                                    */
+/* ------------------------------------------------------------------ */
+
+export interface SubTaskRunResult {
+  accepted: boolean;
+  patch: string;
+  reason?: string;
+}
+
+export interface RunDecompositionOptions {
+  realRoot: string;
+  signal: AbortSignal;
+  /** Run ONE sub-task on the cumulative base → its accepted patch (or accepted:false + reason). */
+  runSubTask?: (subtask: SubTaskSpec, cumulativePatch: string) => Promise<SubTaskRunResult>;
+  /** Run the full configured check on the assembled tree (no-regression gate). */
+  runAssemblyCheck?: (assembledPatch: string) => Promise<{ ok: boolean }>;
+}
+
+export interface DecompositionRunResult {
+  ok: boolean;
+  order: string[];
+  subtasks: { id: string; accepted: boolean; reason?: string }[];
+  assembledPatch: string;
+  assemblyOk: boolean;
+  warnings: string[];
+}
+
+/** Deterministic topological order by dependsOn (assumes validated/acyclic). */
+export function topoOrder(subtasks: SubTaskSpec[]): SubTaskSpec[] {
+  const byId = new Map(subtasks.map((s) => [s.id, s]));
+  const visited = new Set<string>();
+  const out: SubTaskSpec[] = [];
+  const visit = (st: SubTaskSpec): void => {
+    if (visited.has(st.id)) return;
+    visited.add(st.id);
+    for (const dep of st.dependsOn ?? []) {
+      const d = byId.get(dep);
+      if (d) visit(d);
+    }
+    out.push(st);
+  };
+  for (const st of subtasks) visit(st); // stable: declared order breaks ties
+  return out;
+}
+
+function appendPatch(base: string, next: string): string {
+  if (!next || !next.trim()) return base;
+  if (!base) return next.endsWith("\n") ? next : next + "\n";
+  return base + (base.endsWith("\n") ? "" : "\n") + next;
+}
+
+function requireSeam(name: string): never {
+  throw new Error(
+    `runDecomposition: no "${name}" provided. The default wiring lands in Phase 9O.5 (CLI); ` +
+      `callers/tests must inject "${name}".`,
+  );
+}
+
+/**
+ * Execute a decomposition: each sub-task runs (verify-then-force, via the
+ * injected seam) on the cumulative base in dependency order; a non-accepted
+ * sub-task STOPS the run (dependents do not run) and is surfaced. After all are
+ * accepted, the assembled patch runs the full check. Never mutates the real
+ * repo and never auto-applies — returns the assembled patch + verdict.
+ */
+export async function runDecomposition(
+  plan: DecompositionPlan,
+  opts: RunDecompositionOptions,
+): Promise<DecompositionRunResult> {
+  const warnings: string[] = [...(plan.warnings ?? [])];
+  const runSubTask = opts.runSubTask ?? (() => requireSeam("runSubTask"));
+  const runAssemblyCheck = opts.runAssemblyCheck ?? (() => requireSeam("runAssemblyCheck"));
+
+  const ordered = topoOrder(plan.subtasks);
+  const order: string[] = [];
+  const subtasks: { id: string; accepted: boolean; reason?: string }[] = [];
+
+  let cumulativePatch = "";
+  let allAccepted = true;
+
+  for (const st of ordered) {
+    order.push(st.id);
+    const r = await runSubTask(st, cumulativePatch);
+    subtasks.push({ id: st.id, accepted: r.accepted, reason: r.reason });
+    if (!r.accepted) {
+      allAccepted = false;
+      warnings.push(
+        `sub-task "${st.id}" not accepted (${r.reason ?? "verify/force failed"}) — stopping; dependents not run`,
+      );
+      break; // STOP — no silent continue past a failed sub-task
+    }
+    cumulativePatch = appendPatch(cumulativePatch, r.patch);
+  }
+
+  let assemblyOk = false;
+  if (allAccepted) {
+    const a = await runAssemblyCheck(cumulativePatch);
+    assemblyOk = a.ok;
+    if (!assemblyOk) {
+      warnings.push("assembled patch failed the full check (regression) — NOT applied");
+    }
+  }
+
+  return {
+    ok: allAccepted && assemblyOk,
+    order,
+    subtasks,
+    assembledPatch: cumulativePatch,
+    assemblyOk,
+    warnings,
+  };
+}
