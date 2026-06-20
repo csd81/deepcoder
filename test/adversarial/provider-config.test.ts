@@ -40,7 +40,7 @@ test("malformed numeric env vars fall back to defaults (no NaN)", () => {
     const cfg = loadConfig({ workspaceRoot: "/tmp" });
     assert.equal(cfg.compactAt, 0.8);
     assert.equal(cfg.maxTurns, 20);
-    assert.equal(cfg.contextBudgetTokens, 64000);
+    assert.equal(cfg.contextBudgetTokens, 120000); // default sized to modern 128K windows (DeepSeek/OpenAI/Anthropic)
   });
 });
 
