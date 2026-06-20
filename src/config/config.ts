@@ -259,9 +259,9 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   "openai-compatible": "gpt-4o-mini",
   "openai-responses": "gpt-5.3-codex",
   qwen: "qwen2.5-coder-32b-instruct",
-  // Default Gemini: 3.1 Pro. 3.x works now that the provider captures/replays
-  // Gemini's thought_signature in the tool loop.
-  gemini: "gemini-3.1-pro",
+  // Default Gemini: 3.1 Pro (preview). 3.x works now that the provider
+  // captures/replays Gemini's thought_signature in the tool loop.
+  gemini: "gemini-3.1-pro-preview",
   anthropic: "claude-3-5-sonnet-latest",
 };
 
