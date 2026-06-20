@@ -887,13 +887,66 @@ export async function handleSlashCommand(
 
       if (sub === "plan") {
         if (!subArg) {
-          console.log(chalk.dim("usage: /delegate plan [--tdd] <task>  |  /delegate plan preflight <task>"));
+          console.log(chalk.dim("usage: /delegate plan [--tdd] <task>  |  /delegate plan preflight <task>  |  /delegate plan --smart <task>"));
           return { consumed: true };
         }
 
         // Check for the "preflight" trigger: the first token after "plan" is "preflight".
         const [firstToken, ...restTokens] = subArgs;
         const restArg = restTokens.join(" ").trim();
+
+        if (firstToken === "--smart") {
+          if (!restArg) {
+            console.log(chalk.dim("usage: /delegate plan --smart <task>  — build a model-driven decomposition plan"));
+            return { consumed: true };
+          }
+          console.log(chalk.dim("Running model-driven decomposer…"));
+          
+          const { proposeDecomposition } = await import("../delegate/decompose.js");
+          const { DECOMPOSE_PROMPT } = await import("../delegate/decomposePrompts.js");
+          
+          const deps = {
+            generate: async (task: string) => {
+              const prompt = `${DECOMPOSE_PROMPT}\n\nTASK:\n${task}\n\nAVAILABLE CHECKS:\n${Object.keys(config.checks).join(", ")}`;
+              const route = session.modelRouter.resolve("plan");
+              const provider = session.providerPool.providerFor(route);
+              const res = await provider.chat({
+                messages: [{ role: "user", content: prompt }],
+                tools: [],
+                model: route.model
+              });
+              return res.text;
+            }
+          };
+          
+          const plan = await proposeDecomposition(restArg, {}, deps, {
+            checks: Object.keys(config.checks),
+            maxSubTasks: 12
+          });
+          
+          console.log(chalk.bold(`\nDecomposition Plan (${plan.source}):`));
+          console.log(chalk.dim(`  task: ${plan.task.slice(0, 120)}${plan.task.length > 120 ? "…" : ""}`));
+          console.log(chalk.dim(`  subtasks: ${plan.subtasks.length}`));
+          
+          for (const st of plan.subtasks) {
+            const depsStr = st.dependsOn.length ? ` (after ${st.dependsOn.join(", ")})` : "";
+            console.log(`    ${chalk.cyan(st.id)}: ${st.title.slice(0, 60)}${depsStr}`);
+            console.log(chalk.dim(`      check: ${st.checkName} · paths: ${st.allowedPaths.join(", ")}`));
+            if (st.deliverables && st.deliverables.length > 0) {
+              console.log(chalk.dim(`      deliverables: ${st.deliverables.length}`));
+            }
+            if (st.testCommand) {
+              console.log(chalk.dim(`      testCommand: ${st.testCommand}`));
+            }
+          }
+          
+          if (plan.warnings && plan.warnings.length > 0) {
+            console.log(chalk.yellow("  warnings:"));
+            for (const w of plan.warnings) console.log(chalk.yellow(`    - ${w}`));
+          }
+          
+          return { consumed: true };
+        }
 
         if (firstToken === "preflight") {
           if (!restArg) {
