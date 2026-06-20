@@ -249,6 +249,13 @@ export class ProviderError extends Error {
   }
 }
 
+/** Best-effort extraction of a provider error's human detail (OpenAI SDK APIError shape). */
+function providerErrorDetail(err: unknown): string | undefined {
+  const e = err as { error?: { message?: string }; message?: string };
+  const detail = e?.error?.message ?? e?.message;
+  return typeof detail === "string" && detail.trim().length > 0 ? detail.trim() : undefined;
+}
+
 export function mapProviderError(err: unknown, ctx: { label: string; model: string }): ProviderError {
   const status = (err as { status?: number }).status;
   switch (status) {
@@ -256,9 +263,18 @@ export function mapProviderError(err: unknown, ctx: { label: string; model: stri
       return new ProviderError(`${ctx.label} rejected the API key (401). Check your API key.`);
     case 429:
       return new ProviderError(`${ctx.label} rate limit hit (429). Wait a moment and retry.`);
-    case 400:
     case 404:
-      return new ProviderError(`${ctx.label} could not use model "${ctx.model}" (${status}). Check the model name.`);
+      return new ProviderError(`${ctx.label} could not use model "${ctx.model}" (404). Check the model name.`);
+    case 400: {
+      // Surface the real 400 reason (e.g. Gemini 3.x "thought_signature" /
+      // conversation-structure errors) instead of a misleading "check the model name".
+      const detail = providerErrorDetail(err);
+      return new ProviderError(
+        detail
+          ? `${ctx.label} rejected the request (400): ${redactSecrets(detail)}`
+          : `${ctx.label} rejected the request (400) for model "${ctx.model}".`,
+      );
+    }
     default: {
       if ((err as { name?: string }).name === "AbortError") return new ProviderError("Request aborted.");
       const msg = (err as { message?: string }).message ?? String(err);

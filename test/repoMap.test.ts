@@ -82,7 +82,7 @@ test("list_recent_context surfaces summaries, touched files, and todos", async (
     signal: new AbortController().signal,
     readTracker: new Set([path.join(root, "src/widget.ts")]),
     todos: [{ id: "1", content: "ship it", status: "pending" }],
-    history: [{ role: "system", content: "[compacted-summary]\nearlier work here" }],
+    history: [{ role: "user", content: "[compacted-summary]\nearlier work here" }],
   };
   const out = await listRecentContextTool.build({}).execute(ctx);
   assert.match(out.output, /earlier work here/);

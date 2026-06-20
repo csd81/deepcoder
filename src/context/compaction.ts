@@ -46,13 +46,19 @@ export function compactIfNeeded(messages: AgentMessage[], opts: CompactOptions):
   const older = messages.slice(head, tailStart);
   const summary = buildSummary(older, opts.todos);
 
-  messages.splice(head, older.length, { role: "system", content: summary });
+  // The summary is a USER message, not a second `system` message. Providers like
+  // the Gemini OpenAI-compatible endpoint send system messages INLINE (no
+  // hoisting) and reject a non-leading/second system message — after compaction
+  // that 400s the next call (manifesting alongside the Gemini 3.x
+  // thought_signature requirement). A user-role recap keeps a valid
+  // system→user→assistant structure and is provider-agnostic.
+  messages.splice(head, older.length, { role: "user", content: summary });
   const after = estimateMessages(messages);
   return { compacted: true, before, after };
 }
 
 export function isSummary(m: AgentMessage): boolean {
-  return m.role === "system" && m.content.startsWith(SUMMARY_TAG);
+  return m.role === "user" && m.content.startsWith(SUMMARY_TAG);
 }
 
 /** Walk back from the end accumulating tokens until we hit ~maxTailTokens, then

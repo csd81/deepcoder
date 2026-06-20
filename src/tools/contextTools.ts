@@ -67,7 +67,7 @@ export const listRecentContextTool: Tool = {
       async execute(ctx) {
         const parts: string[] = [];
 
-        const summaries = (ctx.history ?? []).filter((m) => m.role === "system" && m.content.startsWith(SUMMARY_TAG));
+        const summaries = (ctx.history ?? []).filter((m) => m.role === "user" && m.content.startsWith(SUMMARY_TAG));
         if (summaries.length) parts.push("## Summaries of earlier work\n" + summaries.map((s) => s.content).join("\n\n"));
 
         const files = [...ctx.readTracker].map((p) => displayPath(ctx.workspaceRoot, p)).sort();
