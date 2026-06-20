@@ -60,6 +60,8 @@ export interface DelegationPlan {
   dependencies: { before: string; after: string; reason: string }[];
   globalChecks: string[];
   riskNotes: string[];
+  /** Phase 9E — optional bounded context brief from the explorer subagent. */
+  contextBrief?: string;
 }
 
 /* ------------------------------------------------------------------ */

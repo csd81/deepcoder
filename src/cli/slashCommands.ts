@@ -34,6 +34,7 @@ import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
 import { resolveInstructions } from "./repl.js";
 import { buildPlan } from "../delegate/planner.js";
+import { buildContextAwarePlan } from "../delegate/contextPlan.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
 import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
@@ -777,9 +778,53 @@ export async function handleSlashCommand(
 
       if (sub === "plan") {
         if (!subArg) {
-          console.log(chalk.dim("usage: /delegate plan <task>  — build a deterministic delegation plan"));
+          console.log(chalk.dim("usage: /delegate plan <task>  |  /delegate plan preflight <task>"));
           return { consumed: true };
         }
+
+        // Check for the "preflight" trigger: the first token after "plan" is "preflight".
+        const [firstToken, ...restTokens] = subArgs;
+        const restArg = restTokens.join(" ").trim();
+
+        if (firstToken === "preflight") {
+          if (!restArg) {
+            console.log(chalk.dim("usage: /delegate plan preflight <task>  — build a context-aware delegation plan"));
+            return { consumed: true };
+          }
+          console.log(chalk.dim("Running context-aware planner (explorer subagent)…"));
+          const plan = await buildContextAwarePlan(restArg, {
+            checkNames: Object.keys(config.checks),
+          });
+          await savePlan(root, plan);
+          console.log(chalk.bold("\nDelegation Plan (context-aware):"));
+          console.log(chalk.dim(`  id: ${plan.id}`));
+          console.log(chalk.dim(`  task: ${plan.task.slice(0, 120)}${plan.task.length > 120 ? "…" : ""}`));
+          console.log(chalk.dim(`  workers: ${plan.workers.length}`));
+          if (plan.contextBrief) {
+            console.log(chalk.green(`  context brief: attached (${plan.contextBrief.length} bytes)`));
+          } else {
+            console.log(chalk.yellow("  context brief: none (fallback to deterministic plan)"));
+          }
+          for (const w of plan.workers) {
+            const deps = w.dependsOn.length ? ` (after ${w.dependsOn.join(", ")})` : "";
+            console.log(`    ${chalk.cyan(w.id)}: ${w.title.slice(0, 60)}${deps}`);
+            console.log(chalk.dim(`      check: ${w.checkName} · paths: ${w.allowedPaths.join(", ")}`));
+          }
+          if (plan.dependencies.length) {
+            console.log(chalk.dim("  dependencies:"));
+            for (const d of plan.dependencies) {
+              console.log(chalk.dim(`    ${d.before} → ${d.after} (${d.reason.slice(0, 60)})`));
+            }
+          }
+          if (plan.riskNotes.length) {
+            console.log(chalk.yellow("  risks:"));
+            for (const r of plan.riskNotes) console.log(chalk.yellow(`    - ${r}`));
+          }
+          console.log(chalk.dim(`\nSaved to .deepcoder/delegations/${plan.id}/plan.json`));
+          return { consumed: true };
+        }
+
+        // Plain deterministic plan (existing behavior).
         const plan = buildPlan(subArg, { checkNames: Object.keys(config.checks) });
         await savePlan(root, plan);
         console.log(chalk.bold("\nDelegation Plan:"));
@@ -1088,7 +1133,7 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
-      console.log(chalk.dim("usage: /delegate plan <task> | run <plan-id> [worker-id] | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id>"));
+      console.log(chalk.dim("usage: /delegate plan [preflight] <task> | run <plan-id> [worker-id] | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id>"));
       return { consumed: true };
     }
 
@@ -1124,6 +1169,7 @@ export async function handleSlashCommand(
           "/status          git status",
           "/diff            git diff",
           "/delegate plan <task>  build a delegation plan",
+          "/delegate plan preflight <task>  build a context-aware delegation plan (runs explorer)",
           "/delegate run <plan-id> [worker-id]  run one worker or all runnable workers sequentially",
           "/delegate status <plan-id>  show worker status table (+ conflict hints from run artifacts)",
           "/delegate review <plan-id>  show full plan for human review",
