@@ -54,7 +54,7 @@ export type CoverageProbe = (args: {
   signal: AbortSignal;
 }) => Promise<CoverageProbeResult>;
 
-async function defaultCoverageProbe(args: {
+export async function defaultCoverageProbe(args: {
   workspaceRoot: string;
   testCommand: string;
   signal: AbortSignal;
