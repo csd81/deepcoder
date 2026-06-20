@@ -35,7 +35,9 @@ export function resolveBackend(mode: SandboxMode, fallback?: SandboxFallback): R
       return "local";
     case "bubblewrap":
       if (bwrapAvailable()) return "bubblewrap";
-      if (fallback === "fail") {
+      // "ask" fails closed too: we can't synchronously prompt here, and silently
+      // running unsandboxed is the opposite of what "ask" implies.
+      if (fallback === "fail" || fallback === "ask") {
         throw new Error(
           "bwrap (bubblewrap) is not available on this system — cannot sandbox. " +
             "Set sandbox.mode to \"fast\", \"local\", or \"off\" to proceed without isolation.",
@@ -44,7 +46,7 @@ export function resolveBackend(mode: SandboxMode, fallback?: SandboxFallback): R
       return "local";
     default:
       // docker/podman/runsc/sandbox-exec deferred to a later phase
-      if (fallback === "fail") {
+      if (fallback === "fail" || fallback === "ask") {
         throw new Error(
           `Sandbox mode "${mode}" is not yet implemented — cannot sandbox. ` +
             'Set sandbox.mode to "fast", "local", or "off" to proceed without isolation.',
