@@ -23,7 +23,14 @@ import type { HooksConfig } from "../hooks/types.js";
 import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig } from "./config.js";
 import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
+import type { ModelPricing } from "../providers/pricing.js";
 import { hasFallbackCycle } from "../models/router.js";
+
+export interface TelemetryConfig {
+  statusline?: boolean;
+  costs?: boolean;
+  pricing?: ModelPricing[];
+}
 
 /** Shape of `.deepcoder/config.json` (all fields optional). */
 export interface FileConfig {
@@ -39,6 +46,7 @@ export interface FileConfig {
   testTargeting?: Partial<TestTargetingConfig>;
   diagnostics?: Partial<DiagnosticsConfig>;
   models?: ModelsFileConfig;
+  telemetry?: TelemetryConfig;
 }
 
 const mcpServerSchema = z.object({
@@ -327,7 +335,28 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     };
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics };
+  const rawTelemetry = (parsed as { telemetry?: unknown }).telemetry;
+  let telemetry: TelemetryConfig | undefined;
+  if (rawTelemetry && typeof rawTelemetry === "object") {
+    const raw = rawTelemetry as Record<string, unknown>;
+    telemetry = {
+      statusline: typeof raw.statusline === "boolean" ? raw.statusline : undefined,
+      costs: typeof raw.costs === "boolean" ? raw.costs : undefined,
+      pricing: Array.isArray(raw.pricing)
+        ? raw.pricing.filter(
+            (p: unknown): p is ModelPricing =>
+              typeof p === "object" && p !== null &&
+              typeof (p as Record<string, unknown>).provider === "string" &&
+              typeof (p as Record<string, unknown>).modelPattern === "string" &&
+              typeof (p as Record<string, unknown>).inputPerMillionUsd === "number" &&
+              typeof (p as Record<string, unknown>).outputPerMillionUsd === "number" &&
+              typeof (p as Record<string, unknown>).effectiveDate === "string",
+          )
+        : undefined,
+    };
+  }
+
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry };
 }
 
 function warn(msg: string): void {

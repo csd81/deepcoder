@@ -1,6 +1,7 @@
 import { promises as fs, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
+import { estimateCost } from "../providers/pricing.js";
 import { Git } from "../workspace/git.js";
 import { resolveReadPathInWorkspace, displayPath, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
@@ -189,12 +190,40 @@ export async function handleSlashCommand(
 
     case "usage": {
       const u = session.tokenUsage;
+      const est = estimateCost(u, { provider: config.provider, model: config.model, pricing: config.telemetry.pricing });
+      const costStr = est.pricingKnown ? ` · est ~$${est.totalUsd.toFixed(4)} (${est.rateLabel})` : " · cost: pricing unknown";
       console.log(
         chalk.dim(
-          `Session tokens — total ${u.totalTokens} (prompt ${u.promptTokens}, completion ${u.completionTokens}). ` +
-            `Provider-reported; not a remote quota.`,
+          `Session tokens — total ${u.totalTokens} (prompt ${u.promptTokens}, completion ${u.completionTokens})${config.telemetry.costs ? costStr : ""}. ` +
+            `Provider-reported estimate; not a remote quota.`,
         ),
       );
+      return { consumed: true };
+    }
+
+    case "cost": {
+      const u = session.tokenUsage;
+      const est = estimateCost(u, { provider: config.provider, model: config.model, pricing: config.telemetry.pricing });
+      if (!est.pricingKnown) {
+        console.log(chalk.dim(`Cost: pricing unknown for ${config.provider}/${config.model} — showing tokens only (total ${u.totalTokens}).`));
+      } else {
+        console.log(chalk.dim(
+          `Estimated cost (${est.rateLabel}): ~$${est.totalUsd.toFixed(4)} ` +
+            `(input ~$${est.inputUsd.toFixed(4)}, output ~$${est.outputUsd.toFixed(4)}) for ${u.totalTokens} tokens. Estimate only.`,
+        ));
+      }
+      return { consumed: true };
+    }
+
+    case "telemetry": {
+      const t = session.telemetry;
+      const u = session.tokenUsage;
+      const est = estimateCost(u, { provider: config.provider, model: config.model, pricing: config.telemetry.pricing });
+      console.log(chalk.dim(
+        `Telemetry — tokens ${u.totalTokens} · ` +
+          `model calls ${t?.modelCalls ?? 0} · tool calls ${t?.toolCalls ?? 0} · check runs ${t?.checkRuns ?? 0} · ` +
+          `warnings ${t?.warnings.length ?? 0}${est.pricingKnown ? ` · est ~$${est.totalUsd.toFixed(4)}` : ""}`,
+      ));
       return { consumed: true };
     }
 

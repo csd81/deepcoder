@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { loadFileConfig, type McpServerConfig, type CheckConfig } from "./fileConfig.js";
+import { loadFileConfig, type McpServerConfig, type CheckConfig, type TelemetryConfig } from "./fileConfig.js";
 import { isWorkspaceTrusted } from "./trust.js";
 import { DEFAULT_SANDBOX, type SandboxConfig, type SandboxMode } from "../sandbox/types.js";
 import {
@@ -132,6 +132,8 @@ export interface Config {
   testTargeting: TestTargetingConfig;
   /** Phase 10F — model/task router config (optional). */
   models?: ModelsFileConfig;
+  /** Phase 10C — telemetry configuration (statusline, costs, pricing overrides). */
+  telemetry: TelemetryConfig;
 }
 
 export interface QualityGateOptions {
@@ -558,5 +560,10 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     delegate,
     testTargeting,
     models: file.models,
+    telemetry: {
+      statusline: (process.env.DEEPCODER_STATUSLINE ?? "").toLowerCase() === "off" ? false : (file.telemetry?.statusline ?? true),
+      costs: file.telemetry?.costs ?? true,
+      pricing: file.telemetry?.pricing,
+    },
   };
 }

@@ -27,6 +27,8 @@ export interface PersistedSession {
   /** Explorer brief records — quarantined metadata, NOT part of model context. */
   briefs?: BriefRunRecord[];
   activatedSkills?: import("../skills/types.js").ActivatedSkillRecord[];
+  /** Phase 10C — session usage/cost telemetry. Absent in pre-10C sessions (loads as undefined). */
+  telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +47,7 @@ export interface SessionSnapshot {
   reviews: SubagentRunRecord[];
   briefs: BriefRunRecord[];
   activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
+  telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -86,6 +89,7 @@ export class SessionStore {
       reviews: snapshot.reviews ?? [],
       briefs: snapshot.briefs ?? [],
       activatedSkills: snapshot.activatedSkills ?? [],
+      telemetry: snapshot.telemetry,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };

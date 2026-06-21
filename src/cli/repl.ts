@@ -79,6 +79,8 @@ export interface Session {
   modelRouter: ModelRouter;
   /** Phase 10F — provider pool for caching provider instances. */
   providerPool: ProviderPool;
+  /** Phase 10C — session usage/cost telemetry (optional; persisted across resume). */
+  telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
 }
 
 /**
