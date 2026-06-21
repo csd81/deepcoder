@@ -13,7 +13,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { savePlan } from "./store.js";
-import { runWorker } from "./workerRunner.js";
+import { runWorker, type WorkerModelOverride } from "./workerRunner.js";
 import type { DelegationPlan, WorkerRun, WorkerTask, WorkerLockSet, WorkerBatch, OrchestrationTrace } from "./types.js";
 import type { UiEvent } from "../ui/events.js";
 
@@ -34,6 +34,8 @@ export interface RunRunnableOptions {
   signal: AbortSignal;
   mainEntry: string;
   provider: string;
+  /** Phase 10F — optional "delegate" route pinning each worker's model/backend. */
+  modelOverride?: WorkerModelOverride;
   parentEnv?: NodeJS.ProcessEnv;
   delegateDepth?: number;
   onData?(chunk: string): void;
@@ -181,6 +183,7 @@ export async function runRunnable(
       signal: opts.signal,
       mainEntry: opts.mainEntry,
       provider: opts.provider,
+      modelOverride: opts.modelOverride,
       parentEnv: opts.parentEnv,
       delegateDepth: opts.delegateDepth,
       onData: opts.onData,
@@ -472,6 +475,7 @@ export async function runRunnableConcurrent(
       signal: opts.signal,
       mainEntry: opts.mainEntry,
       provider: opts.provider,
+      modelOverride: opts.modelOverride,
       parentEnv: opts.parentEnv,
       delegateDepth: opts.delegateDepth,
       onData: opts.onData,

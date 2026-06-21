@@ -23,7 +23,7 @@ import { assertSafeId } from "../workspace/paths.js";
 import { buildReproPhasePrompt, buildFixPhasePrompt } from "./tddPrompts.js";
 import { writeTddRecord, saveTddCheckRun } from "./tddArtifacts.js";
 import { validatePatch } from "./patchValidator.js";
-import { runWorker, type RunWorkerResult, type SpawnFn } from "./workerRunner.js";
+import { runWorker, buildWorkerEnv, type RunWorkerResult, type SpawnFn, type WorkerModelOverride } from "./workerRunner.js";
 import { parseTapResults, computeCoverage, deliverablesNotGreen } from "./coverage.js";
 import type { CoverageReport } from "./coverage.js";
 import type { DelegationPlan, WorkerRun, WorkerTask, WorkerTddRun, WorkerIsolationRecord } from "./types.js";
@@ -95,6 +95,8 @@ export interface RunWorkerTddInput {
   mainEntry: string;
   /** Resolved provider name (decides OPENAI_API_KEY forwarding). */
   provider: string;
+  /** Phase 10F — optional "delegate" route pinning the worker's model/backend. */
+  modelOverride?: WorkerModelOverride;
   /** Current delegation depth; > 0 means we are ourselves a worker → refuse. */
   delegateDepth?: number;
   /** Parent env to copy the allowlist from. Defaults to process.env. */
@@ -236,7 +238,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
       file: reproCmd.file,
       args: reproCmd.args,
       cwd: reproIso.isolatedRoot,
-      env: buildTddWorkerEnv(parentEnv, input.provider, input.delegateDepth ?? 0),
+      env: buildTddWorkerEnv(parentEnv, input.provider, input.delegateDepth ?? 0, input.modelOverride),
       signal: input.signal,
       timeoutMs: input.timeoutMs ?? 30 * 60_000,
       maxCaptureBytes: 1_000_000,
@@ -501,7 +503,7 @@ export async function runWorkerTdd(input: RunWorkerTddInput): Promise<RunWorkerR
       file: fixCmd.file,
       args: fixCmd.args,
       cwd: fixIso.isolatedRoot,
-      env: buildTddWorkerEnv(parentEnv, input.provider, input.delegateDepth ?? 0),
+      env: buildTddWorkerEnv(parentEnv, input.provider, input.delegateDepth ?? 0, input.modelOverride),
       signal: input.signal,
       timeoutMs: input.timeoutMs ?? 30 * 60_000,
       maxCaptureBytes: 1_000_000,
@@ -737,31 +739,11 @@ function buildTddWorkerEnv(
   parentEnv: NodeJS.ProcessEnv,
   provider: string,
   delegateDepth: number,
+  modelOverride?: WorkerModelOverride,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  const ALLOWED_BASE_ENV = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM"];
-  const ALLOWED_PROVIDER_ENV = [
-    "DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_BASE_URL",
-    "DEEPCODER_MODEL", "DEEPCODER_REASONER_MODEL", "DEEPCODER_PLAN_FIRST",
-    "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
-  ];
-  const OPENAI_COMPATIBLE = new Set(["openai", "openai-compatible"]);
-
-  const copy = (key: string) => {
-    const v = parentEnv[key];
-    if (typeof v === "string") env[key] = v;
-  };
-
-  for (const k of ALLOWED_BASE_ENV) copy(k);
-  for (const k of ALLOWED_PROVIDER_ENV) copy(k);
-  if (OPENAI_COMPATIBLE.has(provider.toLowerCase())) copy("OPENAI_API_KEY");
-
-  env.DEEPCODER_APPROVAL_MODE = "auto";
-  env.DEEPCODER_WORKSPACE_ISOLATION = "off";
-  env.NO_COLOR = "1";
-  env.DEEPCODER_DELEGATE_DEPTH = String(delegateDepth + 1);
-
-  return env;
+  // Delegate to the single source of truth so the strict allowlist, forced
+  // posture, and Phase 10F delegate-role override stay identical across paths.
+  return buildWorkerEnv({ parentEnv, provider, delegateDepth, modelOverride });
 }
 
 async function cleanupIso(iso: { cleanup(): Promise<void> } | null): Promise<void> {

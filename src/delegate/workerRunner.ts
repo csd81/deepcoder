@@ -61,6 +61,13 @@ export function delegateDepthFromEnv(env: NodeJS.ProcessEnv): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** Phase 10F — a resolved "delegate" route that pins the child's model/backend. */
+export interface WorkerModelOverride {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+}
+
 export interface WorkerEnvInput {
   /** Parent process env to copy the allowlist from. */
   parentEnv: NodeJS.ProcessEnv;
@@ -68,6 +75,12 @@ export interface WorkerEnvInput {
   provider: string;
   /** Current delegation depth; the child is forced to depth + 1. */
   delegateDepth: number;
+  /**
+   * Phase 10F — when present, pins the child's provider/model/baseUrl to a
+   * resolved "delegate" route (overriding any inherited value). Absent by
+   * default, so the child inherits the parent's model byte-identically.
+   */
+  modelOverride?: WorkerModelOverride;
 }
 
 /**
@@ -88,6 +101,16 @@ export function buildWorkerEnv(input: WorkerEnvInput): NodeJS.ProcessEnv {
   for (const k of ALLOWED_BASE_ENV) copy(k);
   for (const k of ALLOWED_PROVIDER_ENV) copy(k);
   if (OPENAI_COMPATIBLE.has(input.provider.toLowerCase())) copy("OPENAI_API_KEY");
+
+  // Phase 10F — pin the delegate-role model/backend when a route override is
+  // given (overrides any inherited DEEPCODER_MODEL/PROVIDER/BASE_URL). This only
+  // moves the model selection; it never reintroduces a forbidden var (we set
+  // specific keys) nor weakens the forced posture applied below.
+  if (input.modelOverride) {
+    env.DEEPCODER_PROVIDER = input.modelOverride.provider;
+    env.DEEPCODER_MODEL = input.modelOverride.model;
+    if (input.modelOverride.baseUrl) env.DEEPCODER_BASE_URL = input.modelOverride.baseUrl;
+  }
 
   // Forced posture — always overrides inherited values.
   env.DEEPCODER_APPROVAL_MODE = "auto";
@@ -159,6 +182,8 @@ export interface RunWorkerInput {
   mainEntry: string;
   /** Resolved provider name (decides OPENAI_API_KEY forwarding). */
   provider: string;
+  /** Phase 10F — optional "delegate" route pinning the worker's model/backend. */
+  modelOverride?: WorkerModelOverride;
   /** Current delegation depth; > 0 means we are ourselves a worker → refuse. */
   delegateDepth?: number;
   /** Parent env to copy the allowlist from. Defaults to process.env. */
@@ -249,7 +274,7 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
 
   let res: BoundedProcessResult;
   try {
-    const env = buildWorkerEnv({ parentEnv, provider: input.provider, delegateDepth: depth });
+    const env = buildWorkerEnv({ parentEnv, provider: input.provider, delegateDepth: depth, modelOverride: input.modelOverride });
     const cmd = buildWorkerCommand({
       mainEntry: input.mainEntry,
       checkName: input.worker.checkName,

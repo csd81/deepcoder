@@ -50,7 +50,7 @@ import { activateSkill } from "../skills/activation.js";
 import { buildPlan } from "../delegate/planner.js";
 import { buildContextAwarePlan } from "../delegate/contextPlan.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
-import { runWorker, delegateDepthFromEnv } from "../delegate/workerRunner.js";
+import { runWorker, delegateDepthFromEnv, type WorkerModelOverride } from "../delegate/workerRunner.js";
 import { runWorkerTdd } from "../delegate/tdd.js";
 import { readTddRecord } from "../delegate/tddArtifacts.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
@@ -1367,6 +1367,7 @@ export async function handleSlashCommand(
             return { consumed: true };
           }
           const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
+          const modelOverride = resolveDelegateOverride(session);
           const ac = new AbortController();
           try {
             const { run } = isTddRun
@@ -1377,6 +1378,7 @@ export async function handleSlashCommand(
                   signal: ac.signal,
                   mainEntry,
                   provider: config.provider,
+                  modelOverride,
                   delegateDepth: depth,
                   onData: (c) => process.stdout.write(c),
                   checks: config.checks,
@@ -1388,6 +1390,7 @@ export async function handleSlashCommand(
                   signal: ac.signal,
                   mainEntry,
                   provider: config.provider,
+                  modelOverride,
                   delegateDepth: depth,
                   onData: (c) => process.stdout.write(c),
                 });
@@ -1442,6 +1445,7 @@ export async function handleSlashCommand(
         }
 
         const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
+        const modelOverride = resolveDelegateOverride(session);
         const ac = new AbortController();
         try {
           const runOne = isTddRun
@@ -1453,6 +1457,7 @@ export async function handleSlashCommand(
                   signal: ac.signal,
                   mainEntry,
                   provider: config.provider,
+                  modelOverride,
                   delegateDepth: depth,
                   onData: (c) => process.stdout.write(c),
                   checks: config.checks,
@@ -1466,6 +1471,7 @@ export async function handleSlashCommand(
             signal: ac.signal,
             mainEntry,
             provider: config.provider,
+            modelOverride,
             delegateDepth: depth,
             onData: (c: string) => process.stdout.write(c),
             runOne,
@@ -2202,6 +2208,17 @@ async function runPlugins(session: Session, arg: string): Promise<void> {
  * reuse a cached structured summary when fresh, else compute + persist one. Wires
  * the understand producer + cache.
  */
+/**
+ * Phase 10F — resolve the "delegate" role into a worker model override. Returns
+ * undefined when the route is the default (no env/file override), so delegated
+ * workers inherit the parent's model byte-identically unless explicitly routed.
+ */
+function resolveDelegateOverride(session: Session): WorkerModelOverride | undefined {
+  const route = session.modelRouter?.resolve("delegate");
+  if (!route || route.source === "default") return undefined;
+  return { provider: route.provider, model: route.model, baseUrl: route.baseUrl };
+}
+
 async function runUnderstand(session: Session): Promise<void> {
   const root = session.config.workspaceRoot;
   let files: { path: string; mtimeMs: number }[] = [];

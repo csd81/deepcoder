@@ -91,6 +91,52 @@ test("forced posture overrides any inherited value (can't be poisoned by parent 
 });
 
 /* ---------------------------------------------------------------- */
+/*  buildWorkerEnv — Phase 10F delegate-role model override          */
+/* ---------------------------------------------------------------- */
+
+test("without a modelOverride the child inherits the parent's model (byte-identical)", async () => {
+  const env = buildWorkerEnv({ parentEnv: PARENT, provider: "deepseek", delegateDepth: 0 });
+  assert.equal(env.DEEPCODER_MODEL, "deepseek-chat");
+  assert.equal(env.DEEPCODER_PROVIDER, "deepseek");
+  assert.equal(env.DEEPCODER_BASE_URL, "https://api.example");
+});
+
+test("a modelOverride forces the child's provider/model/baseUrl, overriding inherited values", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: PARENT,
+    provider: "deepseek",
+    delegateDepth: 0,
+    modelOverride: { provider: "deepseek", model: "deepseek-reasoner", baseUrl: "https://ds2.example" },
+  });
+  assert.equal(env.DEEPCODER_MODEL, "deepseek-reasoner");
+  assert.equal(env.DEEPCODER_PROVIDER, "deepseek");
+  assert.equal(env.DEEPCODER_BASE_URL, "https://ds2.example");
+});
+
+test("a modelOverride without baseUrl leaves the inherited baseUrl intact", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: PARENT,
+    provider: "deepseek",
+    delegateDepth: 0,
+    modelOverride: { provider: "deepseek", model: "deepseek-reasoner" },
+  });
+  assert.equal(env.DEEPCODER_MODEL, "deepseek-reasoner");
+  assert.equal(env.DEEPCODER_BASE_URL, "https://api.example");
+});
+
+test("a modelOverride cannot reintroduce a forbidden var or weaken the forced posture", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: PARENT,
+    provider: "deepseek",
+    delegateDepth: 0,
+    modelOverride: { provider: "deepseek", model: "deepseek-reasoner" },
+  });
+  assert.equal(env.DEEPCODER_APPROVAL_MODE, "auto");
+  assert.equal(env.DEEPCODER_WORKSPACE_ISOLATION, "off");
+  assert.equal(env.GITHUB_TOKEN, undefined);
+});
+
+/* ---------------------------------------------------------------- */
 /*  buildWorkerCommand — key never in argv                          */
 /* ---------------------------------------------------------------- */
 
