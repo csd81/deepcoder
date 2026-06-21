@@ -49,3 +49,48 @@ test("[10B6-partial] a line split across two pushes is dispatched only once the 
   const resp = out.map((l) => JSON.parse(l)).find((m) => m.id === 7);
   assert.ok(resp && resp.result?.ok === true, "completed line dispatched once");
 });
+
+test("[10B6-multi] two complete lines in one chunk dispatch two responses in order", async () => {
+  const out: string[] = [];
+  const t = createStdioTransport({ client: client(), write: (l) => out.push(l) });
+  await t.push(
+    JSON.stringify({ jsonrpc: "2.0", id: 3, method: "health" }) + "\n" +
+    JSON.stringify({ jsonrpc: "2.0", id: 4, method: "health" }) + "\n",
+  );
+  assert.equal(out.length, 2, "two framed responses written");
+  const r1 = JSON.parse(out[0]);
+  const r2 = JSON.parse(out[1]);
+  assert.equal(r1.id, 3);
+  assert.equal(r1.result?.ok, true);
+  assert.equal(r2.id, 4);
+  assert.equal(r2.result?.ok, true);
+  assert.ok(out.every((l) => l.endsWith("\n")), "each message ends with newline");
+});
+
+test("[10B6-end] a trailing line with no newline is flushed by end()", async () => {
+  const out: string[] = [];
+  const t = createStdioTransport({ client: client(), write: (l) => out.push(l) });
+  await t.push('{"jsonrpc":"2.0","id":5,"method":"health"}');
+  assert.equal(out.length, 0, "nothing dispatched before end()");
+  await t.end();
+  assert.equal(out.length, 1, "flushed by end()");
+  const resp = JSON.parse(out[0]);
+  assert.equal(resp.id, 5);
+  assert.equal(resp.result?.ok, true);
+  assert.ok(out[0].endsWith("\n"));
+});
+
+test("[10B6-blank] blank and whitespace-only lines between requests are ignored", async () => {
+  const out: string[] = [];
+  const t = createStdioTransport({ client: client(), write: (l) => out.push(l) });
+  await t.push("\n\n  \n\t\n");
+  assert.equal(out.length, 0, "nothing dispatched for blank/whitespace lines");
+  await t.push(
+    JSON.stringify({ jsonrpc: "2.0", id: 9, method: "health" }) + "\n" +
+    "  \n" +
+    JSON.stringify({ jsonrpc: "2.0", id: 10, method: "health" }) + "\n",
+  );
+  assert.equal(out.length, 2, "only two real requests dispatched");
+  const ids = out.map((l) => JSON.parse(l).id);
+  assert.deepEqual(ids, [9, 10]);
+});
