@@ -61,4 +61,10 @@ export type UiEvent =
   | { type: "notice"; message: string; severity?: "info" | "warn" | "error" }
   | { type: "approval_request"; id: string; description: string; diff?: string }
   | { type: "approval_result"; id: string; approved: boolean }
+  | { type: "check_start"; name: string; command: string }
+  | { type: "check_output"; name: string; chunk: string }
+  | { type: "check_done"; name: string; exitCode: number | null; passed: boolean }
+  | { type: "worker_start"; id: string; label: string }
+  | { type: "worker_update"; id: string; status: string }
+  | { type: "worker_done"; id: string; summary: string; reviewPath?: string }
   | { type: "status"; patch: Partial<UiStatus> };

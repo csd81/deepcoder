@@ -26,10 +26,15 @@ export function _resetIds(): void {
 
 export interface TranscriptBlock {
   id: string;
-  kind: "user" | "assistant" | "tool" | "check" | "notice" | "approval" | "system";
+  kind: "user" | "assistant" | "tool" | "check" | "worker" | "notice" | "approval" | "system";
+  /** External key (check name / worker id) used to match streaming updates. */
+  refId?: string;
   title?: string;
   body: string;
+  /** Byte-cap truncation marker (set by enforceCaps); distinct from `expanded`. */
   collapsed?: boolean;
+  /** User toggled this collapsible block open to show its full body ("logs"). */
+  expanded?: boolean;
   isError?: boolean;
   startedAt: string;
   finishedAt?: string;
@@ -43,6 +48,8 @@ export interface TranscriptState {
   atBottom: boolean;
   hasNewOutputBelow: boolean;
   totalBytes: number;
+  /** id of the focused collapsible block (Tab cursor), or null. */
+  selectedBlockId: string | null;
 }
 
 // ── createTranscript ────────────────────────────────────────────────────────
@@ -54,7 +61,44 @@ export function createTranscript(_config?: UiConfig): TranscriptState {
     atBottom: true,
     hasNewOutputBelow: false,
     totalBytes: 0,
+    selectedBlockId: null,
   };
+}
+
+// ── Selection / expand (collapsible blocks: tool / check / worker) ────────────
+
+const COLLAPSIBLE_KINDS = new Set(["tool", "check", "worker"]);
+
+/** Move the focus cursor across collapsible blocks, skipping the rest. */
+export function moveSelection(state: TranscriptState, dir: 1 | -1): TranscriptState {
+  const idxs = state.blocks
+    .map((b, i) => (COLLAPSIBLE_KINDS.has(b.kind) ? i : -1))
+    .filter((i) => i >= 0);
+  if (idxs.length === 0) return state;
+  const curIdx = state.blocks.findIndex((b) => b.id === state.selectedBlockId);
+  let target: number;
+  if (curIdx < 0) {
+    target = dir > 0 ? idxs[0] : idxs[idxs.length - 1];
+  } else {
+    const pos = idxs.indexOf(curIdx);
+    const newPos = Math.min(idxs.length - 1, Math.max(0, pos + dir));
+    target = idxs[newPos];
+  }
+  return { ...state, selectedBlockId: state.blocks[target].id };
+}
+
+/** Clear the focus cursor. */
+export function clearSelection(state: TranscriptState): TranscriptState {
+  return { ...state, selectedBlockId: null };
+}
+
+/** Toggle the `expanded` flag on the focused block. */
+export function toggleExpand(state: TranscriptState): TranscriptState {
+  if (state.selectedBlockId == null) return state;
+  const blocks = state.blocks.map((b) =>
+    b.id === state.selectedBlockId ? { ...b, expanded: !b.expanded } : b,
+  );
+  return { ...state, blocks };
 }
 
 // ── applyEvent ──────────────────────────────────────────────────────────────
@@ -192,6 +236,38 @@ export function applyEvent(
       return { ...state, blocks };
     }
 
+    // ── check_start / output / done ──────────────────────────────────────
+    case "check_start": {
+      const block: TranscriptBlock = {
+        id: nextId(), kind: "check", refId: event.name, title: event.name, body: "", startedAt: "",
+      };
+      return enforceCaps({ ...state, blocks: [...state.blocks, block] }, config);
+    }
+    case "check_output": {
+      const blocks = updateOpen(state.blocks, "check", event.name, (b) => ({ ...b, body: b.body + event.chunk }));
+      return enforceCaps({ ...state, blocks, totalBytes: state.totalBytes + event.chunk.length }, config);
+    }
+    case "check_done": {
+      const blocks = updateOpen(state.blocks, "check", event.name, (b) => ({ ...b, finishedAt: "", isError: !event.passed }));
+      return { ...state, blocks };
+    }
+
+    // ── worker_start / update / done ─────────────────────────────────────
+    case "worker_start": {
+      const block: TranscriptBlock = {
+        id: nextId(), kind: "worker", refId: event.id, title: event.label, body: "", startedAt: "",
+      };
+      return enforceCaps({ ...state, blocks: [...state.blocks, block] }, config);
+    }
+    case "worker_update": {
+      const blocks = updateOpen(state.blocks, "worker", event.id, (b) => ({ ...b, body: event.status }));
+      return { ...state, blocks };
+    }
+    case "worker_done": {
+      const blocks = updateOpen(state.blocks, "worker", event.id, (b) => ({ ...b, finishedAt: "", body: event.summary }));
+      return enforceCaps({ ...state, blocks, totalBytes: state.totalBytes + event.summary.length }, config);
+    }
+
     // ── status ───────────────────────────────────────────────────────────
     case "status": {
       const newStatus = { ...state.status, ...event.patch };
@@ -201,6 +277,26 @@ export function applyEvent(
     default:
       return state;
   }
+}
+
+/**
+ * Find the most-recent OPEN block of `kind` with the given `refId` and apply
+ * `fn` to it, returning a new blocks array. No match -> unchanged.
+ */
+function updateOpen(
+  blocks: TranscriptBlock[],
+  kind: TranscriptBlock["kind"],
+  refId: string,
+  fn: (b: TranscriptBlock) => TranscriptBlock,
+): TranscriptBlock[] {
+  const out = [...blocks];
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].kind === kind && out[i].refId === refId && !out[i].finishedAt) {
+      out[i] = fn(out[i]);
+      return out;
+    }
+  }
+  return out;
 }
 
 // ── Collapse & cap enforcement ──────────────────────────────────────────────
