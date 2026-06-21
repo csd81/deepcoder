@@ -13,6 +13,8 @@ import { computeRepoKey, readUnderstandCache, writeUnderstandCache } from "../co
 import os from "node:os";
 import { discoverPlugins } from "../plugins/discovery.js";
 import { summarizeWebTrace } from "../web/trace.js";
+import { buildSemanticIndex } from "../semantic/indexer.js";
+import { createEmbeddingProvider } from "../semantic/provider.js";
 import { pluginTrustKey, resolvePluginTrust, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import type { HookEvent } from "../hooks/types.js";
@@ -166,6 +168,10 @@ export async function handleSlashCommand(
 
     case "understand":
       await runUnderstand(session);
+      return { consumed: true };
+
+    case "index":
+      await runIndex(session);
       return { consumed: true };
 
     case "plugins":
@@ -2245,6 +2251,54 @@ async function runUnderstand(session: Session): Promise<void> {
   console.log(`  top dirs:  ${u.topDirs.join(", ") || "—"}`);
   console.log(`  key files: ${u.keyFiles.join(", ") || "—"}`);
   console.log(`  by ext:    ${exts}`);
+}
+
+/**
+ * Phase 8E — `/index`: build the semantic vector store. Enumerates tracked
+ * files, chunks them (gated by shouldChunkFile), embeds each chunk via the
+ * configured embedding provider, and persists the store the semantic-search
+ * tools query. Opt-in: requires semantic search enabled + a reachable embedding
+ * backend (default-off; fail-closed with a clear message otherwise).
+ */
+async function runIndex(session: Session): Promise<void> {
+  const root = session.config.workspaceRoot;
+  const cfg = session.config.semanticSearch;
+  if (!cfg.enabled) {
+    console.log(chalk.dim("/index: semantic search is disabled. Enable it with DEEPCODER_SEMANTIC_SEARCH=1 and a local embedding backend."));
+    return;
+  }
+  const provider = createEmbeddingProvider(cfg);
+  if (!provider) {
+    console.log(chalk.red(`/index: no embedding provider for "${cfg.provider}". Configure a local backend (e.g. ollama).`));
+    return;
+  }
+  let paths: string[];
+  try {
+    const { stdout } = await execFileP("git", ["ls-files"], { cwd: root, maxBuffer: 64 * 1024 * 1024 });
+    paths = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  } catch {
+    console.log(chalk.dim("/index: not a git repo (or git unavailable) — cannot enumerate files."));
+    return;
+  }
+  const files: { path: string; content: string }[] = [];
+  for (const p of paths) {
+    try { files.push({ path: p, content: await fs.readFile(path.join(root, p), "utf8") }); }
+    catch { /* skip unreadable/binary/deleted */ }
+  }
+  console.log(chalk.dim(`/index: chunking ${files.length} file(s) and embedding via ${cfg.provider}/${cfg.model}…`));
+  try {
+    const res = await buildSemanticIndex({
+      root,
+      files,
+      embed: (texts) => provider.embed(texts),
+      providerLabel: cfg.provider,
+      model: cfg.model,
+      dimensions: cfg.dimensions,
+    });
+    console.log(chalk.green(`/index: built ${res.chunkCount} chunk(s) from ${files.length - res.skipped.length} file(s); ${res.skipped.length} skipped.`));
+  } catch (err) {
+    console.log(chalk.red(`/index: failed — ${(err as Error).message}`));
+  }
 }
 
 async function activateSkillSlash(session: Session, name: string, args: string): Promise<void> {
