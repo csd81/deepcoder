@@ -38,6 +38,9 @@ import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
 import { renderMarkdown } from "../ui/markdown.js";
+import { buildStatusSnapshot } from "../telemetry/statusSnapshot.js";
+import { renderStatusline } from "../telemetry/statusline.js";
+import { estimateCost } from "../providers/pricing.js";
 import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
@@ -412,6 +415,33 @@ async function planFirstPass(session: Session, prompt: string): Promise<void> {
 }
 
 /** Interactive REPL. */
+/** Phase 10C — print the one-line status bar after a turn (when enabled). Never throws. */
+async function printStatusline(session: Session): Promise<void> {
+  if (!session.config.telemetry.statusline) return;
+  try {
+    const snap = await buildStatusSnapshot({
+      provider: session.config.provider,
+      model: session.config.model,
+      mode: session.mode,
+      sandbox: session.config.sandbox.mode,
+      sandboxNetwork: (session.config.sandbox.network as "on" | "off" | undefined) ?? "unknown",
+      workspaceIsolation: session.config.workspaceIsolation.mode,
+      usage: session.tokenUsage,
+      cost: estimateCost(session.tokenUsage, {
+        provider: session.config.provider,
+        model: session.config.model,
+        pricing: session.config.telemetry.pricing,
+      }),
+      mcpWarnings: 0,
+      activeSkills: session.activatedSkills?.length ?? 0,
+      warnings: [],
+    });
+    stdout.write(chalk.dim(renderStatusline(snap)) + "\n");
+  } catch {
+    /* statusline must never break the repl */
+  }
+}
+
 export async function runRepl(session: Session): Promise<void> {
   stdout.write(
     chalk.bold("deepcoder") +
@@ -450,6 +480,7 @@ export async function runRepl(session: Session): Promise<void> {
       } catch (err) {
         stdout.write(chalk.red(`\nError: ${(err as Error).message ?? err}\n`));
       }
+      await printStatusline(session);
     }
   } finally {
     await fireSessionEvent(session, "SessionEnd");

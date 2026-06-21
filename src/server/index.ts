@@ -7,6 +7,9 @@
 export { createStdioServer } from "./stdioServer.js";
 export type { StdioServer, StdioServerOptions } from "./stdioServer.js";
 
+export { createStdioTransport } from "./stdioTransport.js";
+export type { StdioTransport, StdioTransportDeps } from "./stdioTransport.js";
+
 export {
   requireServerToken,
   resolveBindHost,
