@@ -215,3 +215,57 @@ test("topoOrder respects dependencies (a before b,c; both before d)", () => {
   assert.ok(order.indexOf("a") < order.indexOf("b") && order.indexOf("a") < order.indexOf("c"));
   assert.ok(order.indexOf("b") < order.indexOf("d") && order.indexOf("c") < order.indexOf("d"));
 });
+
+/* ---- 9O.5: /delegate decompose run — gates (no model) ---- */
+import { mkdtemp as mkdtemp9o, rm as rm9o } from "node:fs/promises";
+import { tmpdir as tmpdir9o } from "node:os";
+import path9o from "node:path";
+import { SessionStore, newSessionId } from "../../src/session/sessionStore.js";
+import { defaultRegistry } from "../../src/tools/registry.js";
+import type { Session } from "../../src/cli/repl.js";
+import type { Config } from "../../src/config/config.js";
+
+async function decomposeSession() {
+  const root = await mkdtemp9o(path9o.join(tmpdir9o(), "dec-cli-"));
+  const config = {
+    provider: "fake", apiKey: "k", baseUrl: "x", model: "m", maxTurns: 20, approvalMode: "ask",
+    contextBudgetTokens: 120000, compactAt: 0.8, workspaceRoot: root, mcpServers: {},
+    mcpExecuteEnabled: false, checks: { phase: { command: "echo ok" } },
+  } as unknown as Config;
+  const session = {
+    config, provider: { chat: async () => ({ text: "", toolCalls: [] }) }, registry: defaultRegistry(),
+    store: new SessionStore(root, newSessionId()), messages: [], mode: "ask", todos: [],
+    readTracker: new Set(), writeTracker: new Set(), reviews: [],
+  } as unknown as Session;
+  return { root, session };
+}
+
+test("9O.5: /delegate decompose run refuses in a non-interactive session (no model call)", async () => {
+  const { root, session } = await decomposeSession();
+  try {
+    // The test process has no TTY → the run path must refuse BEFORE any model call.
+    const res = await handleSlashCommand("/delegate decompose run build a thing", session, async () => true);
+    assert.equal(res.consumed, true); // refused, not executed
+  } finally { await rm9o(root, { recursive: true, force: true }); }
+});
+
+test("9O.5: /delegate decompose run refuses nested delegation (depth > 0)", async () => {
+  const { root, session } = await decomposeSession();
+  const prev = process.env.DEEPCODER_DELEGATE_DEPTH;
+  process.env.DEEPCODER_DELEGATE_DEPTH = "1";
+  try {
+    const res = await handleSlashCommand("/delegate decompose run build a thing", session, async () => true);
+    assert.equal(res.consumed, true); // nested → refused
+  } finally {
+    if (prev === undefined) delete process.env.DEEPCODER_DELEGATE_DEPTH; else process.env.DEEPCODER_DELEGATE_DEPTH = prev;
+    await rm9o(root, { recursive: true, force: true });
+  }
+});
+
+test("9O.5: /delegate decompose without 'run' prints usage (executes nothing)", async () => {
+  const { root, session } = await decomposeSession();
+  try {
+    const res = await handleSlashCommand("/delegate decompose", session, async () => true);
+    assert.equal(res.consumed, true);
+  } finally { await rm9o(root, { recursive: true, force: true }); }
+});

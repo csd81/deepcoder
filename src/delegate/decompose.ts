@@ -1,8 +1,17 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { WorkerDeliverableSpec } from "./coverage.js";
 import { assertSafeId } from "../workspace/paths.js";
 import { isUnsafeForTargeting } from "../checks/testTargetPlanner.js";
 import { buildPlan } from "./planner.js";
 import { detectFileConflicts } from "./orchestrator.js";
+import { createIsolatedWorkspace } from "../workspaceIsolation/index.js";
+import { DEFAULT_WORKSPACE_ISOLATION } from "../workspaceIsolation/types.js";
+import { runBoundedProcess } from "../process/runBoundedProcess.js";
+import { buildWorkerCommand, buildWorkerEnv } from "./workerRunner.js";
+import { runCheck } from "../checks/runner.js";
+import { verifyManifestCoverage } from "./verify.js";
+import type { CheckConfig } from "../config/fileConfig.js";
 
 export interface SubTaskSpec {
   id: string;
@@ -257,6 +266,17 @@ export interface RunDecompositionOptions {
   runSubTask?: (subtask: SubTaskSpec, cumulativePatch: string) => Promise<SubTaskRunResult>;
   /** Run the full configured check on the assembled tree (no-regression gate). */
   runAssemblyCheck?: (assembledPatch: string) => Promise<{ ok: boolean }>;
+  /* ---- fields consumed by the DEFAULT (live) seams when not injected ---- */
+  /** Resolved provider name (for spawning sub-task workers). */
+  provider?: string;
+  /** Absolute path to src/cli/main.ts (for spawning sub-task workers). */
+  mainEntry?: string;
+  /** Named checks (the default assembly check + worker checks resolve from here). */
+  checks?: Record<string, CheckConfig>;
+  /** Current delegation depth (the child worker is forced to depth+1). */
+  delegateDepth?: number;
+  /** Check name for the assembly no-regression gate (default "phase"). */
+  assemblyCheckName?: string;
 }
 
 export interface DecompositionRunResult {
@@ -311,8 +331,8 @@ export async function runDecomposition(
   opts: RunDecompositionOptions,
 ): Promise<DecompositionRunResult> {
   const warnings: string[] = [...(plan.warnings ?? [])];
-  const runSubTask = opts.runSubTask ?? (() => requireSeam("runSubTask"));
-  const runAssemblyCheck = opts.runAssemblyCheck ?? (() => requireSeam("runAssemblyCheck"));
+  const runSubTask = opts.runSubTask ?? defaultRunSubTask(opts);
+  const runAssemblyCheck = opts.runAssemblyCheck ?? defaultRunAssemblyCheck(opts);
 
   const ordered = topoOrder(plan.subtasks);
   const order: string[] = [];
@@ -351,5 +371,85 @@ export async function runDecomposition(
     assembledPatch: cumulativePatch,
     assemblyOk,
     warnings,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Default (live) seams — used by the /delegate decompose CLI.        */
+/*  Live-model integration: exercised end-to-end, not in unit tests    */
+/*  (which inject runSubTask/runAssemblyCheck). They reuse the same    */
+/*  gated building blocks as runWorker + the 9N verify gate.           */
+/* ------------------------------------------------------------------ */
+
+async function gitApplyInto(worktreeRoot: string, patchText: string): Promise<boolean> {
+  if (!patchText.trim()) return true; // empty cumulative base = nothing to apply
+  const tmp = path.join(worktreeRoot, "__decompose.patch");
+  await fs.writeFile(tmp, patchText, "utf8");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  let ok = true;
+  try {
+    await execFileAsync("git", ["apply", "--whitespace=nowarn", tmp], { cwd: worktreeRoot });
+  } catch {
+    ok = false;
+  }
+  await fs.rm(tmp, { force: true });
+  return ok;
+}
+
+function subtaskPrompt(st: SubTaskSpec): string {
+  const lines = [
+    `Sub-task: ${st.title}`,
+    st.goal,
+    `Stay strictly within these paths: ${JSON.stringify(st.allowedPaths)}.`,
+    `Deliver (each needs a test): ${st.deliverables.map((d) => d.id).join(", ")}.`,
+  ];
+  return lines.join("\n");
+}
+
+/** Default sub-task runner: worker (on the cumulative base) → 9N verify gate. */
+function defaultRunSubTask(opts: RunDecompositionOptions) {
+  return async (subtask: SubTaskSpec, cumulativePatch: string): Promise<SubTaskRunResult> => {
+    if (!opts.provider || !opts.mainEntry) requireSeam("runSubTask");
+    const iso = await createIsolatedWorkspace(opts.realRoot, { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" });
+    try {
+      if (!(await gitApplyInto(iso.isolatedRoot, cumulativePatch))) {
+        return { accepted: false, patch: "", reason: "cumulative base failed to apply (conflict with a prior sub-task)" };
+      }
+      const cmd = buildWorkerCommand({ mainEntry: opts.mainEntry!, checkName: subtask.checkName, prompt: subtaskPrompt(subtask) });
+      await runBoundedProcess({
+        file: cmd.file, args: cmd.args, cwd: iso.isolatedRoot,
+        env: buildWorkerEnv({ parentEnv: process.env, provider: opts.provider!, delegateDepth: opts.delegateDepth ?? 0 }),
+        signal: opts.signal, timeoutMs: 30 * 60_000, maxCaptureBytes: 1_000_000, shell: false,
+      });
+      const patch = await iso.diff();
+      const verdict = await verifyManifestCoverage({
+        realRoot: opts.realRoot, fullPatch: patch, deliverables: subtask.deliverables,
+        testCommand: subtask.testCommand ?? "", allowedPaths: subtask.allowedPaths, signal: opts.signal,
+      });
+      return verdict.ok
+        ? { accepted: true, patch }
+        : { accepted: false, patch, reason: verdict.reasons.join("; ") || "verify gate failed" };
+    } finally {
+      await iso.cleanup().catch(() => {});
+    }
+  };
+}
+
+/** Default assembly check: apply the assembled patch to a worktree, run the full check. */
+function defaultRunAssemblyCheck(opts: RunDecompositionOptions) {
+  return async (assembledPatch: string): Promise<{ ok: boolean }> => {
+    const checkName = opts.assemblyCheckName ?? "phase";
+    const checkConfig = opts.checks?.[checkName];
+    if (!checkConfig) requireSeam("runAssemblyCheck");
+    const iso = await createIsolatedWorkspace(opts.realRoot, { ...DEFAULT_WORKSPACE_ISOLATION, mode: "patch" });
+    try {
+      if (!(await gitApplyInto(iso.isolatedRoot, assembledPatch))) return { ok: false };
+      const run = await runCheck(checkName, checkConfig!, { workspaceRoot: iso.isolatedRoot, signal: opts.signal });
+      return { ok: run.exitCode === 0 && !run.timedOut };
+    } finally {
+      await iso.cleanup().catch(() => {});
+    }
   };
 }

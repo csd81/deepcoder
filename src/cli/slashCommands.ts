@@ -1475,6 +1475,68 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
+      if (sub === "decompose") {
+        // `/delegate decompose run <task>` — model-driven decomposition, then run
+        // each sub-task through verify-then-force on a cumulative base + assemble.
+        // Never auto-applies: produces an assembled patch + verdict for review.
+        if (subArgs[0] !== "run" || !subArgs.slice(1).join(" ").trim()) {
+          console.log(chalk.dim("usage: /delegate decompose run <task>  (plan only: /delegate plan --smart <task>)"));
+          return { consumed: true };
+        }
+        const task = subArgs.slice(1).join(" ").trim();
+        const depth = delegateDepthFromEnv(process.env);
+        if (depth > 0) {
+          console.log(chalk.red(`Refusing nested delegation: this process is itself a delegated worker (depth ${depth}).`));
+          return { consumed: true };
+        }
+        if (!process.stdin.isTTY) {
+          console.log(chalk.red("Refusing to run decomposition in a non-interactive session — run from an interactive terminal."));
+          return { consumed: true };
+        }
+        const { proposeDecomposition, validateDecomposition, runDecomposition } = await import("../delegate/decompose.js");
+        const { DECOMPOSE_PROMPT } = await import("../delegate/decomposePrompts.js");
+        const deps = {
+          generate: async (t: string) => {
+            const prompt = `${DECOMPOSE_PROMPT}\n\nTASK:\n${t}\n\nAVAILABLE CHECKS:\n${Object.keys(config.checks).join(", ")}`;
+            const route = session.modelRouter.resolve("plan");
+            const provider = session.providerPool.providerFor(route);
+            const res = await provider.chat({ messages: [{ role: "user", content: prompt }], tools: [], model: route.model });
+            return res.text;
+          },
+        };
+        console.log(chalk.dim("Decomposing…"));
+        const plan = await proposeDecomposition(task, {}, deps, { checks: Object.keys(config.checks), maxSubTasks: 12 });
+        const validation = validateDecomposition(plan, { checks: Object.keys(config.checks), maxSubTasks: 12 });
+        if (!validation.ok) {
+          console.log(chalk.red("Decomposition is invalid:"));
+          for (const e of validation.errors) console.log(chalk.red(`  - ${e}`));
+          return { consumed: true };
+        }
+        console.log(chalk.bold(`\nDecomposition (${plan.source}) — ${plan.subtasks.length} sub-task(s):`));
+        for (const st of plan.subtasks) {
+          const after = st.dependsOn.length ? ` (after ${st.dependsOn.join(", ")})` : "";
+          console.log(`  ${chalk.cyan(st.id)}: ${st.title.slice(0, 60)}${after} · check ${st.checkName}`);
+        }
+        console.log(chalk.yellow(`\nThis spawns live sub-task workers (provider: ${config.provider}), each verified; the result is NOT auto-applied.`));
+        if (!(await confirm(`Run ${plan.subtasks.length} sub-task(s) through verify-then-force?`))) {
+          console.log(chalk.dim("Cancelled."));
+          return { consumed: true };
+        }
+        const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
+        const res = await runDecomposition(plan, {
+          realRoot: root, signal: new AbortController().signal,
+          provider: config.provider, mainEntry, checks: config.checks, delegateDepth: depth,
+        });
+        console.log("");
+        for (const st of res.subtasks) {
+          console.log(`  ${st.accepted ? chalk.green("✓") : chalk.red("✗")} ${st.id}${st.reason ? chalk.dim(` — ${st.reason}`) : ""}`);
+        }
+        console.log(res.ok ? chalk.green(`\nAll sub-tasks accepted; assembly check passed.`) : chalk.red(`\nDecomposition not complete (assembly ${res.assemblyOk ? "ok" : "red"}). NOT applied.`));
+        for (const w of res.warnings) console.log(chalk.yellow(`  - ${w}`));
+        console.log(chalk.dim("Review the assembled patch before applying via the normal apply path."));
+        return { consumed: true };
+      }
+
       if (sub === "browse") {
         const planId = subArgs[0];
         const workerId = subArgs[1];

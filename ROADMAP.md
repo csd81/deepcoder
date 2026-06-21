@@ -266,9 +266,30 @@ every patch before anything touches the repo. Plans/runs persist under
   full validation pipeline as Gate 1.5 (before the existing gates), ensuring every apply is
   end-to-end validated.
 
+- [x] **9M** — manifest coverage gate (`src/delegate/coverage.ts`, `tdd.ts`): force a delegated worker
+  to author a failing test for EVERY deliverable (tagged `[id]`), proven red-on-baseline (vacuous/
+  self-grading tests rejected) before any implementation; `requireValidatedTest` ties applyability to
+  the un-self-gradable `green_confirmed` + coverage-complete proof. Plus live-worker path fixes
+  (node_modules provisioning, author-only repro phase, checks-config provisioning, focused fix-check).
+- [x] **9N** — verify-then-force (`src/delegate/verify.ts`), the DEFAULT: a capable model does the
+  whole task in ONE pass, then the patch is VERIFIED (split it → tests red-on-baseline → green-on-full
+  + scope) and only escalated to the forcing loop on shortfall. Forcing is for weak models; verification
+  is valuable for all.
+- [x] **9O** — model-driven task decomposer (`src/delegate/decompose.ts`, `decomposePrompts.ts`,
+  `plans/phase9o-…-plan.md`): a reasoning model PROPOSES a dependency DAG of bounded, individually
+  verifiable sub-tasks (data, never executed); `validateDecomposition` (pure) rejects cycles/over-count/
+  unsafe-or-escaping paths/unknown-check/non-verifiable/dup ids and flags overlap, falling back to the
+  heuristic planner on malformed output. `runDecomposition` runs each sub-task through verify-then-force
+  on a cumulative base (stop-on-reject, no silent continue), then assembles + runs the full no-regression
+  check; a red assembly is reported, NEVER auto-applied. `/delegate plan --smart` (render) and
+  `/delegate decompose run` (gated execution). Motivated by large cross-cutting features (10F) not
+  one-passing — decompose first, then one-pass each slice.
+
 Built largely *by* delegated workers (DeepSeek, OpenAI codex via the Responses provider, Gemini) with
 parent review closing recurring gaps (skipped/thin/hallucinated tests). Deferred: model-callable /
-autonomous delegation, the `delegate` config block + remaining env wiring.
+autonomous delegation, the `delegate` config block + remaining env wiring; the per-sub-task cumulative
+base via a temp integration branch (default seams currently isolate from HEAD + apply the cumulative
+patch).
 
 ## Non-goals (for now)
 
