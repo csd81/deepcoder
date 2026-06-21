@@ -10,6 +10,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { summarizeRepo } from "../context/understand.js";
 import { computeRepoKey, readUnderstandCache, writeUnderstandCache } from "../context/understandCache.js";
+import os from "node:os";
+import { discoverPlugins } from "../plugins/discovery.js";
+import { pluginTrustKey, resolvePluginTrust, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import type { HookEvent } from "../hooks/types.js";
 import { estimateMessages } from "../context/tokenBudget.js";
@@ -162,6 +165,10 @@ export async function handleSlashCommand(
 
     case "understand":
       await runUnderstand(session);
+      return { consumed: true };
+
+    case "plugins":
+      await runPlugins(session, arg);
       return { consumed: true };
 
     case "mode":
@@ -2136,6 +2143,43 @@ function printInstructionGraph(session: Session, sub: string): void {
  * (and is preserved verbatim on resume), without mutating the system prompt.
  */
 const execFileP = promisify(execFile);
+
+/** Phase 10D — `/plugins [trust|untrust <name>]`: discover plugins + manage trust/enablement.
+ *  Trust is persisted in <root>/.deepcoder/plugin-trust.json; default untrusted/disabled. */
+async function runPlugins(session: Session, arg: string): Promise<void> {
+  const root = session.config.workspaceRoot;
+  const storePath = path.join(root, ".deepcoder", "plugin-trust.json");
+  const loadStore = async (): Promise<PluginTrustStore> => {
+    try { return JSON.parse(await fs.readFile(storePath, "utf8")) as PluginTrustStore; }
+    catch { return { plugins: {} }; }
+  };
+  const plugins = await discoverPlugins(root, os.homedir());
+  const [sub, ...rest] = arg.split(/\s+/).filter(Boolean);
+  const name = rest.join(" ");
+
+  if (sub === "trust" || sub === "untrust") {
+    const p = plugins.find((x) => x.manifest.name === name);
+    if (!p) { console.log(chalk.dim(`No discovered plugin named "${name}".`)); return; }
+    const store = applyTrust(await loadStore(), pluginTrustKey(p), sub === "trust" ? "trusted" : "untrusted");
+    await fs.mkdir(path.join(root, ".deepcoder"), { recursive: true });
+    await fs.writeFile(storePath, JSON.stringify(store, null, 2));
+    console.log(chalk.dim(`Plugin "${name}" ${sub === "trust" ? "trusted + enabled" : "untrusted + disabled"}.`));
+    return;
+  }
+
+  if (plugins.length === 0) {
+    console.log(chalk.dim("No plugins discovered (.deepcoder/plugins, .agents/plugins, ~/.deepcoder/plugins)."));
+    return;
+  }
+  const store = await loadStore();
+  console.log(chalk.bold(`\nPlugins (${plugins.length}):`));
+  for (const p of plugins) {
+    const t = resolvePluginTrust(p, store);
+    const mark = t.enabled ? chalk.green("●") : chalk.dim("○");
+    console.log(`  ${mark} ${p.manifest.name} ${chalk.dim(`[${p.source}] ${t.state}`)} — ${p.manifest.description}`);
+  }
+  console.log(chalk.dim("  /plugins trust <name> · /plugins untrust <name>"));
+}
 
 /**
  * Phase 8F — `/understand`: enumerate tracked files, key the repo by (path,mtime),
