@@ -59,6 +59,8 @@ import { autoApplyIfEligible } from "../delegate/autoApply.js";
 import { runRunnable, runRunnableConcurrent, detectFileConflicts } from "../delegate/orchestrator.js";
 import { getDelegationReviewOverview, getWorkerReviewDetail, previewApplyGates } from "../delegate/reviewBrowser.js";
 import { renderReviewOverview, renderWorkerReview, renderPatchStat, renderGatePreview } from "../delegate/reviewRender.js";
+import { runReviewUi, runReviewPicker } from "./reviewUi.js";
+import { resolveUiMode } from "../ui/uiMode.js";
 import { loadWorkerArtifacts } from "../delegate/artifacts.js";
 import type { WorkerRun, DelegationPlan, WorkerTask } from "../delegate/types.js";
 import path from "node:path";
@@ -1677,6 +1679,39 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
+      if (sub === "review-ui") {
+        const positional = subArgs.filter((a) => !a.startsWith("--"));
+        const planId = positional[0];
+        const workerId = positional[1];
+        if (!planId) {
+          console.log(chalk.dim("usage: /delegate review-ui <plan-id> [worker-id] [--no-tui]  — interactive patch review"));
+          return { consumed: true };
+        }
+        const uiMode = resolveUiMode({
+          flag: subArgs.includes("--no-tui") ? "plain" : undefined,
+          env: process.env,
+          isTTY: Boolean(process.stdin.isTTY),
+        });
+        // Non-TTY / --no-tui: static fallback (same data, no raw mode).
+        if (uiMode !== "tui") {
+          if (!workerId) {
+            const overview = await getDelegationReviewOverview(root, planId, { checks: config.checks });
+            if (!overview) { console.log(chalk.red(`Plan "${planId}" not found or corrupt.`)); return { consumed: true }; }
+            console.log(renderReviewOverview(overview));
+          } else {
+            const detail = await getWorkerReviewDetail(root, planId, workerId, { checks: config.checks });
+            if (!detail) { console.log(chalk.red(`Worker "${workerId}" not found in plan "${planId}".`)); return { consumed: true }; }
+            console.log(renderWorkerReview(detail));
+            console.log(renderPatchStat(detail.patchStat));
+          }
+          return { consumed: true };
+        }
+        // Interactive TUI.
+        if (workerId) await runReviewUi({ root, planId, workerId, checks: config.checks });
+        else await runReviewPicker({ root, planId, checks: config.checks });
+        return { consumed: true };
+      }
+
       if (sub === "diff") {
         const planId = subArgs[0];
         const workerId = subArgs[1];
@@ -1992,6 +2027,7 @@ export async function handleSlashCommand(
           "/delegate run <plan-id> [worker-id]  run one worker or all runnable workers sequentially",
           "/delegate status <plan-id>  show worker status table (+ conflict hints from run artifacts)",
           "/delegate review <plan-id>  show full plan for human review",
+          "/delegate review-ui <plan-id> [worker-id]  interactive patch review browser (TTY; --no-tui for static)",
           "/delegate apply <plan-id> <worker-id>  apply a passed worker's patch to the real repo",
           "/delegate discard <plan-id> <worker-id>  discard a worker (mark as discarded)",
           "/tests [target|plan|run-targeted]  Phase 10H — automatic minimal test targeting",
