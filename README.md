@@ -101,6 +101,7 @@ with `DEEPCODER_PROVIDER`:
 | `qwen` | Alibaba Qwen via the DashScope OpenAI-compatible endpoint (default `qwen2.5-coder-32b-instruct`) |
 | `gemini` | Google Gemini via its OpenAI-compatibility endpoint (default `gemini-2.0-flash`) |
 | `anthropic` | **native** Claude adapter (Messages API); default `claude-3-5-sonnet-latest`, override with `DEEPCODER_MODEL` |
+| `openrouter` | [OpenRouter](https://openrouter.ai) unified API; default base URL `https://openrouter.ai/api/v1`; key `OPENROUTER_API_KEY`; model slugs like `openai/gpt-5.2` or `anthropic/claude-sonnet-4.6` |
 
 Generic env (`DEEPCODER_API_KEY/BASE_URL/MODEL`) takes precedence over the
 `DEEPSEEK_*` aliases. Example — point at local Ollama:

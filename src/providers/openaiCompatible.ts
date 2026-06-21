@@ -30,6 +30,11 @@ export interface OpenAICompatibleOptions {
    * temperature). A per-request `ChatRequest.temperature` overrides this.
    */
   temperature?: number;
+  /**
+   * Optional default headers to send with every request (e.g. OpenRouter
+   * attribution headers). Default/undefined means no extra headers.
+   */
+  defaultHeaders?: Record<string, string>;
 }
 
 /**
@@ -59,7 +64,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private modelName: (model: string) => string;
 
   constructor(opts: OpenAICompatibleOptions) {
-    this.client = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl });
+    this.client = new OpenAI({
+      apiKey: opts.apiKey,
+      baseURL: opts.baseUrl,
+      defaultHeaders: opts.defaultHeaders,
+    });
     this.label = opts.label;
     this.temperature = opts.temperature;
     this.modelName = opts.modelName ?? ((model) => model);

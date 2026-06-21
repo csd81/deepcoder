@@ -295,6 +295,7 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   // captures/replays Gemini's thought_signature in the tool loop.
   gemini: "gemini-3.1-pro-preview",
   anthropic: "claude-3-5-sonnet-latest",
+  openrouter: "openrouter/auto",
 };
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
@@ -314,6 +315,7 @@ const PROVIDER_ENV_PREFIX: Record<string, string> = {
   qwen: "QWEN",
   gemini: "GEMINI",
   anthropic: "ANTHROPIC",
+  openrouter: "OPENROUTER",
 };
 
 export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "diagnostics" | "skills" | "dependencyHealing" | "delegate">> & {
@@ -498,7 +500,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   // Validate the provider BEFORE requiring a key, so a typo'd provider reports
   // "unknown provider" rather than a misleading "missing API key".
   if (!KNOWN_PROVIDERS.has(provider)) {
-    throw new Error(`Unknown provider "${provider}". Use deepseek | openai-compatible | ollama.`);
+    throw new Error(`Unknown provider "${provider}". Use deepseek | openai-compatible | ollama | qwen | gemini | anthropic | openrouter.`);
   }
 
   // Resolve credentials from the selected provider's OWN prefix (DEEPSEEK_*,
