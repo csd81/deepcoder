@@ -1,6 +1,7 @@
 import { mkdir, writeFile, rename, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { RepoIndex } from "./types.js";
+import { buildRepoIndex } from "./scanner.js";
 
 // Index persistence (Phase 8C). Atomic tmp→rename write under .deepcoder/index.
 // A corrupt or version-mismatched file loads as null so the caller rebuilds
@@ -34,6 +35,59 @@ export async function saveIndex(root: string, index: RepoIndex): Promise<void> {
   const payload: StoredIndex = { version: VERSION, createdAt: new Date().toISOString(), index };
   await writeFile(tmp, JSON.stringify(payload), "utf8");
   await rename(tmp, file);
+}
+
+export interface EnsureIndexOptions {
+  /** Build with in-repo import edges (needed for reverse-import targeting). Default true. */
+  imports?: boolean;
+  /** Persist a freshly built index under .deepcoder/index. Default true. */
+  persist?: boolean;
+  /**
+   * Rebuild if the persisted index is older than this many ms. Omitted/0 means
+   * any existing index is reused regardless of age ("build only if absent").
+   */
+  maxStaleMs?: number;
+}
+
+/**
+ * Phase 8C (lazy slice) — return a usable repo index, building one on demand so
+ * index-dependent features (test targeting, /index impact|tests|references)
+ * work WITHOUT a manual `/index rebuild`.
+ *
+ * Resolution order:
+ *   1. a persisted index that is fresh enough (`maxStaleMs`) → reuse it (cheap),
+ *   2. otherwise build one (bounded by the scanner's MAX_FILES guard), persist
+ *      it (unless `persist:false`), and return it.
+ *
+ * Never throws: a build/persist failure yields `null` so callers degrade
+ * gracefully rather than break.
+ */
+export async function ensureIndex(
+  root: string,
+  opts: EnsureIndexOptions = {},
+): Promise<RepoIndex | null> {
+  const loaded = await loadIndex(root);
+  if (loaded) {
+    const stale =
+      opts.maxStaleMs !== undefined &&
+      opts.maxStaleMs > 0 &&
+      Date.now() - Date.parse(loaded.createdAt) > opts.maxStaleMs;
+    if (!stale) return loaded.index;
+  }
+  let idx: RepoIndex;
+  try {
+    idx = await buildRepoIndex(root, { imports: opts.imports ?? true });
+  } catch {
+    return loaded?.index ?? null; // build failed → fall back to a stale index if we have one
+  }
+  if (opts.persist ?? true) {
+    try {
+      await saveIndex(root, idx);
+    } catch {
+      /* persistence is best-effort — still return the in-memory index */
+    }
+  }
+  return idx;
 }
 
 /** Load a previously saved index, or null when absent/corrupt/version-mismatched. */

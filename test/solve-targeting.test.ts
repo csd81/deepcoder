@@ -157,3 +157,57 @@ test("repo-index-backed targeting: editing a SOURCE file fast-fails via its nami
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("repo-index-backed targeting works with NO pre-saved index (ensureIndex auto-builds it)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "solve-tgt-auto-"));
+  try {
+    await exec("git", ["init", "-q"], { cwd: root });
+    await exec("git", ["config", "user.email", "t@t"], { cwd: root });
+    await exec("git", ["config", "user.name", "t"], { cwd: root });
+    await writeFile(path.join(root, "foo.js"), `module.exports = { add: (a, b) => a + b };\n`);
+    await writeFile(
+      path.join(root, "foo.test.js"),
+      `const { test } = require("node:test");\nconst assert = require("node:assert");\nconst { add } = require("./foo.js");\ntest("add", () => { assert.equal(add(1, 2), 3); });\n`,
+    );
+    await writeFile(path.join(root, ".gitignore"), ".deepcoder/\n");
+    await exec("git", ["add", "-A"], { cwd: root });
+    await exec("git", ["commit", "-qm", "init"], { cwd: root });
+    // NOTE: no saveIndex() — ensureIndex must build one on demand.
+
+    const telemetry = path.join(root, "telemetry.json");
+    const config = loadConfig({
+      workspaceRoot: root,
+      apiKey: "fixture",
+      approvalMode: "auto",
+      checks: { full: { command: `node --test foo.test.js` } },
+      solveTelemetry: telemetry,
+    });
+    config.testTargeting = { ...config.testTargeting, enabled: true, mode: "targeted-first" };
+
+    const session: Session = {
+      config,
+      provider: deadProvider,
+      registry: defaultRegistry(),
+      store: new SessionStore(root, newSessionId()),
+      messages: [{ role: "system", content: "sys" }],
+      mode: "auto",
+      todos: [],
+      readTracker: new Set(),
+      writeTracker: new Set(),
+      reviews: [],
+    };
+
+    let attempt = 0;
+    await runSolveCommand(session, { task: "fix add", checkName: "full", maxAttempts: 3 }, async () => {
+      attempt++;
+      const body = attempt >= 2 ? `module.exports = { add: (a, b) => a + b };\n` : `module.exports = { add: (a, b) => a - b };\n`;
+      await writeFile(path.join(root, "foo.js"), body);
+    });
+
+    const rec = JSON.parse(await readFile(telemetry, "utf8"));
+    assert.equal(rec.solved, true);
+    assert.equal(rec.attempts[0].checkRunId, null, "auto-built index let the source edit fast-fail");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

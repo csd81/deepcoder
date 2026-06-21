@@ -72,7 +72,7 @@ mcpExecuteEnabled opt-in, 10D plugin checks + skills composition, 10H targeting
 - **7H** named/multiple sessions, sandboxed PTY, transcript persistence, idle reaping (core `run_in_shell` is a minimal single-session primitive)
 - **3** AST symbol extraction (still regex-only); **OpenAI Responses `streamChat`** (non-streaming → looks hung on long turns)
 - **6F** the five `repo-xhard-*` correctness-hard cases — **the harness was built but no case uses it** (its new fields are effectively dead)
-- file **delete/rename/move tools**; **CI for the eval suites**; **8C** incremental reindex after edits; **8F** per-file/module understanding cache
+- file **delete/rename/move tools**; **CI for the eval suites**; **8C** incremental reindex after edits (lazy `ensureIndex` build-if-absent shipped; true incremental refresh still TODO); **8F** per-file/module understanding cache
 
 ---
 

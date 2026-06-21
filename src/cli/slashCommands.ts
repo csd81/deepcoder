@@ -36,7 +36,7 @@ import { buildRepoIndex } from "../index/scanner.js";
 import { impactedBy, reverseGraph } from "../index/impact.js";
 import { relevantTests } from "../index/testTargeting.js";
 import { findReferences } from "../index/references.js";
-import { saveIndex, loadIndex } from "../index/store.js";
+import { saveIndex, loadIndex, ensureIndex } from "../index/store.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
@@ -1742,8 +1742,9 @@ export async function handleSlashCommand(
           console.log(chalk.dim("usage: /tests target <file> [<file> ...]  — show targeted tests for changed files"));
           return { consumed: true };
         }
-        const saved = await loadIndex(root);
-        const index = saved?.index ?? undefined;
+        // Auto-build the index on demand (lazy) so targeting plans are accurate
+        // without a manual /index rebuild.
+        const index = (await ensureIndex(root)) ?? undefined;
         const plan = buildTestTargetPlan({
           changedFiles: files,
           index,
@@ -1783,8 +1784,9 @@ export async function handleSlashCommand(
           console.log(chalk.dim("No changed files tracked. Use /tests target <file> ... to specify files."));
           return { consumed: true };
         }
-        const saved = await loadIndex(root);
-        const index = saved?.index ?? undefined;
+        // Auto-build the index on demand (lazy) so targeting plans are accurate
+        // without a manual /index rebuild.
+        const index = (await ensureIndex(root)) ?? undefined;
         const plan = buildTestTargetPlan({
           changedFiles,
           index,
@@ -1825,8 +1827,9 @@ export async function handleSlashCommand(
           console.log(chalk.dim("No changed files tracked. Use /tests target <file> ... to specify files first."));
           return { consumed: true };
         }
-        const saved = await loadIndex(root);
-        const index = saved?.index ?? undefined;
+        // Auto-build the index on demand (lazy) so targeting plans are accurate
+        // without a manual /index rebuild.
+        const index = (await ensureIndex(root)) ?? undefined;
         const plan = buildTestTargetPlan({
           changedFiles,
           index,

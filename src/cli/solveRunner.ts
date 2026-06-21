@@ -11,7 +11,7 @@ import { Git } from "../workspace/git.js";
 import { redactSecrets } from "../workspace/redact.js";
 import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
 import { runTargetedChecks } from "../checks/targetedCheck.js";
-import { loadIndex } from "../index/store.js";
+import { ensureIndex } from "../index/store.js";
 import { loadCheckRun } from "../session/checkRuns.js";
 import { summarizeCheckFailure } from "../solve/failureSummary.js";
 import { hookCtx, hooksFor } from "./repl.js";
@@ -82,15 +82,23 @@ export async function runSolveCommand(
   const targetingRoot = session.executionRoot ?? session.config.workspaceRoot;
   const targetingActive = tt.enabled && (tt.mode === "targeted-first" || tt.mode === "targeted-only");
   const targetingGit = targetingActive ? new Git(targetingRoot) : null;
-  // Load the repo index once (best-effort): with it, the planner can target a
-  // changed SOURCE file's dependent/naming-matched tests — the common case.
-  // Without it, targeting degrades to changed-test-file detection only.
-  const targetingIndex = targetingActive ? (await loadIndex(targetingRoot))?.index : undefined;
+  // Ensure a repo index once (best-effort, lazy): with it, the planner can target
+  // a changed SOURCE file's dependent/naming-matched tests — the common case.
+  // ensureIndex builds + persists one on first use so targeting works without a
+  // manual `/index rebuild`; on failure it returns null and targeting degrades to
+  // changed-test-file detection only.
+  const targetingIndex = targetingActive ? ((await ensureIndex(targetingRoot)) ?? undefined) : undefined;
   const preCheck = targetingActive
     ? async (): Promise<{ fastFail: boolean; summary?: string } | null> => {
         try {
           if (!targetingGit || !(await targetingGit.isRepo())) return null;
-          const changedFiles = await targetingGit.changedFiles();
+          // Exclude deepcoder's own control-plane metadata (index, sessions,
+          // check runs, the persisted index ensureIndex just wrote) — it is never
+          // a targeting input and would otherwise force fallback when .deepcoder/
+          // is not gitignored.
+          const changedFiles = (await targetingGit.changedFiles()).filter(
+            (f) => !f.startsWith(".deepcoder/") && !f.startsWith(".deepcoder\\"),
+          );
           if (changedFiles.length === 0) return null;
           const plan = buildTestTargetPlan({
             changedFiles,
