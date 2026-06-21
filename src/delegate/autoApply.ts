@@ -12,6 +12,8 @@ export interface AutoApplyOptions {
   maxPatchBytes?: number;        // default 200_000
   checks?: Record<string, CheckConfig>;
   alreadyChangedPaths?: string[];
+  /** Acceptance-first: require a validated red→green test before applying. */
+  requireValidatedTest?: boolean;
 }
 export interface AutoApplyResult { applied: boolean; reason: string; result?: ApplyResult; }
 
@@ -88,6 +90,7 @@ export async function autoApplyIfEligible(root: string, planId: string, workerId
     isTTY: true,
     confirmResult: true,
     alreadyChangedPaths: opts.alreadyChangedPaths,
+    requireValidatedTest: opts.requireValidatedTest ?? false,
   });
 
   return { applied: applyResult.ok, reason: applyResult.message, result: applyResult };

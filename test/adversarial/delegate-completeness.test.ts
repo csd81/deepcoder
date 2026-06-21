@@ -703,3 +703,50 @@ describe("expected symbols", () => {
     assert.ok(result.failures.some((f) => f.code === "missing_expected_symbol"));
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  9. Production-change gate (acceptance-first — no test-only fix)     */
+/* ------------------------------------------------------------------ */
+
+describe("production-change gate", () => {
+  test("requireProductionChange + only test files changed => test_only_change", () => {
+    const task = baseTask({ requireProductionChange: true });
+    const result = evaluateCompleteness({
+      task,
+      changedPaths: ["test/foo.test.ts", "tests/bar_test.py"],
+      patchText: "+ test edits only",
+    });
+    assert.equal(result.complete, false);
+    assert.ok(result.failures.some((f) => f.code === "test_only_change"));
+  });
+
+  test("requireProductionChange + a production file changed => no test_only_change", () => {
+    const task = baseTask({ requireProductionChange: true });
+    const result = evaluateCompleteness({
+      task,
+      changedPaths: ["src/foo.ts", "test/foo.test.ts"],
+      patchText: "+ real fix",
+    });
+    assert.ok(!result.failures.some((f) => f.code === "test_only_change"));
+  });
+
+  test("generated-only changes do NOT count as production (still test_only_change)", () => {
+    const task = baseTask({ requireProductionChange: true });
+    const result = evaluateCompleteness({
+      task,
+      changedPaths: ["test/foo.test.ts", "dist/bundle.js"],
+      patchText: "+ x",
+    });
+    assert.ok(result.failures.some((f) => f.code === "test_only_change"));
+  });
+
+  test("without the flag, a test-only change is fine (default-safe)", () => {
+    const task = baseTask();
+    const result = evaluateCompleteness({
+      task,
+      changedPaths: ["test/foo.test.ts"],
+      patchText: "+ test only",
+    });
+    assert.ok(!result.failures.some((f) => f.code === "test_only_change"));
+  });
+});

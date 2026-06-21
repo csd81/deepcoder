@@ -26,6 +26,11 @@ export interface BuildPlanOptions {
   /** Maximum number of worker tasks (1-5, default 5). */
   maxWorkers?: number;
   tdd?: boolean;
+  /**
+   * Acceptance-first posture: force every worker TDD-required AND require a
+   * production change (rejects test-only fixes). Implies `tdd`.
+   */
+  acceptanceFirst?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -89,9 +94,11 @@ export function buildPlan(task: string, opts: BuildPlanOptions = {}): Delegation
   // but guard against future changes).
   detectCycle(workers, dependencies);
 
-  if (opts.tdd) {
+  if (opts.tdd || opts.acceptanceFirst) {
     for (const w of workers) {
       w.tdd = { required: true, allowedTestPaths: ["test/", "tests/"] };
+      // Acceptance-first additionally forbids a test-only fix.
+      if (opts.acceptanceFirst) w.requireProductionChange = true;
     }
   }
 

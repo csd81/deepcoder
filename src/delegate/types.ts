@@ -42,6 +42,13 @@ export interface WorkerTask {
   expectedTests?: ExpectedTestRule[];
   qualityRules?: QualityRule[];
 
+  /**
+   * Acceptance-first: when true, the patch must change at least one production
+   * (non-test, non-generated) file — a test-only fix is rejected. Stamped by the
+   * planner under the acceptance-first posture; absent → no change (default-safe).
+   */
+  requireProductionChange?: boolean;
+
   /* ---- Phase 9L TDD fields ---- */
   tdd?: WorkerTddRequirement;
 }
@@ -335,6 +342,7 @@ export interface CompletenessFailure {
     | "missing_required_deliverable"
     | "missing_expected_file_change"
     | "missing_expected_symbol"
+    | "test_only_change"
     | "forbidden_file_changed"
     | "missing_required_test"
     | "weak_regression_test"

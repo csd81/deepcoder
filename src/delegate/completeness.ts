@@ -17,6 +17,7 @@ import type {
   CompletenessEvidence,
   WorkerSelfAudit,
 } from "./types.js";
+import { classify } from "../index/classify.js";
 
 /* ------------------------------------------------------------------ */
 /*  Input                                                              */
@@ -301,6 +302,31 @@ export function evaluateCompleteness(input: EvaluateCompletenessInput): Complete
     // Wiring/enforcement is a later slice; for now just note it.
     warnings.push("No self-audit provided by worker");
     evidence.push({ note: "No self-audit provided (warning only)" });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  5.5 Production-change gate (acceptance-first)                     */
+  /* ---------------------------------------------------------------- */
+
+  // A "test-only fix" is rejected: under requireProductionChange the patch must
+  // touch at least one path that is neither a test nor a generated artifact
+  // (code/config/docs/other count as production). Default-safe: a falsy flag
+  // never adds a failure. Reuses the canonical classifier (src/index/classify).
+  if (task.requireProductionChange) {
+    const hasProduction = changedPaths.some((p) => {
+      const k = classify(p).kind;
+      return k !== "test" && k !== "generated";
+    });
+    if (!hasProduction) {
+      failures.push({
+        code: "test_only_change",
+        message:
+          "Worker changed only test/non-production files; acceptance-first requires at least one production change.",
+      });
+      evidence.push({ note: "production-change gate: NO production file changed (test-only fix)" });
+    } else {
+      evidence.push({ note: "production-change gate: a production file was changed" });
+    }
   }
 
   /* ---------------------------------------------------------------- */

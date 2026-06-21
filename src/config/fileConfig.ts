@@ -157,8 +157,13 @@ const qualityGateSchema = z.object({
   maxContextBytes: z.number().int().positive().optional(),
 });
 
+const acceptanceFirstSchema = z.object({
+  enabled: z.boolean().optional(),
+});
+
 const delegateSchema = z.object({
   qualityGate: qualityGateSchema.optional(),
+  acceptanceFirst: acceptanceFirstSchema.optional(),
 });
 
 const diagnosticRuleSchema = z.object({
