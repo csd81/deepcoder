@@ -6,20 +6,29 @@
 # Usage:
 #   scripts/delegate.sh <provider> <task-file> [logfile] [attempts]
 #
-#   provider:  deepseek | deepseek-pro | gemini
-#   task-file: path to the worker task contract (e.g. /tmp/task-10b.txt)
-#   logfile:   where to tee output (default /tmp/delegate-<pid>.log)
-#   attempts:  --solve-attempts (default 3; do not raise — more chokes the worker)
+#   provider:   deepseek | deepseek-pro | gemini
+#   task-file:  path to the worker task contract (e.g. /tmp/task-10b.txt)
+#   logfile:    where to tee output (default /tmp/delegate-<pid>.log)
+#   attempts:   --solve-attempts (default 3; do not raise — more chokes the worker)
+#   isolation:  workspace isolation mode (default "off"). Run this script from a
+#               dedicated BRANCH WORKTREE so "off" edits that worktree in place —
+#               the branch is the isolation boundary, master is untouched.
 #
-# Run it N times with disjoint task files to delegate in parallel. Each worker
-# self-isolates in its own /tmp/deepcoder-ws-*/wt and writes a unique patch.
+# Run it N times with disjoint task files (each from its own branch worktree) to
+# delegate in parallel.
+#
+# ⚠ MULTI-AGENT SAFETY: with isolation "keep"/"patch", every worker lives under the
+# SHARED /tmp/deepcoder-ws-* namespace. NEVER `rm -rf /tmp/deepcoder-ws-*` — it
+# deletes OTHER agents' in-flight worker trees mid-run. Prefer "off" + a branch
+# worktree (no shared namespace), or clean only the exact path from your own log.
 #
 set -euo pipefail
 
-provider="${1:?usage: delegate.sh <provider> <task-file> [log] [attempts]}"
+provider="${1:?usage: delegate.sh <provider> <task-file> [log] [attempts] [isolation]}"
 taskfile="${2:?missing task file}"
 log="${3:-/tmp/delegate-$$.log}"
 attempts="${4:-3}"
+isolation="${5:-off}"   # off = edit the (branch) worktree in place; keep = nested /tmp tree
 
 [ -f "$taskfile" ] || { echo "task file not found: $taskfile" >&2; exit 2; }
 # Load provider keys from .env if present (the generic DEEPCODER_* vars are
@@ -42,8 +51,8 @@ DEEPCODER_MODEL="$M" \
 DEEPCODER_BASE_URL="$U" \
 DEEPCODER_API_KEY="$K" \
 nohup node --import tsx src/cli/main.ts \
-  --mode auto --sandbox off --workspace-isolation keep \
+  --mode auto --sandbox off --workspace-isolation "$isolation" \
   --solve --check phase --solve-attempts "$attempts" \
   "$(cat "$taskfile")" > "$log" 2>&1 &
 
-echo "launched $provider worker (pid $!, model $M) — log: $log"
+echo "launched $provider worker (pid $!, model $M, isolation $isolation) — log: $log"

@@ -69,7 +69,9 @@ git add test/adversarial/<slice>.test.ts && git commit -q -m "test(<area>): <sli
 
 ```bash
 set -a && . ./.env 2>/dev/null && set +a
-rm -rf /tmp/deepcoder-ws-* 2>/dev/null            # clean stale worktrees first
+# Do NOT `rm -rf /tmp/deepcoder-ws-*` — it deletes other agents' in-flight worker trees
+# (see the multi-agent hazard box). For a single bounded slice, prefer a branch worktree +
+# isolation=off (no shared /tmp namespace); `keep` is shown here for the one-shot case.
 DEEPCODER_PROVIDER=deepseek DEEPCODER_MODEL=deepseek-v4-flash \
 DEEPCODER_BASE_URL=https://api.deepseek.com \
 DEEPCODER_API_KEY="$DEEPSEEK_API_KEY" \
@@ -78,6 +80,9 @@ nohup node --import tsx src/cli/main.ts \
   --solve --check phase --solve-attempts 3 \
   "$(cat /tmp/task-XX.txt)" > /tmp/XX-run.log 2>&1 &
 ```
+
+Or just `scripts/delegate.sh deepseek /tmp/task-XX.txt /tmp/XX-run.log` (defaults to
+`isolation=off` — run it from a branch worktree).
 
 Flag rationale:
 - `--workspace-isolation keep` — worker edits land in a throwaway git worktree
@@ -137,8 +142,11 @@ Delegated to DeepSeek-V4-Flash (verify-then-force; green on attempt N).
 
 Co-Authored-By: <your model> <noreply@anthropic.com>"
 
-# clean up SEPARATELY — never chain pkill with the commit (it kills the command, exit 144)
-rm -rf /tmp/deepcoder-ws-* 2>/dev/null
+# clean up SEPARATELY — never chain pkill with the commit (it kills the command, exit 144).
+# Remove ONLY this run's own worktree (parse the exact path from the log) — NEVER blanket-rm
+# /tmp/deepcoder-ws-* (it deletes other agents' in-flight trees). `git worktree prune` is safe.
+WS=$(grep -oE '/tmp/deepcoder-ws-[^/]+' /tmp/XX-run.log | head -1)
+[ -n "$WS" ] && rm -rf "$WS"
 rm -f .deepcoder/isolation-*.patch 2>/dev/null
 ```
 
@@ -146,33 +154,47 @@ rm -f .deepcoder/isolation-*.patch 2>/dev/null
 
 ## Parallel delegation (separate branches)
 
-Multiple slices can be delegated **at the same time**. Each worker already self-isolates
-(its own `/tmp/deepcoder-ws-*/wt` + a uniquely-timestamped patch), so the workers never
-collide. To keep the *verify + land* steps from colliding too, give each slice its own git
-branch+worktree.
+Multiple slices can be delegated **at the same time**, each in its own git branch+worktree.
 
 **Hard rule: parallel slices must touch DISJOINT files.** Disjoint files merge cleanly;
 overlapping edits (shared `config.ts`/`registry.ts`/`sessionStore.ts`) will conflict on merge —
 keep those serial / in-house.
 
-### Simple parallel (same base, disjoint files)
+> ⚠ **MULTI-AGENT / SHARED-NAMESPACE HAZARD (read this).** With `--workspace-isolation keep`,
+> *every* worker — yours and any other agent's — lives under the **shared** `/tmp/deepcoder-ws-*`
+> namespace. A blanket **`rm -rf /tmp/deepcoder-ws-*` deletes another agent's IN-FLIGHT worker
+> tree mid-run**, and the worker dies blind with an empty log. This actually happened.
+> **Two safe rules:**
+> 1. **Prefer `--workspace-isolation off` + a branch worktree** (below). The branch worktree
+>    *is* the isolation boundary — there's no shared `/tmp/deepcoder-ws-*` layer at all.
+> 2. If you must use `keep`, **never blanket-`rm` `/tmp/deepcoder-ws-*`.** Remove only the exact
+>    path printed in *your* run's log.
 
-Seed each slice (sequential commits), then fire the workers concurrently with the launcher:
+### Simple parallel (same checkout, isolation=keep) — SINGLE-AGENT ONLY
+
+Seed each slice (sequential commits), then fire the workers from one checkout with
+`isolation=keep` (each gets its own `/tmp/deepcoder-ws-*` tree + a unique patch):
 
 ```bash
 # 1. seed each slice's red test and commit (sequential — they're tiny)
-# 2. launch all workers at once:
-scripts/delegate.sh deepseek /tmp/task-A.txt /tmp/A.log
-scripts/delegate.sh deepseek /tmp/task-B.txt /tmp/B.log
-scripts/delegate.sh gemini   /tmp/task-C.txt /tmp/C.log
-# 3. as each finishes (its log shows `patch written`), verify-then-force that patch
-#    on a clean baseline (section 5) and commit. Patches are uniquely timestamped.
+# 2. launch all workers at once (5th arg = keep):
+scripts/delegate.sh deepseek /tmp/task-A.txt /tmp/A.log 3 keep
+scripts/delegate.sh deepseek /tmp/task-B.txt /tmp/B.log 3 keep
+scripts/delegate.sh gemini   /tmp/task-C.txt /tmp/C.log 3 keep
+# 3. as each finishes (`patch written`), apply its UNIQUE patch on a clean baseline and
+#    verify-then-force (section 5). Clean ONLY each run's own ws path — never blanket-rm.
 ```
 
-### Branch-per-slice (cleanest isolation for verify + land)
+Use this only when you are the sole agent touching `/tmp/deepcoder-ws-*`. If any other agent
+may be delegating, use **branch-per-slice with isolation=off** below — it has no shared
+namespace and is the recommended parallel mode.
 
-Run each slice in its own branch worktree off the integration base, so verification and the
-landing commit are fully independent and merge at the end:
+### Branch-per-slice with isolation=off (RECOMMENDED — safe for parallel & multi-agent)
+
+Run each slice in its own branch worktree and let the worker edit that worktree **in place**
+(`--workspace-isolation off`). The branch is the isolation boundary, so there's no shared
+`/tmp/deepcoder-ws-*` layer, no nested-tree race, and no patch to apply — the changes are
+already in the worktree when the worker finishes.
 
 ```bash
 BASE=$(git rev-parse HEAD)            # integration base (or origin/master)
@@ -181,25 +203,34 @@ for S in sliceA sliceB sliceC; do
   ln -sfn "$PWD/node_modules" /tmp/deleg-$S/node_modules     # gitignored; needed to run test:phase
   mkdir -p /tmp/deleg-$S/.deepcoder
   cp .deepcoder/config.json /tmp/deleg-$S/.deepcoder/        # gitignored; defines the `phase` check
-  # (in /tmp/deleg-$S) write + commit the red seed, then:
-  ( cd /tmp/deleg-$S && scripts/delegate.sh deepseek /tmp/task-$S.txt /tmp/$S.log )
+  # (in /tmp/deleg-$S) write + commit the red seed, then launch with isolation=off:
+  ( cd /tmp/deleg-$S && "$OLDPWD"/scripts/delegate.sh deepseek /tmp/task-$S.txt /tmp/$S.log 3 off )
 done
 
-# When a worker finishes, in its branch worktree:
-#   git -C /tmp/deleg-$S apply --whitespace=nowarn .deepcoder/isolation-*.patch
-#   verify (typecheck + red-on-baseline + test:phase)  →  git -C /tmp/deleg-$S commit
-# Then merge the disjoint branches back and clean up:
+# isolation=off → the worker edited /tmp/deleg-$S in place. When it finishes, in that worktree:
+#   cd /tmp/deleg-$S
+#   git status --short                       # scope: only the allowed files changed
+#   npm run typecheck
+#   mv src/<area>/<impl>.ts /tmp/x; node --import tsx --test test/.../<slice>.test.ts \
+#     && echo VACUOUS || echo "red ✓"; mv /tmp/x src/<area>/<impl>.ts   # red-on-baseline
+#   npm run test:phase                       # green-on-full
+#   git add <impl + tests> && git commit
+# Then merge the disjoint branches into master and clean up YOUR worktrees only:
 git merge --no-ff deleg/sliceA deleg/sliceB deleg/sliceC   # clean if files are disjoint
-for S in sliceA sliceB sliceC; do git worktree remove /tmp/deleg-$S; git branch -D deleg/$S; done
+for S in sliceA sliceB sliceC; do git worktree remove /tmp/deleg-$S; git branch -d deleg/$S; done
 ```
 
 Notes:
 - A fresh worktree has no `node_modules` AND no `.deepcoder/config.json` (both gitignored) —
   symlink `node_modules` and copy `.deepcoder/config.json` in, or the worker refuses with
   "Unknown check phase" and makes no changes.
+- **`isolation=off` is safe here ONLY because each worker has its OWN branch worktree.** Never
+  run two `off` workers from the *same* checkout — they'd edit the same tree.
 - **Killing a worker:** `pkill -f 'cli/main.ts …'` matches its OWN command line and kills its
   shell (exit 144). Use the bracket trick `pkill -f '[c]li/main.ts.*--solve'`, or kill by PID.
   Same reason you never chain `pkill` with a commit.
+- **Cleanup:** `git worktree remove` your own `deleg/*` trees. Do NOT `rm -rf /tmp/deepcoder-ws-*`
+  (see the hazard box above). `git worktree prune` is safe (only removes already-missing entries).
 - Keep the concurrency sane (a few workers); each runs a full `test:phase`, which is CPU/IO heavy.
 - Verification is still mandatory **per slice** — parallelism changes scheduling, not the gate.
 
