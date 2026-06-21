@@ -30,12 +30,27 @@ function stripInline(s: string): string {
     .replace(/_([^_]+)_/g, "$1"); // _italic_
 }
 
+/** True for a GFM table delimiter row, e.g. `|---|:--:|`. */
+function isTableDelimiter(s: string): boolean {
+  return /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/.test(s) && s.includes("-");
+}
+
+/** Split a GFM table row into trimmed, marker-stripped cells (outer pipes optional). */
+function splitTableRow(s: string): string[] {
+  let t = s.trim();
+  if (t.startsWith("|")) t = t.slice(1);
+  if (t.endsWith("|")) t = t.slice(0, -1);
+  return t.split("|").map((c) => stripInline(c.trim()));
+}
+
 export function renderMarkdown(md: string, opts: RenderMarkdownOptions): string[] {
   const { width, theme } = opts;
   const out: string[] = [];
   let inCode = false;
 
-  for (const raw of md.split("\n")) {
+  const lines = md.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     const line = raw.replace(/\s+$/, "");
 
     // Fenced code block toggles — the fence lines themselves are not emitted.
@@ -49,6 +64,31 @@ export function renderMarkdown(md: string, opts: RenderMarkdownOptions): string[
     }
     if (line.trim() === "") {
       out.push("");
+      continue;
+    }
+
+    // GFM table: a row containing `|` immediately followed by a delimiter row.
+    // Rendered as fixed-width columns (cell markers stripped) with a box rule
+    // under the header — never as raw pipes/dashes.
+    if (line.includes("|") && i + 1 < lines.length && isTableDelimiter(lines[i + 1])) {
+      const header = splitTableRow(line);
+      const rows: string[][] = [];
+      let j = i + 2;
+      while (j < lines.length && lines[j].includes("|") && lines[j].trim() !== "") {
+        rows.push(splitTableRow(lines[j]));
+        j++;
+      }
+      const ncol = Math.max(header.length, ...rows.map((r) => r.length));
+      const widths: number[] = [];
+      for (let c = 0; c < ncol; c++) {
+        widths[c] = Math.max(header[c]?.length ?? 0, ...rows.map((r) => r[c]?.length ?? 0));
+      }
+      const fmt = (cells: string[]): string =>
+        widths.map((w, c) => (cells[c] ?? "").padEnd(w)).join(" │ ");
+      out.push(theme.title(fmt(header)));
+      out.push(theme.dim(widths.map((w) => "─".repeat(w)).join("─┼─")));
+      for (const r of rows) out.push(fmt(r));
+      i = j - 1; // consume the table; loop's i++ advances past the last row
       continue;
     }
 
