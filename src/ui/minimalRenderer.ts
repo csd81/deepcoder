@@ -19,8 +19,10 @@ export interface FrameInput {
   height: number;
   /** Terminal width in columns — every output line is truncated to this. */
   width: number;
-  /** Current input line text. */
+  /** Current input line text (single-line composer). */
   inputLine: string;
+  /** Multiline composer rows; when present, used instead of `inputLine`. */
+  inputLines?: string[];
   /** Whether there is new output below the viewport (show indicator). */
   hasNewOutputBelow: boolean;
 }
@@ -62,8 +64,9 @@ export function renderFrame(input: FrameInput): string[] {
     result.push(truncate("↓ new output below", width));
   }
 
-  // 4. Input line
-  result.push(truncate(inputLine, width));
+  // 4. Input composer (one or more rows)
+  const composer = input.inputLines ?? [inputLine];
+  for (const row of composer) result.push(truncate(row, width));
 
   return result;
 }
@@ -77,6 +80,8 @@ export type KeyAction =
   | "half-down"
   | "top"
   | "bottom"
+  | "history-up"
+  | "history-down"
   | "escape"
   | "submit"
   | "interrupt"
@@ -116,6 +121,13 @@ export function keyToAction(key: string): KeyAction {
     case "\u001b[F":
     case "\u001b[4~":
       return "bottom";
+
+    // Up / Down — prompt history navigation
+    case "up":
+      return "history-up";
+
+    case "down":
+      return "history-down";
 
     // Escape
     case "escape":

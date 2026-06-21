@@ -38,6 +38,7 @@ import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
 import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
+import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
@@ -479,7 +480,7 @@ async function injectSessionStartContext(session: Session): Promise<void> {
 export async function runTuiRepl(session: Session): Promise<void> {
   const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
   let transcript: TranscriptState = createTranscript();
-  let input = "";
+  let editor = createEditor();
   let viewportTop = 0;
   let atBottom = true;
   let busy = false;
@@ -543,7 +544,15 @@ export async function runTuiRepl(session: Session): Promise<void> {
     return lines;
   }
 
-  const viewportH = () => Math.max(1, (stdout.rows ?? 24) - 2);
+  /** The input composer rendered as display rows (continuation lines indented). */
+  function composerLines(): string[] {
+    const buf = editor.text.length ? editor.text.split("\n") : [""];
+    return buf.map((l, i) => (i === 0 ? "> " : "  ") + l);
+  }
+
+  // Window height = rows minus status(1) + indicator-reserve(1) + composer rows,
+  // so the absolutely-positioned diff frame never overflows the screen.
+  const viewportH = (inputCount = 1) => Math.max(1, (stdout.rows ?? 24) - 2 - inputCount);
 
   function redraw(): void {
     if (restored) return;
@@ -551,7 +560,8 @@ export async function runTuiRepl(session: Session): Promise<void> {
     // Wrap logical lines to the terminal width so nothing is truncated off-screen
     // and a resize re-wraps cleanly. renderFrame's own (ANSI-aware) truncate no-ops.
     const lines = buildLines(width);
-    const height = viewportH();
+    const composer = composerLines();
+    const height = viewportH(composer.length);
     const maxTop = Math.max(0, lines.length - height);
     if (atBottom) viewportTop = maxTop;
     else viewportTop = Math.min(Math.max(0, viewportTop), maxTop);
@@ -561,7 +571,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       (busy ? theme.warning(" · running…") : "");
     const frame = renderFrame({
       statusLine: status, lines, viewportTop, height,
-      width, inputLine: "> " + input,
+      width, inputLine: composer[0], inputLines: composer,
       hasNewOutputBelow: !atBottom && viewportTop < maxTop,
     });
     // Repaint only the lines that changed since the last frame (anti-flicker).
@@ -596,9 +606,8 @@ export async function runTuiRepl(session: Session): Promise<void> {
     transcript = { ...transcript, blocks: [...transcript.blocks, { id: `u${Date.now()}`, kind: "user", body: line, startedAt: new Date().toISOString() }] };
   }
 
-  async function submit(): Promise<void> {
-    const line = input.trim();
-    input = "";
+  async function handleSubmit(raw: string): Promise<void> {
+    const line = raw.trim();
     if (!line) { redraw(); return; }
     pushUser(line); atBottom = true; redraw();
     if (line === "/exit" || line === "/quit") { restore(); resolveDone(); return; }
@@ -626,11 +635,18 @@ export async function runTuiRepl(session: Session): Promise<void> {
       r(key?.name === "return" ? "enter" : (str ?? key?.sequence ?? key?.name ?? ""));
       return;
     }
+    // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
+    if (key?.name === "return" && (key as { meta?: boolean }).meta) {
+      if (!busy) { editor = reduceEditor(editor, { type: "newline" }).state; redraw(); }
+      return;
+    }
     const named = key?.name ? keyToAction(key.name) : "none";
     const action = named !== "none" ? named : keyToAction(key?.sequence ?? str ?? "");
+    const inputCount = composerLines().length;
+    const vh = viewportH(inputCount);
     const lines = buildLines(stdout.columns ?? 80).length;
-    const maxTop = Math.max(0, lines - viewportH());
-    const half = Math.max(1, Math.floor(viewportH() / 2));
+    const maxTop = Math.max(0, lines - vh);
+    const half = Math.max(1, Math.floor(vh / 2));
     switch (action) {
       case "interrupt":
         if (busy) { try { process.kill(process.pid, "SIGINT"); } catch { /* */ } }
@@ -642,12 +658,20 @@ export async function runTuiRepl(session: Session): Promise<void> {
       case "half-down": viewportTop = Math.min(maxTop, viewportTop + half); atBottom = viewportTop >= maxTop; redraw(); return;
       case "top": atBottom = false; viewportTop = 0; redraw(); return;
       case "bottom": atBottom = true; redraw(); return;
+      case "history-up": if (!busy) { editor = reduceEditor(editor, { type: "history-prev" }).state; redraw(); } return;
+      case "history-down": if (!busy) { editor = reduceEditor(editor, { type: "history-next" }).state; redraw(); } return;
       case "escape": atBottom = true; redraw(); return;
-      case "submit": if (!busy) void submit(); return;
+      case "submit": {
+        if (busy) return;
+        const { state, submitted } = reduceEditor(editor, { type: "submit" });
+        editor = state;
+        if (submitted !== undefined) void handleSubmit(submitted);
+        return;
+      }
       default:
         if (busy) return;
-        if (key?.name === "backspace") input = input.slice(0, -1);
-        else if (str && str.length === 1 && str >= " " && !key?.ctrl) input += str;
+        if (key?.name === "backspace") editor = reduceEditor(editor, { type: "backspace" }).state;
+        else if (str && str.length === 1 && str >= " " && !key?.ctrl) editor = reduceEditor(editor, { type: "insert", ch: str }).state;
         redraw();
     }
   }
@@ -662,7 +686,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   process.on("exit", onProcExit);
   process.on("SIGTERM", onProcExit);
   stdout.on("resize", onResize);
-  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — PgUp/PgDn scroll · Enter submit · Ctrl+C exit · /exit quits" });
+  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — PgUp/PgDn scroll · ↑/↓ history · Alt+Enter newline · Enter submit · Ctrl+C exit · /exit quits" });
   redraw();
   try {
     await done;
