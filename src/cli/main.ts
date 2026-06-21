@@ -15,7 +15,8 @@ import { createSemanticTools } from "../tools/semanticTools.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
-import { runOneShot, runRepl, systemMessage, resolveInstructions, type Session } from "./repl.js";
+import { runOneShot, runRepl, runTuiRepl, systemMessage, resolveInstructions, type Session } from "./repl.js";
+import { resolveUiMode } from "../ui/uiMode.js";
 import {
   SessionStore,
   newSessionId,
@@ -51,6 +52,8 @@ program
   .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
   .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
   .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
+  .option("--tui", "interactive: use the experimental scrollable terminal UI (TTY only)")
+  .option("--no-tui", "interactive: force the plain line UI")
   .action(
     async (
       promptParts: string[],
@@ -70,6 +73,7 @@ program
         sandbox?: string;
         workspaceIsolation?: string;
         workspaceIsolationIncludeDirty?: boolean;
+        tui?: boolean;
       },
     ) => {
     const baseConfig = loadConfig({
@@ -110,7 +114,16 @@ program
     const prompt = promptParts.join(" ").trim();
     try {
       if (prompt) await runOneShot(session, prompt);
-      else await runRepl(session);
+      else {
+        // Non-TTY never starts the TUI (resolveUiMode enforces this).
+        const uiMode = resolveUiMode({
+          flag: opts.tui === true ? "tui" : opts.tui === false ? "plain" : undefined,
+          env: process.env,
+          isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+        });
+        if (uiMode === "tui") await runTuiRepl(session);
+        else await runRepl(session);
+      }
     } finally {
       await finalizeIsolation(session);
     }

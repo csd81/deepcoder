@@ -1,4 +1,5 @@
 import readline from "node:readline/promises";
+import { emitKeypressEvents } from "node:readline";
 import { stdin, stdout } from "node:process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -31,6 +32,10 @@ import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
+import type { UiEvent } from "../ui/events.js";
+import { createTranscript, applyEvent, type TranscriptState } from "../ui/transcript.js";
+import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
+import { createTuiApproval } from "../ui/approval.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -252,7 +257,13 @@ function snapshot(session: Session): SessionSnapshot {
   };
 }
 
-async function runTask(session: Session): Promise<void> {
+/** Injectable UI for a task run (TUI mode). Plain mode passes nothing. */
+export interface TaskUi {
+  sink: { emit(e: UiEvent): void; endTurn(): void };
+  approve: AgentDeps["approve"];
+}
+
+export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
   const controller = new AbortController();
   const onSigint = () => controller.abort();
   process.once("SIGINT", onSigint);
@@ -273,7 +284,7 @@ async function runTask(session: Session): Promise<void> {
     skills: skillsRuntime(session),
   };
 
-  const renderer = createPlainRenderer({ write: (s) => stdout.write(s) });
+  const renderer = ui?.sink ?? createPlainRenderer({ write: (s) => stdout.write(s) });
   const deps: AgentDeps = {
     provider: session.provider,
     registry: session.registry,
@@ -284,7 +295,7 @@ async function runTask(session: Session): Promise<void> {
     contextBudgetTokens: session.config.contextBudgetTokens,
     compactAt: session.config.compactAt,
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
-    approve: (inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview),
+    approve: ui?.approve ?? ((inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview)),
     onPreToolUse: preToolUseHook(session),
     onPostTool: postToolHook(session),
     jitContext: jitContext(session),
@@ -311,7 +322,11 @@ async function runTask(session: Session): Promise<void> {
     if (!session.isolation && session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {
       try {
         const id = await session.recorder.finalize(completed ? "auto" : "auto:interrupted");
-        if (id) stdout.write(chalk.dim(`Checkpoint ${id} saved (${completed ? "auto" : "auto:interrupted"}). /rollback ${id} to undo.\n`));
+        if (id) {
+          const msg = `Checkpoint ${id} saved (${completed ? "auto" : "auto:interrupted"}). /rollback ${id} to undo.`;
+          if (ui) renderer.emit({ type: "notice", message: msg });
+          else stdout.write(chalk.dim(msg + "\n"));
+        }
       } catch {
         /* never mask the original error with a checkpoint failure */
       }
@@ -440,5 +455,165 @@ async function injectSessionStartContext(session: Session): Promise<void> {
   const sys = session.messages[0];
   if (sys?.role === "system") {
     sys.content += `\n\n## Session hook context (non-authoritative)\n${extra.join("\n")}`;
+  }
+}
+
+/**
+ * Phase 10A — minimal raw-mode TUI (experimental, opt-in via --tui). NOT a
+ * dependency: hand-rolled alternate-screen + raw input using the tested pure
+ * pieces (resolveUiMode gates entry, transcript reducer holds state, renderFrame
+ * draws, keyToAction maps keys, createTuiApproval for in-run approvals). This
+ * file is the manual-smoke I/O shell; all its logic lives in tested modules.
+ *
+ * SAFETY: the terminal is ALWAYS restored (raw off, main screen, cursor shown)
+ * on every exit path — normal exit, error, signal, or process exit. Slash
+ * commands (which print to stdout) SUSPEND the TUI and run on the normal screen.
+ */
+export async function runTuiRepl(session: Session): Promise<void> {
+  const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
+  let transcript: TranscriptState = createTranscript();
+  let input = "";
+  let viewportTop = 0;
+  let atBottom = true;
+  let busy = false;
+  let approvalResolve: ((k: string) => void) | null = null;
+  let restored = false;
+  let resolveDone: () => void = () => {};
+  const done = new Promise<void>((r) => { resolveDone = r; });
+
+  const enterAlt = () => stdout.write("\x1b[?1049h\x1b[?25l");
+  const leaveAlt = () => stdout.write("\x1b[?25h\x1b[?1049l");
+
+  function restore(): void {
+    if (restored) return;
+    restored = true;
+    try { if (tty.isTTY) tty.setRawMode?.(false); } catch { /* best effort */ }
+    try { stdin.removeListener("keypress", onKey); } catch { /* */ }
+    try { leaveAlt(); } catch { /* */ }
+    try { stdin.pause(); } catch { /* */ }
+  }
+
+  function flatten(): string[] {
+    const out: string[] = [];
+    for (const b of transcript.blocks) {
+      const prefix =
+        b.kind === "assistant" ? "assistant> "
+        : b.kind === "user" ? "> "
+        : b.kind === "tool" ? `tool ${b.title ?? ""}${b.body ? ": " : ""}`
+        : b.kind === "notice" ? "! "
+        : "";
+      for (const ln of (prefix + (b.body ?? "")).split("\n")) out.push(ln);
+    }
+    return out;
+  }
+
+  const viewportH = () => Math.max(1, (stdout.rows ?? 24) - 2);
+
+  function redraw(): void {
+    if (restored) return;
+    const lines = flatten();
+    const height = viewportH();
+    const maxTop = Math.max(0, lines.length - height);
+    if (atBottom) viewportTop = maxTop;
+    else viewportTop = Math.min(Math.max(0, viewportTop), maxTop);
+    const status = `deepcoder · ${session.mode} · ${session.config.provider}/${session.config.model} · sandbox ${session.config.sandbox.mode}${busy ? " · running…" : ""}`;
+    const frame = renderFrame({
+      statusLine: status, lines, viewportTop, height,
+      width: stdout.columns ?? 80, inputLine: "> " + input,
+      hasNewOutputBelow: !atBottom && viewportTop < maxTop,
+    });
+    stdout.write("\x1b[2J\x1b[H" + frame.join("\r\n"));
+  }
+
+  const sink = {
+    emit: (e: UiEvent) => { transcript = applyEvent(transcript, e); redraw(); },
+    endTurn: () => { redraw(); },
+  };
+  const approval = createTuiApproval({
+    nextKey: () => new Promise<string>((res) => { approvalResolve = res; }),
+    onRender: (req) => {
+      transcript = applyEvent(transcript, { type: "notice", message: `Permission required: ${req.description}  [y] approve · [n] deny` });
+      redraw();
+    },
+  });
+  const approve = (inv: ToolInvocation, _preview?: ToolPreview) => approval.approve({ description: inv.describe() });
+
+  function pushUser(line: string): void {
+    transcript = { ...transcript, blocks: [...transcript.blocks, { id: `u${Date.now()}`, kind: "user", body: line, startedAt: new Date().toISOString() }] };
+  }
+
+  async function submit(): Promise<void> {
+    const line = input.trim();
+    input = "";
+    if (!line) { redraw(); return; }
+    pushUser(line); atBottom = true; redraw();
+    if (line === "/exit" || line === "/quit") { restore(); resolveDone(); return; }
+    if (line.startsWith("/")) {
+      restore(); restored = false; // suspend: run the command on the normal screen
+      try {
+        await handleSlashCommand(line, session, () => session.store.save(snapshot(session)), () => runTask(session));
+      } catch (e) { stdout.write(chalk.red(`\nError: ${(e as Error).message ?? e}\n`)); }
+      enterAlt();
+      if (tty.isTTY) tty.setRawMode?.(true);
+      stdin.on("keypress", onKey); stdin.resume();
+      redraw();
+      return;
+    }
+    session.messages.push({ role: "user", content: line });
+    busy = true; redraw();
+    try { await runTask(session, { sink, approve }); }
+    catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` }); }
+    finally { busy = false; atBottom = true; redraw(); }
+  }
+
+  function onKey(str: string | undefined, key: { name?: string; sequence?: string; ctrl?: boolean } | undefined): void {
+    if (approvalResolve) {
+      const r = approvalResolve; approvalResolve = null;
+      r(key?.name === "return" ? "enter" : (str ?? key?.sequence ?? key?.name ?? ""));
+      return;
+    }
+    const named = key?.name ? keyToAction(key.name) : "none";
+    const action = named !== "none" ? named : keyToAction(key?.sequence ?? str ?? "");
+    const lines = flatten().length;
+    const maxTop = Math.max(0, lines - viewportH());
+    const half = Math.max(1, Math.floor(viewportH() / 2));
+    switch (action) {
+      case "interrupt":
+        if (busy) { try { process.kill(process.pid, "SIGINT"); } catch { /* */ } }
+        else { restore(); resolveDone(); }
+        return;
+      case "scroll-up": atBottom = false; viewportTop = Math.max(0, viewportTop - 1); redraw(); return;
+      case "scroll-down": viewportTop = Math.min(maxTop, viewportTop + 1); atBottom = viewportTop >= maxTop; redraw(); return;
+      case "half-up": atBottom = false; viewportTop = Math.max(0, viewportTop - half); redraw(); return;
+      case "half-down": viewportTop = Math.min(maxTop, viewportTop + half); atBottom = viewportTop >= maxTop; redraw(); return;
+      case "top": atBottom = false; viewportTop = 0; redraw(); return;
+      case "bottom": atBottom = true; redraw(); return;
+      case "escape": atBottom = true; redraw(); return;
+      case "submit": if (!busy) void submit(); return;
+      default:
+        if (busy) return;
+        if (key?.name === "backspace") input = input.slice(0, -1);
+        else if (str && str.length === 1 && str >= " " && !key?.ctrl) input += str;
+        redraw();
+    }
+  }
+
+  // ── setup (raw mode + alternate screen), with guaranteed restore ──
+  enterAlt();
+  emitKeypressEvents(stdin);
+  if (tty.isTTY) tty.setRawMode?.(true);
+  stdin.resume();
+  stdin.on("keypress", onKey);
+  const onProcExit = () => restore();
+  process.on("exit", onProcExit);
+  process.on("SIGTERM", onProcExit);
+  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — PgUp/PgDn scroll · Enter submit · Ctrl+C exit · /exit quits" });
+  redraw();
+  try {
+    await done;
+  } finally {
+    restore();
+    process.removeListener("exit", onProcExit);
+    process.removeListener("SIGTERM", onProcExit);
   }
 }
