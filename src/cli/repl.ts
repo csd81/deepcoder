@@ -36,7 +36,8 @@ import type { UiEvent } from "../ui/events.js";
 import { createTranscript, applyEvent, type TranscriptState } from "../ui/transcript.js";
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { diffFrames } from "../ui/frameWriter.js";
-import { wrapLines } from "../ui/textLayout.js";
+import { wrapLine } from "../ui/textLayout.js";
+import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createTuiApproval } from "../ui/approval.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
@@ -506,18 +507,40 @@ export async function runTuiRepl(session: Session): Promise<void> {
     try { stdin.pause(); } catch { /* */ }
   }
 
-  function flatten(): string[] {
-    const out: string[] = [];
+  const theme: Theme = createTheme(
+    resolveColorEnabled({ env: process.env, isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) }),
+  );
+
+  /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping). */
+  function flattenStyled(): { text: string; style: (s: string) => string }[] {
+    const out: { text: string; style: (s: string) => string }[] = [];
     for (const b of transcript.blocks) {
       const prefix =
         b.kind === "assistant" ? "assistant> "
         : b.kind === "user" ? "> "
         : b.kind === "tool" ? `tool ${b.title ?? ""}${b.body ? ": " : ""}`
+        : b.kind === "check" ? `check ${b.title ?? ""}${b.body ? ": " : ""}`
         : b.kind === "notice" ? "! "
         : "";
-      for (const ln of (prefix + (b.body ?? "")).split("\n")) out.push(ln);
+      const style: (s: string) => string =
+        b.kind === "user" ? theme.title
+        : b.kind === "tool" ? theme.dim
+        : b.kind === "check" ? (b.isError ? theme.error : theme.success)
+        : b.kind === "notice" ? (b.isError ? theme.warning : theme.dim)
+        : b.isError ? theme.error
+        : (s) => s;
+      for (const ln of (prefix + (b.body ?? "")).split("\n")) out.push({ text: ln, style });
     }
     return out;
+  }
+
+  /** Wrap each logical line to width, then color each wrapped row (color is zero-width). */
+  function buildLines(width: number): string[] {
+    const lines: string[] = [];
+    for (const sl of flattenStyled()) {
+      for (const chunk of wrapLine(sl.text, width)) lines.push(sl.style(chunk));
+    }
+    return lines;
   }
 
   const viewportH = () => Math.max(1, (stdout.rows ?? 24) - 2);
@@ -526,13 +549,16 @@ export async function runTuiRepl(session: Session): Promise<void> {
     if (restored) return;
     const width = stdout.columns ?? 80;
     // Wrap logical lines to the terminal width so nothing is truncated off-screen
-    // and a resize re-wraps cleanly. renderFrame's own truncation then no-ops.
-    const lines = wrapLines(flatten(), width);
+    // and a resize re-wraps cleanly. renderFrame's own (ANSI-aware) truncate no-ops.
+    const lines = buildLines(width);
     const height = viewportH();
     const maxTop = Math.max(0, lines.length - height);
     if (atBottom) viewportTop = maxTop;
     else viewportTop = Math.min(Math.max(0, viewportTop), maxTop);
-    const status = `deepcoder · ${session.mode} · ${session.config.provider}/${session.config.model} · sandbox ${session.config.sandbox.mode}${busy ? " · running…" : ""}`;
+    const status =
+      theme.title("deepcoder") +
+      theme.dim(` · ${session.mode} · ${session.config.provider}/${session.config.model} · sandbox ${session.config.sandbox.mode}`) +
+      (busy ? theme.warning(" · running…") : "");
     const frame = renderFrame({
       statusLine: status, lines, viewportTop, height,
       width, inputLine: "> " + input,
@@ -602,7 +628,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     }
     const named = key?.name ? keyToAction(key.name) : "none";
     const action = named !== "none" ? named : keyToAction(key?.sequence ?? str ?? "");
-    const lines = flatten().length;
+    const lines = buildLines(stdout.columns ?? 80).length;
     const maxTop = Math.max(0, lines - viewportH());
     const half = Math.max(1, Math.floor(viewportH() / 2));
     switch (action) {

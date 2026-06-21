@@ -140,12 +140,40 @@ export function keyToAction(key: string): KeyAction {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/** SGR (color) escape sequence matcher — these are zero-width on screen. */
+const SGR = /\x1b\[[0-9;]*m/g;
+
 /**
- * Truncate a string to at most `maxLen` columns.
- * If the string is shorter or equal, returns it unchanged.
- * This is a simple character-count truncation (no Unicode grapheme clusters).
+ * Visible column count of a string, ignoring SGR color codes (which take no
+ * screen space). Still a simple per-codepoint count (no grapheme/CJK awareness).
+ */
+export function visibleWidth(s: string): number {
+  return s.replace(SGR, "").length;
+}
+
+/**
+ * Truncate a string to at most `maxLen` VISIBLE columns, preserving any SGR
+ * color codes and appending a reset if the string was cut while styled. Lines
+ * that already fit (by visible width) are returned unchanged.
  */
 function truncate(s: string, maxLen: number): string {
-  if (s.length <= maxLen) return s;
-  return s.slice(0, maxLen);
+  if (visibleWidth(s) <= maxLen) return s;
+  let out = "";
+  let count = 0;
+  let i = 0;
+  let sawEscape = false;
+  while (i < s.length && count < maxLen) {
+    const rest = s.slice(i);
+    const m = /^\x1b\[[0-9;]*m/.exec(rest);
+    if (m) {
+      out += m[0];
+      i += m[0].length;
+      sawEscape = true;
+      continue;
+    }
+    out += s[i];
+    i += 1;
+    count += 1;
+  }
+  return sawEscape ? out + "\x1b[0m" : out;
 }
