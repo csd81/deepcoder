@@ -30,6 +30,7 @@ import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
+import { createPlainRenderer } from "../ui/plainRenderer.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -272,7 +273,7 @@ async function runTask(session: Session): Promise<void> {
     skills: skillsRuntime(session),
   };
 
-  let streaming = false;
+  const renderer = createPlainRenderer({ write: (s) => stdout.write(s) });
   const deps: AgentDeps = {
     provider: session.provider,
     registry: session.registry,
@@ -289,34 +290,19 @@ async function runTask(session: Session): Promise<void> {
     jitContext: jitContext(session),
     onPersist: () => session.store.save(snapshot(session)),
     onUsage: (u) => addUsage(session.tokenUsage, u),
-    onAssistantTextDelta: (chunk) => {
-      if (!streaming) {
-        stdout.write("\n" + chalk.bold("assistant> "));
-        streaming = true;
-      }
-      stdout.write(chunk);
-    },
+    onAssistantTextDelta: (chunk) => renderer.emit({ type: "assistant_delta", text: chunk }),
     onAssistantText: (text) => {
       if (text.trim()) stdout.write("\n" + chalk.bold("assistant> ") + text.trim() + "\n");
     },
-    onToolCall: (name, describe) => {
-      if (streaming) {
-        stdout.write("\n");
-        streaming = false;
-      }
-      stdout.write(chalk.dim(`tool ${name}: ${describe}\n`));
-    },
-    onToolResult: (_name, result: ToolResult) => {
-      const text = result.output.length > 800 ? result.output.slice(0, 800) + "\n…(truncated)" : result.output;
-      stdout.write((result.isError ? chalk.red(text) : chalk.dim(text)) + "\n");
-    },
-    onNotice: (m) => stdout.write(chalk.yellow(`\n${m}\n`)),
+    onToolCall: (name, describe) => renderer.emit({ type: "tool_start", name, description: describe }),
+    onToolResult: (_name, result: ToolResult) => renderer.emit({ type: "tool_result", name: _name, output: result.output, isError: !!result.isError }),
+    onNotice: (m) => renderer.emit({ type: "notice", message: m }),
   };
 
   let completed = false;
   try {
     await runAgentLoop(session.messages, deps);
-    if (streaming) stdout.write("\n");
+    renderer.endTurn();
     completed = true;
   } finally {
     process.removeListener("SIGINT", onSigint);
