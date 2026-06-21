@@ -172,7 +172,36 @@ export function evaluateCompleteness(input: EvaluateCompletenessInput): Complete
   }
 
   /* ---------------------------------------------------------------- */
-  /*  3. Expected tests                                                */
+  /*  3. Expected symbols                                              */
+  /* ---------------------------------------------------------------- */
+
+  const expectedSymbols = task.expectedSymbols ?? [];
+
+  for (const es of expectedSymbols) {
+    // must_add_or_change: the named file must be in the patch AND the symbol
+    // must appear on an ADDED line within that file's hunk (scoped per file so
+    // a symbol added elsewhere can't satisfy the rule).
+    const fileChanged = changedSet.has(es.file);
+    const added = fileChanged ? addedLinesForFile(patchText, es.file) : "";
+    if (fileChanged && added.includes(es.symbol)) {
+      evidence.push({ path: es.file, note: `symbol "${es.symbol}" added/changed in "${es.file}"` });
+    } else {
+      failures.push({
+        code: "missing_expected_symbol",
+        message: fileChanged
+          ? `Expected symbol "${es.symbol}" not added/changed in "${es.file}"`
+          : `Expected symbol "${es.symbol}" rule: file "${es.file}" is not in the patch`,
+        path: es.file,
+      });
+      evidence.push({
+        path: es.file,
+        note: `symbol "${es.symbol}" NOT added/changed in "${es.file}"`,
+      });
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  4. Expected tests                                                */
   /* ---------------------------------------------------------------- */
 
   const expectedTests = task.expectedTests ?? [];
@@ -222,7 +251,7 @@ export function evaluateCompleteness(input: EvaluateCompletenessInput): Complete
   }
 
   /* ---------------------------------------------------------------- */
-  /*  4. Self-audit cross-check                                        */
+  /*  5. Self-audit cross-check                                        */
   /* ---------------------------------------------------------------- */
 
   if (selfAudit) {
@@ -275,7 +304,7 @@ export function evaluateCompleteness(input: EvaluateCompletenessInput): Complete
   }
 
   /* ---------------------------------------------------------------- */
-  /*  5. Result                                                        */
+  /*  6. Result                                                        */
   /* ---------------------------------------------------------------- */
 
   return {
@@ -350,6 +379,34 @@ function checkDeliverable(
       return "manual_review";
     }
   }
+}
+
+/**
+ * Return the concatenation of ADDED lines (unified-diff `+`, excluding the
+ * `+++` file header) that belong to `file`'s hunk in a unified patch. Sections
+ * are delimited by `diff --git` headers; the target path is taken from the
+ * `+++ b/<path>` line so a symbol added in another file's hunk cannot match.
+ * Returns "" when the file has no section.
+ */
+function addedLinesForFile(patchText: string, file: string): string {
+  const lines = patchText.split("\n");
+  const out: string[] = [];
+  let inFile = false;
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      inFile = false; // a new file section starts; re-decide on its +++ header
+      continue;
+    }
+    if (line.startsWith("+++ ")) {
+      // "+++ b/src/auth.ts" or "+++ src/auth.ts"; match the trailing path.
+      const target = line.slice(4).replace(/^b\//, "").trim();
+      inFile = target === file;
+      continue;
+    }
+    if (line.startsWith("---")) continue; // old-file header, never content
+    if (inFile && line.startsWith("+")) out.push(line.slice(1));
+  }
+  return out.join("\n");
 }
 
 /**

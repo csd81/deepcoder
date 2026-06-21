@@ -628,3 +628,78 @@ describe("edge cases", () => {
     );
   });
 });
+
+/* ------------------------------------------------------------------ */
+/*  8. Expected symbols (Phase 9G — was defined but never consumed)    */
+/* ------------------------------------------------------------------ */
+
+describe("expected symbols", () => {
+  const SYMBOL_TASK = (): WorkerTask =>
+    baseTask({
+      expectedSymbols: [{ file: "src/auth.ts", symbol: "verifyToken", mode: "must_add_or_change" }],
+    });
+
+  test("symbol added on a changed-file diff line => satisfied", () => {
+    const patch = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "--- a/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1,2 +1,5 @@",
+      "+export function verifyToken(t: string): boolean {",
+      "+  return t.length > 0;",
+      "+}",
+    ].join("\n");
+    const result = evaluateCompleteness({
+      task: SYMBOL_TASK(),
+      changedPaths: ["src/auth.ts"],
+      patchText: patch,
+    });
+    assert.equal(result.complete, true, result.failures.map((f) => f.message).join("; "));
+  });
+
+  test("expected file not changed => missing_expected_symbol", () => {
+    const result = evaluateCompleteness({
+      task: SYMBOL_TASK(),
+      changedPaths: ["src/other.ts"],
+      patchText: "+export function verifyToken() {}",
+    });
+    assert.equal(result.complete, false);
+    assert.ok(result.failures.some((f) => f.code === "missing_expected_symbol"));
+  });
+
+  test("file changed but symbol absent from added lines => missing_expected_symbol", () => {
+    const patch = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1,2 @@",
+      "+export function somethingElse() {}",
+    ].join("\n");
+    const result = evaluateCompleteness({
+      task: SYMBOL_TASK(),
+      changedPaths: ["src/auth.ts"],
+      patchText: patch,
+    });
+    assert.equal(result.complete, false);
+    assert.ok(result.failures.some((f) => f.code === "missing_expected_symbol"));
+  });
+
+  test("symbol present only in another file's diff => missing_expected_symbol (scoped per file)", () => {
+    const patch = [
+      "diff --git a/src/auth.ts b/src/auth.ts",
+      "+++ b/src/auth.ts",
+      "@@ -1 +1,2 @@",
+      "+const unrelated = 1;",
+      "diff --git a/src/other.ts b/src/other.ts",
+      "+++ b/src/other.ts",
+      "@@ -1 +1,2 @@",
+      "+export function verifyToken() {}",
+    ].join("\n");
+    const result = evaluateCompleteness({
+      task: SYMBOL_TASK(),
+      changedPaths: ["src/auth.ts", "src/other.ts"],
+      patchText: patch,
+    });
+    assert.equal(result.complete, false, "verifyToken added in other.ts must not satisfy the auth.ts rule");
+    assert.ok(result.failures.some((f) => f.code === "missing_expected_symbol"));
+  });
+});

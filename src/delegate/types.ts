@@ -334,6 +334,7 @@ export interface CompletenessFailure {
   code:
     | "missing_required_deliverable"
     | "missing_expected_file_change"
+    | "missing_expected_symbol"
     | "forbidden_file_changed"
     | "missing_required_test"
     | "weak_regression_test"

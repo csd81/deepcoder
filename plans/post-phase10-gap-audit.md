@@ -23,7 +23,7 @@ called. Mostly small, high-value; several are latent correctness bugs.
 | ✅ **DONE** `9834947` **10C telemetry not restored on resume** — persisted but never read back | `sessionStore.ts:95` saves; `sessionFactory.ts` never reads `snapshot.telemetry` | S |
 | ✅ **DONE** `f04fc0a` **8E `isStoreStale` never called** — switching embedding model silently queries stale vectors | defined `store.ts:152`, no callers | S |
 | ✅ **DONE** `9834947` **8E file-config `semanticSearch` silently dropped** — `.deepcoder/config.json` settings ignored | `FileConfig` has no `semanticSearch` field | S |
-| **9G `expectedSymbols`/`ExpectedSymbolRule`** — type exists, completeness gate never consumes it | `types.ts:41,307`; switch covers only file/test/diff/json_field | M |
+| ✅ **DONE** **9G `expectedSymbols`/`ExpectedSymbolRule`** — completeness gate now enforces `must_add_or_change` (per-file added-line scan) | consumed in `completeness.ts`; live via `validation.ts` Gate 4 | M |
 | **10F router not wired into edit/delegate/solve loops** — `edit`/`delegate` roles defined but inert | loops use `session.provider` directly | M |
 | **10H targeting not wired into solve/delegate** — `targeted-first` mode + config exist, never speed up retries | no `testTargetPlanner` in `solveRunner.ts`/`workerRunner.ts` | M |
 | **10E quarantine not implemented** — `web.quarantine` config exists; full page text still hits persisted history | `webFetch.ts` returns full content | M |
