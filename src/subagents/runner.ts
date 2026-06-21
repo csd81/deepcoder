@@ -2,6 +2,7 @@ import type { AgentMessage } from "../providers/types.js";
 import type { ToolContext } from "../tools/types.js";
 import { runAgentLoop } from "../agent/agentLoop.js";
 import { restrictedRegistry } from "../tools/registry.js";
+import { resolveWebTools } from "../web/access.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { buildSubagentPrompt } from "./prompts.js";
 import { parseSubagentResult } from "./resultParser.js";
@@ -30,6 +31,13 @@ export async function runSubagent(
     model = opts.subagentModel ?? opts.parentModel;
   }
   const registry = restrictedRegistry(profile.allowedTools);
+  // Phase 10E: opt-in web access — when web is enabled (caller passed the web tool
+  // instances) AND this profile opts in, add the resolved web tools to the registry.
+  const webNames = resolveWebTools({
+    webEnabled: (opts.webTools?.length ?? 0) > 0,
+    profileWebOptIn: profile.webOptIn === true,
+  });
+  for (const t of opts.webTools ?? []) if (webNames.includes(t.name)) registry.register(t);
   const { text: instructions } = loadInstructions(opts.workspaceRoot);
 
   const messages: AgentMessage[] = [

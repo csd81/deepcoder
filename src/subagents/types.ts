@@ -9,6 +9,8 @@ export interface SubagentProfile {
   outputGuidance?: string;
   /** Phase 10F: model role for router-based model resolution. */
   role?: import("../models/types.js").ModelRole;
+  /** Phase 10E — this profile may use the web tools when web is enabled in config. */
+  webOptIn?: boolean;
 }
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -62,4 +64,6 @@ export interface RunSubagentOptions {
   contextBudgetTokens: number;
   compactAt: number;
   signal: AbortSignal;
+  /** Phase 10E — web tool instances to offer opt-in profiles when web is enabled. */
+  webTools?: import("../tools/types.js").Tool[];
 }

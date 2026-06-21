@@ -26,6 +26,7 @@ export const researcher: SubagentProfile = {
   maxTurns: 16,
   contextBudgetTokens: 48000,
   role: "research",
+  webOptIn: true,
   outputGuidance:
     "Answer the question from repository evidence. `summary` is the direct answer. Each finding is a key fact with a " +
     "file:line citation in `evidence`; distinguish facts from inference. Severity means importance, not bugs: " +
