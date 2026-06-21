@@ -178,7 +178,9 @@ landing commit are fully independent and merge at the end:
 BASE=$(git rev-parse HEAD)            # integration base (or origin/master)
 for S in sliceA sliceB sliceC; do
   git worktree add -b deleg/$S /tmp/deleg-$S "$BASE"
-  ln -sfn "$PWD/node_modules" /tmp/deleg-$S/node_modules   # gitignored; needed to run test:phase
+  ln -sfn "$PWD/node_modules" /tmp/deleg-$S/node_modules     # gitignored; needed to run test:phase
+  mkdir -p /tmp/deleg-$S/.deepcoder
+  cp .deepcoder/config.json /tmp/deleg-$S/.deepcoder/        # gitignored; defines the `phase` check
   # (in /tmp/deleg-$S) write + commit the red seed, then:
   ( cd /tmp/deleg-$S && scripts/delegate.sh deepseek /tmp/task-$S.txt /tmp/$S.log )
 done
@@ -192,7 +194,12 @@ for S in sliceA sliceB sliceC; do git worktree remove /tmp/deleg-$S; git branch 
 ```
 
 Notes:
-- A fresh worktree has no `node_modules` (gitignored) — symlink it in to run `test:phase`.
+- A fresh worktree has no `node_modules` AND no `.deepcoder/config.json` (both gitignored) —
+  symlink `node_modules` and copy `.deepcoder/config.json` in, or the worker refuses with
+  "Unknown check phase" and makes no changes.
+- **Killing a worker:** `pkill -f 'cli/main.ts …'` matches its OWN command line and kills its
+  shell (exit 144). Use the bracket trick `pkill -f '[c]li/main.ts.*--solve'`, or kill by PID.
+  Same reason you never chain `pkill` with a commit.
 - Keep the concurrency sane (a few workers); each runs a full `test:phase`, which is CPU/IO heavy.
 - Verification is still mandatory **per slice** — parallelism changes scheduling, not the gate.
 
