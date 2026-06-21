@@ -77,4 +77,41 @@ export interface ResolvedModelRoute {
 export interface ModelsFileConfig {
   roles?: Partial<Record<ModelRole, Omit<ModelRoute, "role">>>;
   fallbacks?: Partial<Record<ModelRole, ModelRole[]>>;
+  policy?: TaskRouterPolicy;
+}
+
+// ─────────────────────────────────────────────────────────
+// Phase 10F2 — Task Router Policy Layer types
+// ─────────────────────────────────────────────────────────
+
+export type TaskComplexity = "simple" | "normal" | "hard";
+export type TaskRisk = "low" | "medium" | "high";
+
+export interface TaskRouteRequest {
+  role: ModelRole;
+  prompt?: string;
+  toolCount?: number;
+  mutating?: boolean;
+  readonly?: boolean;
+  safetySensitive?: boolean;
+  expectedFiles?: string[];
+  estimatedInputTokens?: number;
+}
+
+export interface TaskRouteDecision {
+  requestedRole: ModelRole;
+  selectedRole: ModelRole;
+  complexity: TaskComplexity;
+  risk: TaskRisk;
+  route: ResolvedModelRoute;
+  reason: string[];
+}
+
+export interface TaskRouterPolicy {
+  enabled?: boolean;
+  simpleRole?: ModelRole;
+  normalRole?: ModelRole;
+  hardRole?: ModelRole;
+  readOnlySimpleRole?: ModelRole;
+  safetyRole?: ModelRole;
 }
