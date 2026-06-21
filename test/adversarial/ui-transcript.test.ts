@@ -218,3 +218,21 @@ test("[transcript-status-merge] status patches merge shallowly", () => {
   assert.equal(t.status.mode, "ask", "mode overwritten by later patch");
   assert.equal(t.status.model, "deepseek-v3", "other fields unchanged");
 });
+
+test("[transcript-done-newblock] a new assistant message after assistant_done starts a fresh block", () => {
+  _resetIds();
+  let s = createTranscript();
+  s = applyEvent(s, { type: "assistant_delta", text: "first" });
+  s = applyEvent(s, { type: "assistant_done" });
+  const a = s.blocks.filter((b) => b.kind === "assistant");
+  assert.equal(a.length, 1);
+  assert.equal(a[0].finishedAt, "", "block is marked finished (empty-string sentinel)");
+
+  // A new delta must NOT reopen the finished block (the "" sentinel is falsy).
+  s = applyEvent(s, { type: "assistant_delta", text: "second" });
+  const a2 = s.blocks.filter((b) => b.kind === "assistant");
+  assert.equal(a2.length, 2, "a new assistant block is created, not coalesced into the finished one");
+  assert.equal(a2[0].body, "first");
+  assert.equal(a2[1].body, "second");
+  assert.equal(a2[1].finishedAt, undefined, "the new block is open");
+});

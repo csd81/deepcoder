@@ -12,9 +12,17 @@
 export function wrapLine(line: string, width: number): string[] {
   if (width <= 0) return [line]; // guard: a non-positive width can't wrap
   if (line === "") return [""]; // preserve blank lines
+  // A line that already fits is returned verbatim — this preserves leading
+  // indentation AND internal whitespace runs (critical for code; the old
+  // split(" ")/rejoin path silently dropped leading spaces).
+  if (line.length <= width) return [line];
+  // Preserve leading indentation across the wrap: strip it for tokenizing and
+  // re-attach it to the first emitted chunk.
+  const indent = /^\s*/.exec(line)?.[0] ?? "";
+  const body = indent ? line.slice(indent.length) : line;
   const out: string[] = [];
   let cur = "";
-  for (const word of line.split(" ")) {
+  for (const word of body.split(" ")) {
     if (word.length > width) {
       // Token longer than the width: flush the current line, then hard-split it.
       if (cur !== "") {
@@ -37,6 +45,7 @@ export function wrapLine(line: string, width: number): string[] {
     }
   }
   if (cur !== "" || out.length === 0) out.push(cur);
+  if (indent) out[0] = indent + out[0];
   return out;
 }
 

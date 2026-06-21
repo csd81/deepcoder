@@ -32,6 +32,13 @@ export interface AgentDeps {
   onAssistantTextDelta?(chunk: string): void;
   /** Final assistant text (fired once per turn; fallback when not streaming). */
   onAssistantText?(text: string): void;
+  /**
+   * Fired once after EACH assistant message completes (whether streamed or not),
+   * before its tool calls execute. Lets a renderer finalize the message — e.g.
+   * the TUI marks the block finished so it re-renders as markdown, and the plain
+   * CLI flushes its buffered markdown.
+   */
+  onAssistantMessageEnd?(text: string): void;
   /** Token usage for each model call (when the provider reports it). */
   onUsage?(usage: ChatResponse["usage"]): void;
   onToolCall?(name: string, describe: string): void;
@@ -106,6 +113,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       toolCalls: response.toolCalls.length ? response.toolCalls : undefined,
     });
     if (response.text && !deps.onAssistantTextDelta) deps.onAssistantText?.(response.text);
+    if (response.text) deps.onAssistantMessageEnd?.(response.text);
     await deps.onPersist?.();
 
     // No tool calls => the model is done.

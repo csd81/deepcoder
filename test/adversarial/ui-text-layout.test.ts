@@ -39,3 +39,17 @@ test("wrapLines flattens multiple logical lines and preserves blanks", () => {
   const out = wrapLines(["one two three", "", "x"], 7);
   assert.deepEqual(out, ["one two", "three", "", "x"]);
 });
+
+test("[textlayout-indent] leading whitespace (indentation) is preserved for a fitting line", () => {
+  assert.deepEqual(wrapLine("    if n <= 1:", 80), ["    if n <= 1:"]);
+  assert.deepEqual(wrapLine("        return n", 80), ["        return n"]);
+});
+
+test("[textlayout-internal-spaces] internal multiple spaces preserved for a fitting line", () => {
+  assert.deepEqual(wrapLine("a    b", 80), ["a    b"]);
+});
+
+test("[textlayout-indent-wrap] leading indent is kept on the first wrapped chunk", () => {
+  const out = wrapLine("    alpha beta gamma delta epsilon", 12);
+  assert.ok(out[0].startsWith("    alpha"), `first chunk keeps indent: ${JSON.stringify(out[0])}`);
+});

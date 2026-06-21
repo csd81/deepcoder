@@ -300,7 +300,21 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     skills: skillsRuntime(session),
   };
 
-  const renderer = ui?.sink ?? createPlainRenderer({ write: (s) => stdout.write(s) });
+  // Plain-CLI renderer: render finished assistant messages as markdown (with
+  // syntax-highlighted code) instead of raw text. Color is on for an interactive
+  // terminal (stdout OR stdin is a TTY — npm/tsx can leave stdout.isTTY unset).
+  const plainTheme = createTheme(
+    resolveColorEnabled({
+      env: process.env,
+      isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) || Boolean((stdin as { isTTY?: boolean }).isTTY),
+    }),
+  );
+  const renderer =
+    ui?.sink ??
+    createPlainRenderer({
+      write: (s) => stdout.write(s),
+      renderAssistant: (text) => renderMarkdown(text, { width: stdout.columns ?? 80, theme: plainTheme }),
+    });
   const deps: AgentDeps = {
     provider: session.provider,
     registry: session.registry,
@@ -320,9 +334,10 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     onPersist: () => session.store.save(snapshot(session)),
     onUsage: (u) => addUsage(session.tokenUsage, u),
     onAssistantTextDelta: (chunk) => renderer.emit({ type: "assistant_delta", text: chunk }),
-    onAssistantText: (text) => {
-      if (text.trim()) stdout.write("\n" + chalk.bold("assistant> ") + text.trim() + "\n");
-    },
+    onAssistantText: (text) => renderer.emit({ type: "assistant_delta", text }),
+    // Finalize each assistant message so the TUI re-renders it as markdown and
+    // the plain CLI flushes its buffered, syntax-highlighted render.
+    onAssistantMessageEnd: () => renderer.emit({ type: "assistant_done" }),
     onToolCall: (name, describe) => renderer.emit({ type: "tool_start", name, description: describe }),
     onToolResult: (_name, result: ToolResult) => {
       renderer.emit({ type: "tool_result", name: _name, output: result.output, isError: !!result.isError });
@@ -561,7 +576,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
   }
 
   const theme: Theme = createTheme(
-    resolveColorEnabled({ env: process.env, isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) }),
+    resolveColorEnabled({
+      env: process.env,
+      // The TUI is inherently interactive (raw stdin), but npm/tsx can leave
+      // stdout.isTTY unset — treat either stream being a TTY as color-capable.
+      isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) || Boolean((stdin as { isTTY?: boolean }).isTTY),
+    }),
   );
 
   /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping).

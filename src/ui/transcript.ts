@@ -121,8 +121,10 @@ export function applyEvent(
       const lastIdx = blocks.length - 1;
       let newTotalBytes = state.totalBytes;
 
-      if (lastIdx >= 0 && blocks[lastIdx].kind === "assistant" && !blocks[lastIdx].finishedAt) {
-        // Coalesce into the current open assistant block
+      if (lastIdx >= 0 && blocks[lastIdx].kind === "assistant" && blocks[lastIdx].finishedAt === undefined) {
+        // Coalesce into the current open assistant block (a FINISHED block — even
+        // with the falsy "" sentinel — must never be reopened, so a new message
+        // after assistant_done starts its own block).
         const prev = blocks[lastIdx];
         const newBody = prev.body + event.text;
         const delta = newBody.length - prev.body.length;
@@ -150,7 +152,7 @@ export function applyEvent(
     case "assistant_done": {
       const blocks = [...state.blocks];
       const lastIdx = blocks.length - 1;
-      if (lastIdx >= 0 && blocks[lastIdx].kind === "assistant" && !blocks[lastIdx].finishedAt) {
+      if (lastIdx >= 0 && blocks[lastIdx].kind === "assistant" && blocks[lastIdx].finishedAt === undefined) {
         const prev = blocks[lastIdx];
         let newBody = prev.body;
         let newTotalBytes = state.totalBytes;
