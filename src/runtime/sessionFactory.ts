@@ -8,6 +8,7 @@ import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
 import { EMPTY_USAGE } from "../providers/usage.js";
 import { createSemanticTools } from "../tools/semanticTools.js";
+import { createWebTools } from "../tools/webTools.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
@@ -143,6 +144,13 @@ export async function buildSession(
   if (config.semanticSearch.enabled) {
     for (const t of createSemanticTools({ config: config.semanticSearch })) registry.register(t);
   }
+  // Phase 10E: register the web tools only when web is enabled (default off).
+  for (const t of createWebTools({
+    enabled: config.web.enabled,
+    allowedDomains: config.web.allowedDomains,
+    blockedDomains: config.web.blockedDomains,
+    searchProvider: config.web.searchProvider,
+  })) registry.register(t);
   const mcp = await initMcp(config, registry);
   const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
 

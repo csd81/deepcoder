@@ -10,6 +10,7 @@ import {
 import { DEFAULT_HOOKS, type HooksConfig } from "../hooks/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
 import { DEFAULT_DIAGNOSTICS, type DiagnosticsConfig } from "../diagnostics/types.js";
+import { webConfigFromEnv, type WebConfig } from "./webConfig.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
@@ -47,6 +48,8 @@ export interface Config {
   reasoningEffort?: "low" | "medium" | "high";
   /** Phase 8E opt-in semantic search (default disabled). */
   semanticSearch: SemanticSearchConfig;
+  /** Phase 10E opt-in web tools (default disabled). */
+  web: WebConfig;
   /**
    * When true, a one-shot run first asks the reasoner model for a step-by-step
    * plan (no tools), prepends it as context, then runs the normal agent loop.
@@ -518,6 +521,10 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     topK: typeof ss.topK === "number" && ss.topK > 0 ? ss.topK : 12,
   };
 
+  // Phase 10E web config: webConfigFromEnv starts from defaultWebConfig and applies
+  // DEEPCODER_WEB* env vars; overrides (e.g. test) apply on top.
+  const web: WebConfig = { ...webConfigFromEnv(process.env), ...(overrides.web ?? {}) };
+
   return {
     provider,
     apiKey,
@@ -526,6 +533,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     temperature,
     reasoningEffort,
     semanticSearch,
+    web,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL"),
     planFirst:
       ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||
