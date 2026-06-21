@@ -299,3 +299,48 @@ test("9M: a green worker with a vacuous (nonRed) deliverable is refused", () => 
   assert.equal(v.applyable, false);
   assert.match(v.failures.map((f) => f.message).join(" "), /baseline|coverage/i);
 });
+
+/* ---------------- Phase 9G: self-audit gate wiring ---------------- */
+
+const DELIVERABLE = { id: "d1", acceptance: "the thing is done" };
+const validSelfAudit = JSON.stringify({
+  taskId: "w1",
+  completedDeliverables: [{ id: "d1", evidence: "implemented in src/foo.ts" }],
+  skippedDeliverables: [],
+  changedFiles: ["src/foo.ts"],
+  testsRun: [],
+  knownLimitations: [],
+});
+
+test("[9g-selfaudit-wired] a valid self-audit is parsed and cross-checked in the self-audit gate", () => {
+  const v = validateWorkerResult(vinput({
+    worker: w({ deliverables: [DELIVERABLE] }),
+    qualityGateRequired: true,
+    selfAuditRaw: validSelfAudit,
+  }));
+  assert.ok(
+    v.evidence.some((e) => /cross-checked 1 declared deliverable/.test(e.note)),
+    "expected the self-audit gate to report the cross-check: " + JSON.stringify(v.evidence),
+  );
+});
+
+test("[9g-selfaudit-malformed] a malformed self-audit artifact is flagged, never thrown", () => {
+  const v = validateWorkerResult(vinput({
+    worker: w({ deliverables: [DELIVERABLE] }),
+    qualityGateRequired: true,
+    selfAuditRaw: "{ not valid json",
+  }));
+  assert.ok(
+    v.warnings.some((wn) => /self-audit artifact present but malformed/.test(wn)),
+    "expected a malformed self-audit warning: " + JSON.stringify(v.warnings),
+  );
+});
+
+test("[9g-selfaudit-absent] no self-audit provided → prior behavior (no malformed warning)", () => {
+  const v = validateWorkerResult(vinput({
+    worker: w({ deliverables: [DELIVERABLE] }),
+    qualityGateRequired: true,
+  }));
+  assert.ok(!v.warnings.some((wn) => /malformed/.test(wn)));
+  assert.ok(v.evidence.some((e) => /no self-audit provided/.test(e.note)));
+});
