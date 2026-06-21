@@ -3,7 +3,7 @@
  * transcript reducer contract (assistant deltas coalesce into one block) so a
  * delegated worker MUST implement the pure event/transcript model (no
  * green-check no-op), then EXTENDS this file with the remaining pure cases from
- * plans/phase10a-scrollable-terminal-ui-plan.md (Testing → Pure tests).
+ * plans/ui/phase10a-scrollable-terminal-ui-plan.md (Testing → Pure tests).
  *
  * All 8 pure tests:
  *   1. assistant deltas coalesce into one block (seed)

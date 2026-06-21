@@ -332,7 +332,7 @@ DEEPCODER_DELEGATE_CHECK=phase
 Phase 9G adds task-packet completeness gates on top of this plan. The key lesson from the
 Phase 8D delegated-worker experiment is that a worker can pass its configured check while
 still skipping required deliverables. See
-`plans/phase9g-delegation-harness-completeness-gates-plan.md` for the follow-up design:
+`plans/delegation/phase9g-delegation-harness-completeness-gates-plan.md` for the follow-up design:
 explicit deliverables, expected files/tests, worker self-audits, deterministic completeness
 evaluation, and reviewer-subagent downgrade checks before apply.
 

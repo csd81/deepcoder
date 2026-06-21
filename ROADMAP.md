@@ -2,7 +2,7 @@
 
 ## Phase 1 — MVP (current)
 
-Safe, single-provider agent loop. See `plans/phase1-plan.md`.
+Safe, single-provider agent loop. See `plans/roadmap/phase1-plan.md`.
 
 - [x] Vendor-neutral `ModelProvider` + DeepSeek adapter
 - [x] Tool layer (`Tool -> build() -> ToolInvocation -> execute()`)
@@ -18,7 +18,7 @@ Safe, single-provider agent loop. See `plans/phase1-plan.md`.
 
 ## Phase 2 — Correctness & ergonomics
 
-See `plans/phase2-plan.md`.
+See `plans/roadmap/phase2-plan.md`.
 
 - [x] Streaming responses behind the same provider boundary (`streamChat`)
 - [x] `session` tool kind + `todo_write` tool for multi-step task tracking
@@ -28,7 +28,7 @@ See `plans/phase2-plan.md`.
 
 ## Phase 3 — Hardening, context & scale
 
-See `plans/phase3-plan.md`.
+See `plans/roadmap/phase3-plan.md`.
 
 - [x] Hardening: segmenting command classifier, atomic session saves, fresh-on-resume system prompt, realpath write confinement
 - [x] Token-aware history compaction (`/compact`, `/context`)
@@ -37,16 +37,16 @@ See `plans/phase3-plan.md`.
 
 ## Phase 4 — Extensibility with trust boundaries (in progress)
 
-See `plans/phase4-plan.md`.
+See `plans/subagents/phase4-plan.md`.
 
 - [x] **4A** — MCP client (read-only), `.deepcoder/config.json`, `/mcp`; MCP tools/output untrusted, execute-mode MCP denied for now
 - [x] **4B** — provider factory + backends (`DEEPCODER_PROVIDER`): DeepSeek (default), OpenAI-compatible, Ollama, Qwen (DashScope), Gemini (OpenAI-compat), and a **native Anthropic** adapter; `DEEPSEEK_*` env still works
 - [x] **4C** — checkpoints: local undo for agent edits (`/checkpoint`, `/rollback`; pre-image based, **not git**, off by default)
-- [~] **4D** — subagents (design `plans/phase4d-subagents-design.md`): slices 1–3 shipped — read-only `reviewer` (`/review`), `researcher` (`/research`), `test_triage` (`/triage`); restricted-registry + readonly by construction, output quarantined out of model history; model-callable/parallel deferred
+- [~] **4D** — subagents (design `plans/subagents/phase4d-subagents-design.md`): slices 1–3 shipped — read-only `reviewer` (`/review`), `researcher` (`/research`), `test_triage` (`/triage`); restricted-registry + readonly by construction, output quarantined out of model history; model-callable/parallel deferred
 
 ## Phase 5 — Controlled verification workflows (planned)
 
-See `plans/phase5-verification-workflows-plan.md`.
+See `plans/verification/phase5-verification-workflows-plan.md`.
 
 - [x] **5A** — user-invoked named checks (`/checks`, `/check <name>`); classifier-gated, streamed live but bounded/redacted/quarantined under `.deepcoder/runs/`; not model-callable
 - [x] **5B** — closed-loop solver (`/solve <check> <task>`, `--solve --check`): edit → run the named check → feed a deterministic, bounded, redacted, untrusted-framed failure summary back → retry to budget. No auto-rollback; check stays user-configured/classifier-gated; SWE-bench thin `--solve-cmd` hook
@@ -59,7 +59,7 @@ See `plans/phase5-verification-workflows-plan.md`.
 - [~] **6 in-container SWE-bench solve** (branch `phase6-incontainer`): run `--solve` inside the
   official instance container (pinned env), authored public-test map, baseline-diff oracle,
   telemetry → `report.py`. 3-instance live smoke: check 3/3, resolved 0/3, 1 empty patch.
-- [x] **6B local bugfix benchmark** (`evals/local-bench/`, `plans/phase6b-local-bench-plan.md`):
+- [x] **6B local bugfix benchmark** (`evals/local-bench/`, `plans/benchmarks/phase6b-local-bench-plan.md`):
   fast, no-Docker, Node/TS runner with a **real red→green oracle** + deterministic patch-quality
   gate. **solved = tests_passed && quality_passed** (a green-but-bad patch is not solved). 40 cases
   (20 Node + 20 Python, `--lang` filter) numbered by increasing difficulty; `--selftest` /
@@ -81,14 +81,14 @@ See `plans/phase5-verification-workflows-plan.md`.
     hard cases** (added multi-file-call-chain, error-preservation, red-herring-files, cli-contract,
     parser-quotes — symptom-only issue text, discovery required), and the report now separates
     `bug-fixed by oracle` (correctness) from `quality-blocked` (correct-but-flagged).
-  - **6E repo-scale** (`plans/phase6e-repo-scale-local-bench-plan.md`): the live 10-hard run was
+  - **6E repo-scale** (`plans/benchmarks/phase6e-repo-scale-local-bench-plan.md`): the live 10-hard run was
     10/10 one-shot, so added 5 **multi-file mini-repo** cases (`repo-hard-*`: auth-token-refresh,
     job-queue-retry, markdown-frontmatter, plugin-config-precedence, router-middleware-order) with
     4–8 files + decoys, requiring call-path tracing and (mostly) a coordinated source-fix + added
     test. New harness fields `minChangedPaths`/`maxChangedPaths`/`requiredChangedPathGroups` (flags
     `too_few_changed_paths`/`too_many_changed_paths`/`missing_required_path_group`). No-model
     acceptance green (55 cases). Live `repo-hard` run is a separate decision.
-- [~] **6F correctness-hard bench** (`plans/phase6f-correctness-hard-local-bench-plan.md`): harness
+- [~] **6F correctness-hard bench** (`plans/benchmarks/phase6f-correctness-hard-local-bench-plan.md`): harness
   v1 shipped — `forbiddenPatchPatterns`→`forbidden_patch_pattern`, `oracleFailureHints`→
   `oracle_failure_category` classification (wrong_location/partial_fix/invariant_broken/…), and
   `requiredBehaviorNotes` recorded as metadata for the later reviewer gate; report shows oracle
@@ -100,14 +100,14 @@ See `plans/phase5-verification-workflows-plan.md`.
 
 ## Phase 7 — Extensibility & isolation
 
-- [x] **7A fast tool-level sandboxing** (`src/sandbox/`, `plans/phase7a-fast-tool-sandboxing-plan.md`):
+- [x] **7A fast tool-level sandboxing** (`src/sandbox/`, `plans/safety/phase7a-fast-tool-sandboxing-plan.md`):
   only risky executions (`run_bash`, configured checks) run in a sandbox; the deepcoder process +
   file tools stay local. `SandboxConfig` in `.deepcoder/config.json` + `DEEPCODER_SANDBOX` env +
   `--sandbox` flag (precedence CLI > env > file > default `fast`). `fast` → **bubblewrap** when
   available else local; bwrap binds workspace rw, system dirs ro, private `/tmp`, clears env (no
   API-key leak), never mounts home/docker-sock. `/sandbox` status + toggles; `npm run sandbox:smoke`.
   Docker/podman/runsc + sandbox-expansion prompts deferred.
-- [x] **7D workspace isolation** (`src/workspaceIsolation/`, `plans/phase7d-workspace-isolation-plan.md`):
+- [x] **7D workspace isolation** (`src/workspaceIsolation/`, `plans/safety/phase7d-workspace-isolation-plan.md`):
   agent file edits run in a disposable git worktree of HEAD; the real repo changes only on explicit
   patch apply. Control plane (config/sessions/MCP/instructions) stays on the real root; only the
   execution root (file tools, run_bash, checks) moves — so `--solve --check` still resolves its
@@ -116,7 +116,7 @@ See `plans/phase5-verification-workflows-plan.md`.
   **non-TTY never auto-applies** (writes a `.deepcoder/isolation-*.patch` artifact); gitignored paths
   excluded; cleanup confined to the temp worktree; auto-checkpoint disabled during isolated runs.
   `/isolation status|diff|apply|discard|path`. v1 git-only (copy backend deferred). Composes with 7A.
-- [x] **7B lifecycle hooks** — full V1 event set shipped (`plans/phase7b-lifecycle-hooks-plan.md`):
+- [x] **7B lifecycle hooks** — full V1 event set shipped (`plans/safety/phase7b-lifecycle-hooks-plan.md`):
   **PreToolUse** is the one *blocking* event (deny via exit 2 / `{"decision":"deny"}`; never overrides
   a policy/headless deny). All other V1 events are *advisory* (`runAdvisoryHooks`): **PostToolUse**/
   **PostToolFailure** (agentLoop, surfaced via `onNotice`), **SessionStart**/**UserPromptSubmit**/
@@ -128,12 +128,12 @@ See `plans/phase5-verification-workflows-plan.md`.
   toggles for the session. Deferred: HTTP/MCP/LLM hooks, exec-form, the project-trust mechanism
   (arbitrary-code-exec gate — design before enabling project hooks by default).
 - [x] **7E isolation dependency provisioning** (`src/workspaceIsolation/provision.ts`,
-  `plans/phase7e-isolation-dependency-provisioning-plan.md`): a worktree of HEAD has no gitignored
+  `plans/safety/phase7e-isolation-dependency-provisioning-plan.md`): a worktree of HEAD has no gitignored
   deps, so JS/py checks couldn't run in it (hand-symlinked all session). Now symlinks an allowlist
   (`provision`, default `["node_modules"]`) into the worktree; composes with 7A (symlink targets are
   auto-added as read-only sandbox `extraMounts` so they resolve inside bwrap); separators/`..`
   rejected; never shadows tracked files; cleanup keeps the real targets. Unblocks isolated `--solve`.
-- [x] **7C agent skills** (`plans/phase7c-agent-skills-plan.md`, `…7c2-skills-activation-implementation-plan.md`):
+- [x] **7C agent skills** (`plans/subagents/phase7c-agent-skills-plan.md`, `…7c2-skills-activation-implementation-plan.md`):
   - **7C1** — discovery of `.deepcoder/skills/<name>/SKILL.md` (+`.agents/skills/` alias; user<workspace
     precedence; malformed skipped), YAML-frontmatter parsing (no dep), a token-bounded progressive-
     disclosure catalog, and `/skills` listing.
@@ -152,7 +152,7 @@ See `plans/phase5-verification-workflows-plan.md`.
 
 - [x] **8A instruction graph** (`src/context/instructionGraph.ts` + `contextFiles.ts` +
   `importProcessor.ts` + `instructionConflicts.ts` + `instructionRenderer.ts`,
-  `plans/phase8a-instruction-graph-plan.md`): an inspectable, hierarchical replacement for the
+  `plans/context/phase8a-instruction-graph-plan.md`): an inspectable, hierarchical replacement for the
   first-match instructions loader. Discovers supported files across tools (`AGENTS[.override].md`,
   `CLAUDE[.local].md`, `GEMINI.md`, `.deepcoder/instructions.md`, `.deepcoder/rules/*.md`) via a
   global (`~/.deepcoder`) + workspace-root→cwd walk, applies them in a deterministic precedence
@@ -166,7 +166,7 @@ See `plans/phase5-verification-workflows-plan.md`.
   when off, the legacy first-match loader runs byte-for-byte unchanged. Deferred: make it default
   after a live/local-bench shakedown; persist JIT source ids across `--resume`; richer conflict
   dimensions.
-- [x] **8C repo index** (`src/index/`, `plans/phase8c-repo-index-impact-graph-plan.md`): an
+- [x] **8C repo index** (`src/index/`, `plans/context/phase8c-repo-index-impact-graph-plan.md`): an
   ignore-aware scanner (.gitignore + .deepcoderignore + defaults) + file classification
   (code/test/config/docs/generated/other, language-tagged); TS/JS+Python symbol-definition
   extraction; relative-import edges + a reverse-import **impact graph**; **test targeting**
@@ -178,12 +178,12 @@ See `plans/phase5-verification-workflows-plan.md`.
   runs them; each builds the index fresh so results reflect this session's edits). Deferred:
   incremental in-place update on edit_file/write_file (rebuild covers correctness; tools build
   fresh), package/workspace boundaries, and retiring the legacy repo_map/find_symbols onto the index.
-- [~] **8B inspectable local memory** (`src/memory/`, `plans/phase8b-inspectable-local-memory-plan.md`):
+- [~] **8B inspectable local memory** (`src/memory/`, `plans/context/phase8b-inspectable-local-memory-plan.md`):
   plain-markdown `.deepcoder/memory/MEMORY.md` store — `loadStartupMemory` (bounded) is injected into
   the system prompt as non-authoritative recall *only when the file exists* (zero change otherwise);
   `/memory show|remember|forget` (remember refuses secret-looking content; forget previews then
   applies). Deferred: auto-memory candidate generation, inbox, config block, session extraction.
-- [x] **7G dependency self-healing** (`src/dependencies/`, `plans/phase7g-…-plan.md`): opt-in,
+- [x] **7G dependency self-healing** (`src/dependencies/`, `plans/safety/phase7g-automated-dependency-self-healing-plan.md`): opt-in,
   default-off check-runner interceptor. On a dependency-shaped check failure (detect.ts —
   conservative, excludes assertions/type/syntax/timeouts) it picks ONE allowlisted repair
   (repairPlanner.ts — fixed templates from visible lockfiles; never interpolates the error's module
@@ -197,8 +197,8 @@ See `plans/phase5-verification-workflows-plan.md`.
 
 Delegate a large task to bounded, isolated Deepcoder worker subprocesses; the parent reviews
 every patch before anything touches the repo. Plans/runs persist under
-`.deepcoder/delegations/<plan-id>/`. Design: `plans/phase9-self-orchestration-delegated-workers-plan.md`
-(+ `phase9g-...`, `phase9b-worker-runner-design-plan.md`).
+`.deepcoder/delegations/<plan-id>/`. Design: `plans/delegation/phase9-self-orchestration-delegated-workers-plan.md`
+(+ `plans/delegation/phase9g-delegation-harness-completeness-gates-plan.md`, `plans/delegation/phase9b-worker-runner-design-plan.md`).
 
 - [x] **9A** — delegation data model + deterministic planner + store; read-only
   `/delegate plan|status|review` (`src/delegate/{types,planner,store}.ts`). `assertSafeId` on every
@@ -230,14 +230,14 @@ every patch before anything touches the repo. Plans/runs persist under
   null/undefined self-audit.
 
 - [x] **9H delegated-worker isolation defaults** (`src/delegate/workerRunner.ts`, `…types.ts`,
-  `plans/phase9h-…-plan.md`): make worker isolation a mandatory, audited invariant — `runWorker`
+  `plans/delegation/phase9h-delegated-workspace-isolation-default-plan.md`): make worker isolation a mandatory, audited invariant — `runWorker`
   REFUSES `isolation: off` (and forces keep/patch when unset), records a `WorkerIsolationRecord`
   (backend/realRoot/isolatedRoot/kept/cleaned/cleanupError) on the run, and the real repo stays
   byte-identical after worker success/failure/timeout (apply via `/delegate apply` is the only path
   that mutates the live repo). `/delegate run` + `review` print the isolation boundary + a "live repo
   was not modified" line. (Discard-removes-kept-worktree: follow-up.)
 
-- [x] **9I concurrent orchestration** (`src/delegate/orchestrator.ts`, `plans/phase9i-…-plan.md`):
+- [x] **9I concurrent orchestration** (`src/delegate/orchestrator.ts`, `plans/delegation/phase9i-concurrent-subagent-orchestration-plan.md`):
   run independent workers in parallel batches without weakening the safety model. Pure helpers
   `workerLockSet` (from expectedFiles/allowedPaths; empty → "." serializes), `locksConflict`
   (exact + prefix + "." wildcard), `buildRunnableBatches` (deterministic first-fit; only deps-applied
@@ -248,7 +248,7 @@ every patch before anything touches the repo. Plans/runs persist under
   sequential `runRunnable` is unchanged + remains the default. `/delegate run <plan> --parallel
   [--max-concurrency N]`. Deferred: cross-process plan locking, config-gated default.
 
-- [removed] **9J in-loop read-only LLM quality gate** (~~`src/delegate/qualityGate.ts`~~, `plans/phase9j-…-plan.md`)
+- [removed] **9J in-loop read-only LLM quality gate** (~~`src/delegate/qualityGate.ts`~~, `plans/delegation/phase9j-in-loop-readonly-llm-quality-gates-plan.md`)
   — **removed 2026-06-21**: superseded by deterministic **verify-then-force (9N)**, which the project
   adopted as the default gate. The LLM-reviewer producer `qualityGate.ts` was deleted; the enforcement
   scaffolding it fed — `apply.ts` Gate 3.5, validation Gate 6, `config.delegate.qualityGate`, and the
@@ -285,7 +285,7 @@ every patch before anything touches the repo. Plans/runs persist under
   + scope) and only escalated to the forcing loop on shortfall. Forcing is for weak models; verification
   is valuable for all.
 - [x] **9O** — model-driven task decomposer (`src/delegate/decompose.ts`, `decomposePrompts.ts`,
-  `plans/phase9o-…-plan.md`): a reasoning model PROPOSES a dependency DAG of bounded, individually
+  `plans/delegation/phase9o-model-driven-task-decomposer-plan.md`): a reasoning model PROPOSES a dependency DAG of bounded, individually
   verifiable sub-tasks (data, never executed); `validateDecomposition` (pure) rejects cycles/over-count/
   unsafe-or-escaping paths/unknown-check/non-verifiable/dup ids and flags overlap, falling back to the
   heuristic planner on malformed output. `runDecomposition` runs each sub-task through verify-then-force
@@ -304,7 +304,7 @@ patch).
 
 Shipped largely via delegated workers (DeepSeek, OpenAI Codex via the Responses provider, Gemini)
 with parent review. All of the below are wired into the production path; default-off capabilities are
-noted as such. Plans: `plans/phase10*-plan.md`.
+noted as such. Plans: `plans/ui/phase10a*.md`, `plans/server/phase10b-*.md`, `plans/plugins/phase10d-*.md`, `plans/web/phase10e-*.md`, `plans/routing/phase10f-*.md`, and `plans/verification/phase10h-*.md`.
 
 - [x] **10A scrollable non-Ink TUI** (`src/cli/repl.ts` `runTuiRepl`, `src/ui/{transcript,minimalRenderer,
   frameWriter,textLayout,markdown,theme,inputEditor,layout}.ts`): a from-scratch scrollable transcript

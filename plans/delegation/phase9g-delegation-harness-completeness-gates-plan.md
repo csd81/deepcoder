@@ -285,7 +285,7 @@ Example:
 - Edit `src/delegate/workerRunner.ts`
 - Edit `src/cli/slashCommands.ts`
 - New `test/adversarial/delegate-completeness.test.ts`
-- Edit `plans/phase9-self-orchestration-delegated-workers-plan.md` to reference this hardening phase
+- Edit `plans/delegation/phase9-self-orchestration-delegated-workers-plan.md` to reference this hardening phase
 
 ## Adversarial Tests
 

@@ -106,7 +106,7 @@ patch). That's expected and visible: `report.py`'s `check_solved` (loop oracle) 
 (hidden tests) columns surface the gap.
 
 ## Files
-- **New** `plans/phase6-incontainer-solve-plan.md` — this plan.
+- **New** `plans/benchmarks/phase6-incontainer-solve-plan.md` — this plan.
 - **New** `evals/swebench/gen_predictions_incontainer.py` — the in-container generator (steps 1–6),
   incl. `exec_with_env_timeout` and `--setup-only`.
 - **New** `evals/swebench/build-bundle.sh` — builds `deepcoder-bundle.tgz`.
@@ -142,7 +142,7 @@ baking deepcoder into SWE images; per-instance API/token cost (needs a `usage` f
 `ChatResponse` through every provider adapter); the headless approval-hang fix (issue #2).
 
 ## Implementation order (proceed with manual approval per action, no permission bypass)
-0. Save this plan to `plans/phase6-incontainer-solve-plan.md`.
+0. Save this plan to `plans/benchmarks/phase6-incontainer-solve-plan.md`.
 1. `build-bundle.sh` (pinned/cached Node + checksum, or system Node) + bundle smoke (verification 1).
 2. `solve-tests.flask.json` + env/check smoke in a container (verification 2).
 3. `gen_predictions_incontainer.py`: build/start → inject → config → solve → extract → teardown.

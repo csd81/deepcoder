@@ -8,7 +8,7 @@ container, where `/testbed` (repo at base_commit) + the pinned conda env
 runnable — unlike a host clone, where unpinned deps break (e.g. flask 2.0 dies
 with `ImportError: url_quote` on a modern interpreter).
 
-Design invariants (see plans/phase6-incontainer-solve-plan.md):
+Design invariants (see plans/benchmarks/phase6-incontainer-solve-plan.md):
   - The verify check runs a HUMAN-AUTHORED public test file (solve-tests.*.json),
     never the hidden FAIL_TO_PASS / test_patch — the score is never coupled to
     the grading tests.

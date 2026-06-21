@@ -204,7 +204,7 @@ New:
 Edit:
 
 - `src/ui/minimalRenderer.ts` or the new full TUI renderer to use computed regions.
-- `plans/phase10a5-non-ink-tui-mvp-plan.md` only if a cross-reference is useful.
+- `plans/ui/phase10a5-non-ink-tui-mvp-plan.md` only if a cross-reference is useful.
 
 ## Tests
 

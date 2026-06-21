@@ -70,11 +70,11 @@ Sources:
 
 This umbrella plan is now split into five implementation plans:
 
-- `plans/phase8a-instruction-graph-plan.md`
-- `plans/phase8b-inspectable-local-memory-plan.md`
-- `plans/phase8c-repo-index-impact-graph-plan.md`
-- `plans/phase8d-context-planner-explorer-plan.md`
-- `plans/phase8e-semantic-search-plan.md`
+- `plans/context/phase8a-instruction-graph-plan.md`
+- `plans/context/phase8b-inspectable-local-memory-plan.md`
+- `plans/context/phase8c-repo-index-impact-graph-plan.md`
+- `plans/context/phase8d-context-planner-explorer-plan.md`
+- `plans/context/phase8e-semantic-search-plan.md`
 
 ## What Phase 8 Adds
 

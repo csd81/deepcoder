@@ -4,7 +4,7 @@
  * even with --tui — so a delegated worker must implement the pure mode resolver
  * (no green-check no-op), then EXTENDS this file with the rest of the pure core
  * (approval interface, frame builder, keymap) from
- * plans/phase10a-scrollable-terminal-ui-plan.md.
+ * plans/ui/phase10a-scrollable-terminal-ui-plan.md.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

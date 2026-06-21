@@ -85,7 +85,7 @@ local case · Tier 3 SWE `--setup-only` (Docker, no API) · Tier 4 one live SWE 
 npm scripts `eval:local`, `eval:local:selftest`, `eval:local:report`.
 
 ## Files
-- **New** `plans/phase6b-local-bench-plan.md` (this).
+- **New** `plans/benchmarks/phase6b-local-bench-plan.md` (this).
 - **New** `evals/local-bench/run.ts`, `report.ts`, `lib/flags.ts`, `lib/cases.ts`.
 - **New** `evals/local-bench/cases/<3 starter cases>/…`.
 - **New** `evals/local-bench/README.md`.
@@ -114,7 +114,7 @@ Cases 4–10; LLM reviewer gate; a non-empty-patch hard requirement in the core 
 execution; CI.
 
 ## Implementation order (manual approval per action, no permission bypass)
-0. Save this plan to `plans/phase6b-local-bench-plan.md`.
+0. Save this plan to `plans/benchmarks/phase6b-local-bench-plan.md`.
 1. `lib/cases.ts` + `lib/flags.ts` + adversarial tests.
 2. 3 starter cases (+ `fixed/` overlays).
 3. `run.ts` (+ `--selftest`, `--fake-solve`).

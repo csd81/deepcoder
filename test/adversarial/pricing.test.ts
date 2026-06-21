@@ -2,7 +2,7 @@
  * Phase 10C (slice 1) — cost estimator. SEED (red-first): pins the safety
  * contract (an UNKNOWN model never throws and reports pricingKnown:false) so a
  * delegated worker MUST implement the pure estimator (no green-check no-op), then
- * EXTENDS with the rest from plans/phase10c-statusline-cost-telemetry-plan.md.
+ * EXTENDS with the rest from plans/ui/phase10c-statusline-cost-telemetry-plan.md.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

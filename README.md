@@ -508,7 +508,7 @@ Test tiers (all run with **fake providers** — no API key needed):
 **Phase rule:** a phase is not complete until `npm run test:phase` is green and any
 new capability ships with both normal and adversarial coverage. Fixtures and
 snapshots must never contain real secrets; the live key is only for `test:live`.
-See `plans/adversarial-testing-framework.md`.
+See `plans/benchmarks/adversarial-testing-framework.md`.
 
 ### Evaluation
 
