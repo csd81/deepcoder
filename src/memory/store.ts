@@ -5,6 +5,7 @@
 // remember/forget + startup load); auto-memory + inbox are deferred.
 
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { redactSecrets } from "../workspace/redact.js";
 
@@ -110,6 +111,94 @@ export async function forget(
     }
   }
   return matches;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Auto-memory inbox (Phase 8B)                                       */
+/* ------------------------------------------------------------------ */
+//
+// Candidate learnings are STAGED in `.deepcoder/memory/inbox.json` and are NEVER
+// recalled into the prompt (loadStartupMemory reads only MEMORY.md). They enter
+// memory only when a human accepts them — so auto-capture can never silently
+// poison the agent's context.
+
+const INBOX_FILE = "inbox.json";
+function inboxFile(root: string): string {
+  return path.join(memoryDir(root), INBOX_FILE);
+}
+
+export interface InboxItem {
+  /** Stable content hash — also the dedup key. */
+  id: string;
+  text: string;
+  /** Where the candidate came from (e.g. "solve"). */
+  source: string;
+  proposedAt: string;
+}
+
+/** Load staged candidates (never injected into the prompt). [] when none. */
+export async function loadInbox(root: string): Promise<InboxItem[]> {
+  try {
+    const arr = JSON.parse(await readFile(inboxFile(root), "utf8")) as unknown;
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (x): x is InboxItem =>
+        !!x && typeof (x as InboxItem).id === "string" && typeof (x as InboxItem).text === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function writeInbox(root: string, items: InboxItem[]): Promise<void> {
+  await mkdir(memoryDir(root), { recursive: true });
+  await writeFile(inboxFile(root), JSON.stringify(items, null, 2), "utf8");
+}
+
+export interface ProposeResult {
+  ok: boolean;
+  reason?: string;
+  id?: string;
+}
+
+/**
+ * Stage a candidate learning for human review. Refuses secrets, dedupes by
+ * content (same text → same id), and skips facts already in MEMORY.md. The
+ * candidate is NOT recalled until accepted.
+ */
+export async function proposeMemory(root: string, fact: string, source = "auto"): Promise<ProposeResult> {
+  const text = fact.trim();
+  if (!text) return { ok: false, reason: "empty fact" };
+  if (redactSecrets(text) !== text) return { ok: false, reason: "looks like a secret; not staged" };
+
+  const id = createHash("sha256").update(text).digest("hex").slice(0, 8);
+  const items = await loadInbox(root);
+  if (items.some((i) => i.id === id)) return { ok: false, reason: "already staged" };
+  // Don't re-propose something already accepted into the index.
+  const mem = await loadStartupMemory(root, 1_000_000);
+  if (mem.includes(text)) return { ok: false, reason: "already remembered" };
+
+  items.push({ id, text, source, proposedAt: new Date().toISOString() });
+  await writeInbox(root, items);
+  return { ok: true, id };
+}
+
+/** Promote a staged candidate into MEMORY.md and remove it from the inbox. */
+export async function acceptMemory(root: string, id: string): Promise<RememberResult> {
+  const items = await loadInbox(root);
+  const item = items.find((i) => i.id === id);
+  if (!item) return { ok: false, reason: "no such inbox item" };
+  const res = await remember(root, item.text);
+  if (res.ok) await writeInbox(root, items.filter((i) => i.id !== id));
+  return res;
+}
+
+/** Drop a staged candidate without remembering it. False if the id is unknown. */
+export async function rejectMemory(root: string, id: string): Promise<boolean> {
+  const items = await loadInbox(root);
+  if (!items.some((i) => i.id === id)) return false;
+  await writeInbox(root, items.filter((i) => i.id !== id));
+  return true;
 }
 
 function sanitizeTopic(topic: string): string {

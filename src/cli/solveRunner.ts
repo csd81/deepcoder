@@ -12,6 +12,7 @@ import { redactSecrets } from "../workspace/redact.js";
 import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
 import { runTargetedChecks } from "../checks/targetedCheck.js";
 import { ensureIndex } from "../index/store.js";
+import { proposeMemory } from "../memory/store.js";
 import { loadCheckRun } from "../session/checkRuns.js";
 import { summarizeCheckFailure } from "../solve/failureSummary.js";
 import { hookCtx, hooksFor } from "./repl.js";
@@ -226,6 +227,25 @@ export async function runSolveCommand(
       return;
     }
     const changed = [...session.writeTracker].map((p) => path.basename(p));
+
+    // Auto-memory (Phase 8B): when a task is solved with real edits, STAGE a
+    // candidate learning ("where this kind of task is handled") for human review.
+    // It goes to the inbox only — never recalled into the prompt until accepted —
+    // so this can never silently poison context. Best-effort; never breaks the solve.
+    if (result.solved && changed.length > 0) {
+      const taskSummary = opts.task.trim().replace(/\s+/g, " ").slice(0, 100);
+      try {
+        const staged = await proposeMemory(
+          session.config.workspaceRoot,
+          `Solved "${taskSummary}" by editing ${changed.join(", ")}.`,
+          "solve",
+        );
+        if (staged.ok) stdout.write(chalk.dim("memory: staged 1 candidate — review with /memory inbox\n"));
+      } catch {
+        /* auto-memory is best-effort */
+      }
+    }
+
     const verdict = result.solved
       ? chalk.green(`solved in ${result.attempts.length} attempt(s)`)
       : chalk.yellow(`not solved after ${result.attempts.length} attempt(s)`);

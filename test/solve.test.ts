@@ -78,6 +78,30 @@ function plainSession(root: string, config: ReturnType<typeof loadConfig>): Sess
   };
 }
 
+test("Phase 8B: a solved task with edits stages a memory candidate (inbox only, not recalled)", async () => {
+  const { loadInbox, loadStartupMemory } = await import("../src/memory/store.js");
+  const root = await mkdtemp(path.join(tmpdir(), "solve-mem-"));
+  const config = loadConfig({
+    workspaceRoot: root,
+    apiKey: "fixture",
+    approvalMode: "auto",
+    checks: { test: { command: `node -e "process.exit(require('fs').existsSync('fixed.txt')?0:1)"` } },
+  });
+  const session = plainSession(root, config);
+
+  await runSolveCommand(session, { task: "make the   check pass", checkName: "test", maxAttempts: 3 }, async () => {
+    await writeFile(path.join(root, "fixed.txt"), "ok", "utf8");
+    session.writeTracker.add(path.join(root, "fixed.txt")); // simulate an edit tool tracking the write
+  });
+
+  const inbox = await loadInbox(root);
+  assert.equal(inbox.length, 1, "a candidate was staged on success");
+  assert.match(inbox[0]!.text, /Solved "make the check pass" by editing fixed\.txt\./);
+  assert.equal(inbox[0]!.source, "solve");
+  // Safety: the staged candidate is NOT recalled into the prompt until accepted.
+  assert.ok(!(await loadStartupMemory(root)).includes("Solved"), "inbox must not reach startup memory");
+});
+
 test("Phase 10H: a fast-fail preCheck skips the authoritative check and feeds the summary into the retry", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "solve-10h-"));
   const config = loadConfig({

@@ -58,8 +58,8 @@ mcpExecuteEnabled opt-in, 10D plugin checks + skills composition, 10H targeting
 
 ## Tier 2 — User-facing UX gaps (plans promised a command/surface that's missing)
 
-- **`/triage --run <id>`** — code has a literal placeholder `"…lands in 5B"`; closes the check→triage loop _(top quick win — S)_
-- **8B auto-memory** — the entire "learn from past sessions" half (`/memory inbox`/`open`, candidate extraction) is unbuilt _(L)_
+- ✅ **DONE** **`/triage --run <id>`** — loads a quarantined check run and triages its log (closes the check→triage loop)
+- 🟡 **PARTIAL** **8B auto-memory** — inbox shipped: `proposeMemory`/`loadInbox`/`acceptMemory`/`rejectMemory` + `/memory inbox|accept|reject`; a solved task stages a candidate (inbox-only, never recalled until accepted). Richer/LLM candidate extraction still TODO _(L)_
 - **10B no real HTTP/SSE server + no `server`/`--stdio` CLI subcommand** — only pure policy core exists; nothing can connect _(L)_
 - **10D `/plugins inspect|enable|disable`**, **10C `/statusline on|off`**, **10E `/web on|off|domains`**, **7H `/shell` commands**, **8E `/semantic status|purge`** — promised subcommands absent _(S–M each)_
 - **TUI**: horizontal scroll for wide code/tables, mouse/wheel, search-in-scrollback, `?` help overlay _(M)_

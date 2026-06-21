@@ -32,7 +32,7 @@ import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
 import { runTargetedChecks } from "../checks/targetedCheck.js";
 import { resolveBackend } from "../sandbox/index.js";
 import { discoverSkills } from "../skills/discovery.js";
-import { loadStartupMemory, listTopics, remember, forget } from "../memory/store.js";
+import { loadStartupMemory, listTopics, remember, forget, loadInbox, acceptMemory, rejectMemory } from "../memory/store.js";
 import { buildRepoIndex } from "../index/scanner.js";
 import { impactedBy, reverseGraph } from "../index/impact.js";
 import { relevantTests } from "../index/testTargeting.js";
@@ -774,15 +774,46 @@ export async function handleSlashCommand(
         } else {
           console.log(chalk.dim("kept."));
         }
+      } else if (sub === "inbox") {
+        const items = await loadInbox(root);
+        if (items.length === 0) {
+          console.log(chalk.dim("Memory inbox is empty. Auto-captured candidates appear here for review."));
+          return { consumed: true };
+        }
+        console.log(chalk.bold(`Memory inbox (${items.length}) — review then /memory accept <n> | /memory reject <n>:`));
+        items.forEach((it, i) => {
+          console.log(`  ${chalk.cyan(String(i + 1))}. ${it.text} ${chalk.dim(`[${it.source} · ${it.id}]`)}`);
+        });
+      } else if (sub === "accept" || sub === "reject") {
+        if (!subArg) {
+          console.log(chalk.dim(`usage: /memory ${sub} <n|id>   (see /memory inbox)`));
+          return { consumed: true };
+        }
+        // Resolve a 1-based index from `/memory inbox`, or treat the arg as an id.
+        const items = await loadInbox(root);
+        const asIndex = /^\d+$/.test(subArg) ? Number(subArg) : NaN;
+        const id =
+          Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= items.length
+            ? items[asIndex - 1]!.id
+            : subArg;
+        if (sub === "accept") {
+          const res = await acceptMemory(root, id);
+          console.log(res.ok ? chalk.dim(`accepted → ${res.file}`) : chalk.red(`not accepted: ${res.reason}`));
+        } else {
+          const ok = await rejectMemory(root, id);
+          console.log(ok ? chalk.dim("rejected (discarded).") : chalk.red("no such inbox item."));
+        }
       } else {
         // show
         const mem = await loadStartupMemory(root);
         const topics = await listTopics(root);
-        if (!mem && topics.length === 0) {
+        const inboxCount = (await loadInbox(root)).length;
+        if (!mem && topics.length === 0 && inboxCount === 0) {
           console.log(chalk.dim("No memory yet. Add with /memory remember <fact> (writes .deepcoder/memory/MEMORY.md)."));
         } else {
           if (mem) console.log(mem.trim());
           if (topics.length) console.log(chalk.dim(`\ntopic files: ${topics.join(", ")}`));
+          if (inboxCount > 0) console.log(chalk.yellow(`\n${inboxCount} candidate(s) awaiting review — /memory inbox`));
         }
       }
       return { consumed: true };
@@ -1943,7 +1974,7 @@ export async function handleSlashCommand(
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
           "/hooks [enable|disable]  show lifecycle hooks; toggle them for this session (Phase 7B)",
           "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
-          "/memory [sub]    show | remember <fact> | forget <pattern>  (Phase 8B)",
+          "/memory [sub]    show | remember <fact> | forget <pattern> | inbox | accept <n> | reject <n>",
           "/index [code|symbols [name]|impact <file>|tests <file>]  index/symbols/impact/test-targeting (8C)",
           "/isolation [s]   workspace isolation: status|diff|apply|discard|path",
           "/checks          list configured verification checks",
