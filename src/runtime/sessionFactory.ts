@@ -9,6 +9,7 @@ import { createProvider } from "../providers/factory.js";
 import { EMPTY_USAGE } from "../providers/usage.js";
 import { createSemanticTools } from "../tools/semanticTools.js";
 import { createWebTools } from "../tools/webTools.js";
+import { createPtyTools } from "../tools/ptyTools.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
@@ -151,6 +152,9 @@ export async function buildSession(
     blockedDomains: config.web.blockedDomains,
     searchProvider: config.web.searchProvider,
   })) registry.register(t);
+  // Phase 10G: register the persistent interactive-shell tool only when opted in
+  // (default off / fail-closed); it still flows through the permission policy.
+  for (const t of createPtyTools({ enabled: config.interactiveShell })) registry.register(t);
   const mcp = await initMcp(config, registry);
   const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
 

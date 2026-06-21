@@ -99,6 +99,13 @@ export interface Config {
    */
   mcpExecuteEnabled: boolean;
   /**
+   * Phase 10G — whether the persistent interactive-shell tool (`run_in_shell`) is
+   * exposed to the model. Default-off / fail-closed: a long-lived stateful shell
+   * is a powerful capability, so it must be opted in via DEEPCODER_INTERACTIVE_SHELL.
+   * When on, the tool still flows through the command permission policy.
+   */
+  interactiveShell: boolean;
+  /**
    * Sandbox policy for risky tool executions (run_bash, configured checks).
    * Precedence: CLI `--sandbox` > `DEEPCODER_SANDBOX` env > config file > default `fast`.
    */
@@ -555,6 +562,9 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     mcpServers: file.mcpServers ?? {},
     checks: file.checks ?? {},
     mcpExecuteEnabled: false, // Phase 4A: execute-mode MCP tools are denied
+    interactiveShell:
+      process.env.DEEPCODER_INTERACTIVE_SHELL === "1" ||
+      process.env.DEEPCODER_INTERACTIVE_SHELL === "true", // Phase 10G: default-off
     ...rest,
     // A CLI partial (e.g. {mode}) layers on top of the file/env-resolved sandbox
     // rather than replacing it wholesale.
