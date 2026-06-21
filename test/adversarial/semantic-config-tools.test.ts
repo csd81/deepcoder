@@ -56,7 +56,7 @@ function deps(over: Partial<SemanticToolDeps> = {}): SemanticToolDeps {
   return {
     config: { enabled: true, provider: "ollama", model: "nomic-embed-text", baseUrl: "http://x", dimensions: 3, hybridLexicalWeight: 0.35, topK: 12 },
     embed: async (texts) => texts.map(() => [1, 0, 0]), // query ~ "a"/"c"
-    loadStore: async () => ({ manifest: { providerLabel: "ollama/nomic-embed-text", model: "nomic-embed-text", dimensions: 3, createdAt: "", chunkCount: records.length }, records }),
+    loadStore: async () => ({ manifest: { providerLabel: "ollama", model: "nomic-embed-text", dimensions: 3, createdAt: "", chunkCount: records.length }, records }),
     ...over,
   };
 }

@@ -12,9 +12,9 @@ import { z } from "zod";
 import { promises as fs } from "node:fs";
 import { resolveReadPathInWorkspace } from "../workspace/paths.js";
 import { rankBySimilarity, hybridRank, type ScoredChunk } from "../semantic/search.js";
-import { loadVectorStore } from "../semantic/store.js";
+import { loadVectorStore, isStoreStale } from "../semantic/store.js";
 import { createEmbeddingProvider } from "../semantic/provider.js";
-import type { VectorRecord } from "../semantic/types.js";
+import type { VectorRecord, VectorManifest } from "../semantic/types.js";
 import type { SemanticSearchConfig } from "../config/config.js";
 import { parseArgs, type Tool, type ToolContext, type ToolInvocation, type ToolResult } from "./types.js";
 
@@ -23,13 +23,38 @@ export interface SemanticToolDeps {
   /** Inject for tests; defaults to the configured embedding provider. */
   embed?: (texts: string[]) => Promise<number[][]>;
   /** Inject for tests; defaults to loadVectorStore. */
-  loadStore?: (root: string) => Promise<{ records: VectorRecord[] } | null>;
+  loadStore?: (root: string) => Promise<{ manifest?: VectorManifest; records: VectorRecord[] } | null>;
 }
 
 const DISABLED =
   "Semantic search is disabled. Enable it with DEEPCODER_SEMANTIC_SEARCH=1 and a local embedding backend.";
 const NO_INDEX = "No semantic index found. Run /semantic rebuild first.";
+const STALE_INDEX =
+  "Semantic index was built with a different embedding model/provider — its vectors are not comparable to the current model. Rebuild it with /semantic.";
 const MAX_SNIPPET_BYTES = 600;
+
+/**
+ * Phase 8E staleness guard: refuse to query a vector store whose manifest was
+ * built with a different embedding provider/model/dimensions (its vectors are
+ * incomparable to the current model → garbage results). Returns an error
+ * ToolResult to short-circuit, or null when the store is fresh/manifest-less.
+ */
+function staleGuard(
+  store: { manifest?: VectorManifest },
+  config: SemanticSearchConfig,
+): ToolResult | null {
+  if (
+    store.manifest &&
+    isStoreStale(store.manifest, {
+      providerLabel: config.provider,
+      model: config.model,
+      dimensions: config.dimensions,
+    })
+  ) {
+    return { output: STALE_INDEX, isError: true };
+  }
+  return null;
+}
 
 function defaultEmbed(config: SemanticSearchConfig): (texts: string[]) => Promise<number[][]> {
   return async (texts) => {
@@ -97,6 +122,7 @@ export function createSemanticTools(deps: SemanticToolDeps): Tool[] {
         if (!config.enabled) return { output: DISABLED };
         const store = await loadStore(ctx.workspaceRoot);
         if (!store) return { output: NO_INDEX };
+        { const stale = staleGuard(store, config); if (stale) return stale; }
         const [qv] = await embed([args.query]);
         const scored = rankBySimilarity(store.records, qv ?? [], args.topK ?? config.topK);
         return { output: await formatResults(ctx.workspaceRoot, scored) };
@@ -116,6 +142,7 @@ export function createSemanticTools(deps: SemanticToolDeps): Tool[] {
         if (!config.enabled) return { output: DISABLED };
         const store = await loadStore(ctx.workspaceRoot);
         if (!store) return { output: NO_INDEX };
+        { const stale = staleGuard(store, config); if (stale) return stale; }
         const recs = args.pathPrefix
           ? store.records.filter((r) => r.chunk.path.startsWith(args.pathPrefix!))
           : store.records;
@@ -155,6 +182,7 @@ export function createSemanticTools(deps: SemanticToolDeps): Tool[] {
         }
         const store = await loadStore(ctx.workspaceRoot);
         if (!store) return { output: NO_INDEX };
+        { const stale = staleGuard(store, config); if (stale) return stale; }
         const [qv] = await embed([text]);
         // Don't return the source range itself.
         const recs = store.records.filter(

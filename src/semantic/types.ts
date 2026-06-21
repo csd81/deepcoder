@@ -22,7 +22,7 @@ export interface ChunkOptions {
 }
 
 export interface VectorManifest {
-  providerLabel: string;      // e.g. "ollama/nomic-embed-text" — NEVER a key
+  providerLabel: string;      // the embedding provider, e.g. "ollama" — NEVER a key (model is separate)
   model: string;
   dimensions: number | null;
   createdAt: string;          // ISO
