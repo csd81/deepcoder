@@ -1,8 +1,8 @@
 /**
  * Phase 7I — post-write diagnostic interceptor. SEED (red-first): pins the pure
- * matcher contract (a changed .ts file matches a **/*.ts rule) so a delegated
- * worker MUST implement the diagnostics core (no green-check no-op), then EXTENDS
- * with the rest from plans/phase7i-dynamic-linter-typecheck-autofix-interceptor-plan.md.
+ * matcher contract (a changed .ts file matches a TypeScript glob rule) so a
+ * delegated worker MUST implement the diagnostics core (no green-check no-op),
+ * then EXTENDS with the rest from the Phase 7I plan.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

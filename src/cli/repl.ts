@@ -291,6 +291,8 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     ctx,
     model: session.config.model,
     mode: session.mode,
+    // Phase 7I — post-write diagnostics (no-op unless config.diagnostics.enabled).
+    diagnostics: session.config.diagnostics,
     maxTurns: session.config.maxTurns,
     contextBudgetTokens: session.config.contextBudgetTokens,
     compactAt: session.config.compactAt,

@@ -21,6 +21,7 @@ import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
 import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig } from "./config.js";
+import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
 import { hasFallbackCycle } from "../models/router.js";
 
@@ -36,6 +37,7 @@ export interface FileConfig {
   dependencyHealing?: Partial<DependencyHealingConfig>;
   delegate?: Partial<DelegateConfig>;
   testTargeting?: Partial<TestTargetingConfig>;
+  diagnostics?: Partial<DiagnosticsConfig>;
   models?: ModelsFileConfig;
 }
 
@@ -148,6 +150,23 @@ const qualityGateSchema = z.object({
 
 const delegateSchema = z.object({
   qualityGate: qualityGateSchema.optional(),
+});
+
+const diagnosticRuleSchema = z.object({
+  name: z.string().min(1),
+  match: z.array(z.string().min(1)).min(1),
+  command: z.string().min(1),
+  timeoutMs: z.number().int().positive().max(600_000).optional(),
+  debounceMs: z.number().int().positive().optional(),
+  maxOutputBytes: z.number().int().positive().optional(),
+});
+
+const diagnosticsSchema = z.object({
+  enabled: z.boolean().optional(),
+  mode: z.enum(["advisory"]).optional(),
+  maxPerTurn: z.number().int().positive().optional(),
+  timeoutMs: z.number().int().positive().max(600_000).optional(),
+  rules: z.array(diagnosticRuleSchema).optional(),
 });
 
 /**
@@ -273,6 +292,14 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     }
   }
 
+  const rawDiagnostics = (parsed as { diagnostics?: unknown }).diagnostics;
+  let diagnostics: Partial<DiagnosticsConfig> | undefined;
+  if (rawDiagnostics && typeof rawDiagnostics === "object") {
+    const result = diagnosticsSchema.safeParse(rawDiagnostics);
+    if (result.success) diagnostics = result.data as Partial<DiagnosticsConfig>;
+    else warn(`ignoring "diagnostics": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
   const rawTestTargeting = (parsed as { testTargeting?: unknown }).testTargeting;
   let testTargeting: Partial<TestTargetingConfig> | undefined;
   if (rawTestTargeting && typeof rawTestTargeting === "object") {
@@ -300,7 +327,7 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     };
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting };
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics };
 }
 
 function warn(msg: string): void {

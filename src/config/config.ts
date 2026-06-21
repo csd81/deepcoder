@@ -9,6 +9,7 @@ import {
 } from "../workspaceIsolation/types.js";
 import { DEFAULT_HOOKS, type HooksConfig } from "../hooks/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
+import { DEFAULT_DIAGNOSTICS, type DiagnosticsConfig } from "../diagnostics/types.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
@@ -110,6 +111,14 @@ export interface Config {
    * hooks run before each tool use (PreToolUse) and can deny the action.
    */
   hooks: HooksConfig;
+  /**
+   * Phase 7I — post-write diagnostic interceptor. DEFAULT DISABLED. When
+   * enabled, after a successful mutating tool (edit_file/write_file) the agent
+   * runs matching diagnostic commands and feeds bounded output back to the
+   * model. Command is CONFIG-defined (never model-defined), classifier-gated,
+   * sandboxed, redacted, and capped. No auto-fix in v1.
+   */
+  diagnostics: DiagnosticsConfig;
   /**
    * Phase 8A — instruction graph. When `instructionGraph` is true, project
    * instructions load through the inspectable hierarchical graph (global +
@@ -287,10 +296,11 @@ const PROVIDER_ENV_PREFIX: Record<string, string> = {
   anthropic: "ANTHROPIC",
 };
 
-export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "skills" | "dependencyHealing" | "delegate">> & {
+export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "diagnostics" | "skills" | "dependencyHealing" | "delegate">> & {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
+  diagnostics?: Partial<DiagnosticsConfig>;
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
@@ -341,6 +351,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const hooks: HooksConfig = {
     ...DEFAULT_HOOKS,
     ...(file.hooks ?? {}),
+  };
+
+  // Diagnostics: default < config file < env gate (DEEPCODER_DIAGNOSTICS=1).
+  const diagEnv = (process.env.DEEPCODER_DIAGNOSTICS ?? "").toLowerCase();
+  const diagnostics: DiagnosticsConfig = {
+    ...DEFAULT_DIAGNOSTICS,
+    ...(file.diagnostics ?? {}),
+    ...(["1", "true", "yes"].includes(diagEnv) ? { enabled: true } : {}),
+    ...(["0", "false", "no"].includes(diagEnv) ? { enabled: false } : {}),
   };
 
   // Context/instruction-graph: default < config file < env gate.
@@ -532,6 +551,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     sandbox: { ...sandbox, ...(sandboxOverride ?? {}) },
     workspaceIsolation: { ...workspaceIsolation, ...(wsIsoOverride ?? {}) },
     hooks: { ...hooks, ...(overrides.hooks ?? {}) },
+    diagnostics: { ...diagnostics, ...(overrides.diagnostics ?? {}) },
     context: { ...context, ...(overrides.context ?? {}) },
     skills: { ...skills, ...(overrides.skills ?? {}) },
     dependencyHealing: { ...dependencyHealing, ...(overrides.dependencyHealing ?? {}) },

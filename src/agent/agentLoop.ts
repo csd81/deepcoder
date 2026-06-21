@@ -11,8 +11,10 @@ import type { ToolContext, ToolInvocation, ToolPreview, ToolResult } from "../to
 import { InvalidArgumentsError } from "../tools/types.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import type { ApprovalMode } from "../config/config.js";
+import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import { checkPermission } from "../permissions/policy.js";
 import { compactIfNeeded } from "../context/compaction.js";
+import { runPostWriteDiagnostics } from "../diagnostics/runner.js";
 
 export interface AgentDeps {
   provider: ModelProvider;
@@ -61,6 +63,14 @@ export interface AgentDeps {
    * once. Injected ephemerally — like todo context — without mutating history.
    */
   jitContext?(): string[];
+  /**
+   * Phase 7I — post-write diagnostics config. DEFAULT DISABLED. When enabled,
+   * after a successful mutating tool (edit_file/write_file) the agent runs
+   * matching diagnostic commands and feeds bounded output back to the model
+   * via onNotice. When disabled (the default), the loop is byte-identical to
+   * today — no spawn, no I/O.
+   */
+  diagnostics?: DiagnosticsConfig;
 }
 
 /**
@@ -206,6 +216,25 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
           // an advisory post-hook must never break the loop
         }
       }
+
+      // Phase 7I — post-write diagnostics. Only on SUCCESSFUL mutate tools.
+      // When diagnostics are disabled (the default), this is a no-op.
+      if (!result.isError && invocation.kind === "mutate" && invocation.affectedPaths && deps.diagnostics) {
+        try {
+          const diagRuns = await runPostWriteDiagnostics({
+            workspaceRoot: ctx.workspaceRoot,
+            affectedPaths: invocation.affectedPaths,
+            config: deps.diagnostics,
+            sandbox: ctx.sandbox,
+            signal: ctx.signal,
+          });
+          for (const dr of diagRuns) {
+            deps.onNotice?.(renderDiagnosticNotice(dr));
+          }
+        } catch {
+          // A diagnostic failure must never break the agent loop.
+        }
+      }
     }
   }
 
@@ -305,4 +334,20 @@ function pushToolResult(
   content: string,
 ): void {
   messages.push({ role: "tool", toolCallId, name, content });
+}
+
+/**
+ * Render a DiagnosticRun into a human-readable notice for the model.
+ * Bounded to ~4 KB (the summary is already capped by the runner).
+ */
+function renderDiagnosticNotice(dr: import("../diagnostics/types.js").DiagnosticRun): string {
+  const lines: string[] = [];
+  lines.push(`Post-write diagnostic "${dr.name}" — ${dr.exitCode === 0 ? "passed" : "failed"}`);
+  if (dr.affectedPaths.length > 0) {
+    lines.push(`Affected: ${dr.affectedPaths.join(", ")}`);
+  }
+  if (dr.summary) {
+    lines.push(dr.summary);
+  }
+  return lines.join("\n");
 }
