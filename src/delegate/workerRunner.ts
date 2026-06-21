@@ -44,6 +44,9 @@ const ALLOWED_PROVIDER_ENV = [
   "DEEPSEEK_API_KEY",
   "DEEPSEEK_BASE_URL",
   "DEEPSEEK_MODEL",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_BASE_URL",
+  "OPENROUTER_MODEL",
 ];
 
 /** Providers for which OPENAI_API_KEY is a legitimate credential to forward. */

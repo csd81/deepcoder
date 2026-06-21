@@ -9,9 +9,28 @@ export const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434/v1";
 export const QWEN_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 export const GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 export const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
+export const OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 export function geminiWireModelName(model: string): string {
   return model.startsWith("models/") ? model : `models/${model}`;
+}
+
+/**
+ * Build optional OpenRouter attribution headers from the environment.
+ * Conservative v1: omit both unless explicitly set by the user.
+ * Maps: referer -> "HTTP-Referer", title -> "X-Title".
+ * NEVER puts the API key in headers.
+ */
+export function openRouterAttributionHeaders(_config: Config): Record<string, string> | undefined {
+  // DEEPCODER_OPENROUTER_* takes precedence over bare OPENROUTER_*,
+  // matching the pattern of DEEPCODER_API_KEY over provider-specific keys.
+  const referer = process.env.DEEPCODER_OPENROUTER_HTTP_REFERER ?? process.env.OPENROUTER_HTTP_REFERER;
+  const title = process.env.DEEPCODER_OPENROUTER_APP_TITLE ?? process.env.OPENROUTER_APP_TITLE;
+  if (!referer && !title) return undefined;
+  const headers: Record<string, string> = {};
+  if (referer) headers["HTTP-Referer"] = referer;
+  if (title) headers["X-Title"] = title;
+  return headers;
 }
 
 /**
@@ -88,7 +107,17 @@ export function createProvider(config: Config): ModelProvider {
         label: "Anthropic",
       });
 
+    case "openrouter":
+      // OpenRouter unified API via OpenAI-compatible adapter.
+      return new OpenAICompatibleProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl || OPENROUTER_DEFAULT_BASE_URL,
+        label: "OpenRouter",
+        temperature: config.temperature,
+        defaultHeaders: openRouterAttributionHeaders(config),
+      });
+
     default:
-      throw new Error(`Unknown provider "${config.provider}". Use deepseek | openai-compatible | ollama | qwen | gemini | anthropic.`);
+      throw new Error(`Unknown provider "${config.provider}". Use deepseek | openai-compatible | ollama | qwen | gemini | anthropic | openrouter.`);
   }
 }
