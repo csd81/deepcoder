@@ -35,6 +35,8 @@ import { createPlainRenderer } from "../ui/plainRenderer.js";
 import type { UiEvent } from "../ui/events.js";
 import { createTranscript, applyEvent, type TranscriptState } from "../ui/transcript.js";
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
+import { diffFrames } from "../ui/frameWriter.js";
+import { wrapLines } from "../ui/textLayout.js";
 import { createTuiApproval } from "../ui/approval.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
@@ -485,7 +487,14 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((r) => { resolveDone = r; });
 
-  const enterAlt = () => stdout.write("\x1b[?1049h\x1b[?25l");
+  // Last frame written, for diff-based repaint (anti-flicker). Reset to [] whenever
+  // the whole screen is invalidated (alt-screen entry, resize) so the next redraw
+  // repaints from scratch.
+  let prevFrame: string[] = [];
+
+  // Enter the alternate screen, hide the cursor, clear it, and invalidate the diff
+  // baseline so the first redraw is a full paint.
+  const enterAlt = () => { stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"); prevFrame = []; };
   const leaveAlt = () => stdout.write("\x1b[?25h\x1b[?1049l");
 
   function restore(): void {
@@ -515,7 +524,10 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   function redraw(): void {
     if (restored) return;
-    const lines = flatten();
+    const width = stdout.columns ?? 80;
+    // Wrap logical lines to the terminal width so nothing is truncated off-screen
+    // and a resize re-wraps cleanly. renderFrame's own truncation then no-ops.
+    const lines = wrapLines(flatten(), width);
     const height = viewportH();
     const maxTop = Math.max(0, lines.length - height);
     if (atBottom) viewportTop = maxTop;
@@ -523,10 +535,22 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const status = `deepcoder · ${session.mode} · ${session.config.provider}/${session.config.model} · sandbox ${session.config.sandbox.mode}${busy ? " · running…" : ""}`;
     const frame = renderFrame({
       statusLine: status, lines, viewportTop, height,
-      width: stdout.columns ?? 80, inputLine: "> " + input,
+      width, inputLine: "> " + input,
       hasNewOutputBelow: !atBottom && viewportTop < maxTop,
     });
-    stdout.write("\x1b[2J\x1b[H" + frame.join("\r\n"));
+    // Repaint only the lines that changed since the last frame (anti-flicker).
+    const ops = diffFrames(prevFrame, frame);
+    if (ops) stdout.write(ops);
+    prevFrame = frame;
+  }
+
+  // Terminal was resized: the alt screen reflowed, so clear and repaint from
+  // scratch at the new dimensions (flatten + wrapLines pick up the new width).
+  function onResize(): void {
+    if (restored) return;
+    stdout.write("\x1b[2J\x1b[H");
+    prevFrame = [];
+    redraw();
   }
 
   const sink = {
@@ -611,12 +635,14 @@ export async function runTuiRepl(session: Session): Promise<void> {
   const onProcExit = () => restore();
   process.on("exit", onProcExit);
   process.on("SIGTERM", onProcExit);
+  stdout.on("resize", onResize);
   transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — PgUp/PgDn scroll · Enter submit · Ctrl+C exit · /exit quits" });
   redraw();
   try {
     await done;
   } finally {
     restore();
+    stdout.removeListener("resize", onResize);
     process.removeListener("exit", onProcExit);
     process.removeListener("SIGTERM", onProcExit);
   }
