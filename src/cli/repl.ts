@@ -32,6 +32,7 @@ import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
+import { createPrintRenderer } from "../ui/printRenderer.js";
 import type { UiEvent } from "../ui/events.js";
 import { createTranscript, applyEvent, moveSelection, clearSelection, type TranscriptState } from "../ui/transcript.js";
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
@@ -380,7 +381,20 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
 }
 
 /** Non-interactive: run a single task and exit. */
-export async function runOneShot(session: Session, prompt: string): Promise<void> {
+export async function runOneShot(
+  session: Session,
+  prompt: string,
+  opts: { print?: boolean } = {},
+): Promise<void> {
+  // Print mode (`-p`/`--print`): route the turn through a renderer that emits
+  // ONLY the raw assistant text — no tool/notice chrome, no markdown, no color —
+  // so the reply is clean to capture, pipe, or assert on when testing prompts.
+  const ui: TaskUi | undefined = opts.print
+    ? {
+        sink: createPrintRenderer({ write: (s) => stdout.write(s) }),
+        approve: (inv, preview) => promptForApproval(inv, preview),
+      }
+    : undefined;
   try {
     if (session.config.solve) {
       const checkName = session.config.solveCheck;
@@ -399,14 +413,14 @@ export async function runOneShot(session: Session, prompt: string): Promise<void
           repro,
           reproPath: session.config.solveReproPath,
         },
-        () => runTask(session),
+        () => runTask(session, ui),
       );
       return;
     }
     if (session.config.planFirst) await planFirstPass(session, prompt);
     session.messages.push({ role: "user", content: prompt });
     await session.store.save(snapshot(session));
-    await runTask(session);
+    await runTask(session, ui);
   } finally {
     await session.mcp?.closeAll();
   }

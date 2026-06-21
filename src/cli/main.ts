@@ -32,6 +32,7 @@ program
   .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
   .option("--tui", "interactive: use the experimental scrollable terminal UI (TTY only)")
   .option("--no-tui", "interactive: force the plain line UI")
+  .option("-p, --print", "one-shot: print only the raw assistant reply (no chrome) and exit")
   .action(
     async (
       promptParts: string[],
@@ -52,6 +53,7 @@ program
         workspaceIsolation?: string;
         workspaceIsolationIncludeDirty?: boolean;
         tui?: boolean;
+        print?: boolean;
       },
     ) => {
     const baseConfig = loadConfig({
@@ -91,7 +93,7 @@ program
 
     const prompt = promptParts.join(" ").trim();
     try {
-      if (prompt) await runOneShot(session, prompt);
+      if (prompt) await runOneShot(session, prompt, { print: opts.print });
       else {
         // Non-TTY never starts the TUI (resolveUiMode enforces this).
         const uiMode = resolveUiMode({
