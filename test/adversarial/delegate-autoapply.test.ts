@@ -206,3 +206,22 @@ test("7. a patch overlapping already-applied paths is refused (conflict)", async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("requireValidatedTest blocks auto-apply when there is no green_confirmed proof", async () => {
+  const root = await makeRepo();
+  try {
+    await savePlan(root, plan([worker()])); // a plain worker, valid patch, check passed
+    await writeRun(root); // checkPassed:true, no tdd record
+    await writePatch(root, VALID_PATCH);
+    const r = await autoApplyIfEligible(root, "p1", "w1", {
+      autoApply: true,
+      requireValidatedTest: true,
+      checks: {},
+    });
+    assert.equal(r.applied, false, "acceptance-first must refuse a worker with no validated red→green test");
+    assert.match(r.reason, /validated|green|test/i);
+    await assertUntouched(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

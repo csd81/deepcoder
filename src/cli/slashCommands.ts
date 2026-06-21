@@ -992,6 +992,9 @@ export async function handleSlashCommand(
     case "delegate": {
       const [sub, ...subArgs] = arg.split(/\s+/);
       const subArg = subArgs.join(" ").trim();
+      // Acceptance-first global posture (default off). Defensive read: a config
+      // built without a delegate section degrades to off rather than crashing.
+      const acceptanceFirstEnabled = config.delegate?.acceptanceFirst?.enabled ?? false;
       const root = config.workspaceRoot;
 
       if (sub === "plan") {
@@ -1096,22 +1099,17 @@ export async function handleSlashCommand(
         }
 
         // Plain deterministic plan (existing behavior).
-        let isTdd = false;
-        let taskArg = subArg;
-        if (subArgs[0] === "--tdd") {
-          isTdd = true;
-          taskArg = subArgs.slice(1).join(" ").trim();
-        } else if (subArgs.includes("--tdd")) {
-          isTdd = true;
-          taskArg = subArgs.filter(x => x !== "--tdd").join(" ").trim();
-        }
+        const isTdd = subArgs.includes("--tdd");
+        // Acceptance-first: global config flag OR a per-plan `--strict` override.
+        const acceptanceFirst = acceptanceFirstEnabled || subArgs.includes("--strict");
+        const taskArg = subArgs.filter((x) => x !== "--tdd" && x !== "--strict").join(" ").trim();
 
         if (!taskArg) {
-          console.log(chalk.dim("usage: /delegate plan [--tdd] <task>"));
+          console.log(chalk.dim("usage: /delegate plan [--tdd] [--strict] <task>"));
           return { consumed: true };
         }
 
-        const plan = buildPlan(taskArg, { tdd: isTdd, checkNames: Object.keys(config.checks) });
+        const plan = buildPlan(taskArg, { tdd: isTdd, acceptanceFirst, checkNames: Object.keys(config.checks) });
         await savePlan(root, plan);
         console.log(chalk.bold("\nDelegation Plan:"));
         console.log(chalk.dim(`  id: ${plan.id}`));
@@ -1334,7 +1332,10 @@ export async function handleSlashCommand(
       if (sub === "run") {
         // Parse flags out of the args so positionals (plan-id, worker-id) are clean.
         // `--parallel` and `--max-concurrency <n>` only apply to the run-all form.
-        const isTddRun = subArgs.includes("--tdd");
+        // Acceptance-first selects the TDD lifecycle without an explicit --tdd:
+        // either the global config flag, or the plan was built strict (workers
+        // already carry tdd.required — checked after the plan loads below).
+        let isTddRun = subArgs.includes("--tdd") || acceptanceFirstEnabled;
         const parallel = subArgs.includes("--parallel");
         const mcIdx = subArgs.indexOf("--max-concurrency");
         const rawMc = mcIdx !== -1 ? Number(subArgs[mcIdx + 1]) : NaN;
@@ -1373,6 +1374,10 @@ export async function handleSlashCommand(
           console.log(chalk.red(`Plan "${planId}" not found or corrupt.`));
           return { consumed: true };
         }
+        // A plan built under acceptance-first (e.g. /delegate plan --strict) carries
+        // tdd.required on its workers — honor it even if the global flag is off.
+        isTddRun = isTddRun || plan.workers.some((w) => w.tdd?.required);
+        const requireValidatedTest = acceptanceFirstEnabled || plan.workers.some((w) => w.tdd?.required);
 
         if (workerId) {
           const worker = plan.workers.find((w) => w.id === workerId);
@@ -1461,7 +1466,7 @@ export async function handleSlashCommand(
             const auto = ["1", "true", "yes"].includes((process.env.DEEPCODER_DELEGATE_AUTO_APPLY ?? "").toLowerCase());
             if (run.checkPassed && auto) {
               console.log(chalk.dim("\nAttempting optional auto-apply…"));
-              const autoApplyResult = await autoApplyIfEligible(root, planId, workerId, { autoApply: auto, checks: config.checks });
+              const autoApplyResult = await autoApplyIfEligible(root, planId, workerId, { autoApply: auto, checks: config.checks, requireValidatedTest });
               if (autoApplyResult.applied) {
                 console.log(chalk.green(`✓ Auto-applied: ${autoApplyResult.reason}`));
                 if (autoApplyResult.result?.globalCheckResults?.length) {
@@ -1575,7 +1580,12 @@ export async function handleSlashCommand(
           console.log(chalk.red("Refusing to apply in a non-interactive session — run /delegate apply from an interactive terminal."));
           return { consumed: true };
         }
-        const result = await applyWorker(root, planId, workerId, { checks: config.checks });
+        // Acceptance-first: require a validated red→green proof when the global
+        // flag is on OR the plan was built strict (worker carries tdd.required).
+        const applyPlan = await loadPlan(root, planId);
+        const applyWorkerTask = applyPlan?.workers.find((w) => w.id === workerId);
+        const requireValidatedTest = acceptanceFirstEnabled || applyWorkerTask?.tdd?.required === true;
+        const result = await applyWorker(root, planId, workerId, { checks: config.checks, requireValidatedTest });
         if (result.ok) {
           console.log(chalk.green(result.message));
           if (result.globalCheckResults?.length) {

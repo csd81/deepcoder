@@ -155,8 +155,14 @@ export interface QualityGateOptions {
   maxContextBytes: number;
 }
 
+export interface AcceptanceFirstOptions {
+  /** When on, delegated workers must ship a validated red→green test + a production change. */
+  enabled: boolean;
+}
+
 export interface DelegateConfig {
   qualityGate: QualityGateOptions;
+  acceptanceFirst: AcceptanceFirstOptions;
 }
 
 export type TestTargetingMode = "off" | "suggest" | "targeted-first" | "targeted-only";
@@ -186,6 +192,8 @@ export const DEFAULT_TEST_TARGETING: TestTargetingConfig = {
   },
   pathRules: [{ changed: "src/**", tests: ["test/**/*.test.ts"] }],
 };
+
+export const DEFAULT_ACCEPTANCE_FIRST: AcceptanceFirstOptions = { enabled: false };
 
 export const DEFAULT_QUALITY_GATE: QualityGateOptions = {
   enabled: false,
@@ -316,7 +324,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
-  delegate?: { qualityGate?: Partial<QualityGateOptions> };
+  delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions> };
 };
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
@@ -452,8 +460,20 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     maxContextBytes: overrideQualityGate.maxContextBytes ?? fileQualityGate.maxContextBytes ?? DEFAULT_QUALITY_GATE.maxContextBytes,
   };
 
+  const overrideAcceptanceFirst = delegateOverride?.acceptanceFirst ?? {};
+  const fileAcceptanceFirst = (fileDelegate.acceptanceFirst ?? {}) as Partial<AcceptanceFirstOptions>;
+  const afEnabledEnv = process.env.DEEPCODER_DELEGATE_ACCEPTANCE_FIRST;
+  const acceptanceFirst: AcceptanceFirstOptions = {
+    enabled: overrideAcceptanceFirst.enabled !== undefined
+      ? overrideAcceptanceFirst.enabled
+      : (afEnabledEnv !== undefined
+        ? ["1", "true", "yes"].includes(afEnabledEnv.toLowerCase())
+        : (fileAcceptanceFirst.enabled ?? DEFAULT_ACCEPTANCE_FIRST.enabled)),
+  };
+
   const delegate: DelegateConfig = {
     qualityGate,
+    acceptanceFirst,
   };
 
   // Phase 10H — test targeting config: default < file < env.
