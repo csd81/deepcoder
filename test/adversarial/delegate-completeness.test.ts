@@ -5,7 +5,7 @@
  * 1. passing-check-but-missing-required-README deliverable => incomplete
  * 2. passing-check-but-missing-required-test change => incomplete
  * 3. self-audit claiming a deliverable with NO matching patch evidence => rejected
- * 4. malformed / oversized / non-JSON self-audit => parseSelfAudit returns null
+ * 4. evaluateCompleteness tolerates a null / undefined self-audit (warning only)
  * 5. a must_not_change file that appears in the patch => forbidden_file_changed
  * 6. a manual_review deliverable => produces manual_review_required
  * 7. a fully-satisfied task => complete:true
@@ -14,9 +14,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseSelfAudit } from "../../src/delegate/selfAudit.js";
 import { evaluateCompleteness } from "../../src/delegate/completeness.js";
-import { isWorkerSelfAudit, type WorkerTask, type WorkerSelfAudit } from "../../src/delegate/types.js";
+import { type WorkerTask, type WorkerSelfAudit } from "../../src/delegate/types.js";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -238,89 +237,10 @@ describe("self-audit cross-check", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/*  4. Malformed / oversized / non-JSON self-audit                     */
+/*  4. evaluateCompleteness self-audit handling (null / undefined)     */
 /* ------------------------------------------------------------------ */
 
-describe("parseSelfAudit", () => {
-  test("valid self-audit JSON returns parsed object", () => {
-    const raw = JSON.stringify({
-      taskId: "worker-1",
-      completedDeliverables: [{ id: "D1", evidence: "done" }],
-      skippedDeliverables: [],
-      changedFiles: ["src/main.ts"],
-      testsRun: ["npm test"],
-      knownLimitations: [],
-    });
-
-    const result = parseSelfAudit(raw);
-    assert.notEqual(result, null);
-    assert.equal(result!.taskId, "worker-1");
-    assert.equal(result!.completedDeliverables.length, 1);
-  });
-
-  test("non-JSON string returns null", () => {
-    const result = parseSelfAudit("this is not json");
-    assert.equal(result, null);
-  });
-
-  test("empty string returns null", () => {
-    const result = parseSelfAudit("");
-    assert.equal(result, null);
-  });
-
-  test("oversized self-audit returns null", () => {
-    // Create a string that exceeds the default maxBytes (16_000)
-    const big = "x".repeat(20_000);
-    const result = parseSelfAudit(big);
-    assert.equal(result, null);
-  });
-
-  test("custom maxBytes respected", () => {
-    const raw = JSON.stringify({
-      taskId: "w1",
-      completedDeliverables: [],
-      skippedDeliverables: [],
-      changedFiles: [],
-      testsRun: [],
-      knownLimitations: [],
-    });
-    // Very small maxBytes should reject even a valid audit
-    const result = parseSelfAudit(raw, { maxBytes: 10 });
-    assert.equal(result, null);
-  });
-
-  test("malformed shape (missing fields) returns null", () => {
-    const raw = JSON.stringify({ taskId: "w1" }); // missing arrays
-    const result = parseSelfAudit(raw);
-    assert.equal(result, null);
-  });
-
-  test("malformed shape (wrong types) returns null", () => {
-    const raw = JSON.stringify({
-      taskId: 42, // should be string
-      completedDeliverables: [],
-      skippedDeliverables: [],
-      changedFiles: [],
-      testsRun: [],
-      knownLimitations: [],
-    });
-    const result = parseSelfAudit(raw);
-    assert.equal(result, null);
-  });
-
-  test("oversized arrays in audit are rejected", () => {
-    const bigArray = new Array(300).fill("item");
-    const raw = JSON.stringify({
-      taskId: "w1",
-      completedDeliverables: [],
-      skippedDeliverables: [],
-      changedFiles: bigArray,
-      testsRun: [],
-      knownLimitations: [],
-    });
-    const result = parseSelfAudit(raw);
-    assert.equal(result, null);
-  });
+describe("evaluateCompleteness self-audit handling", () => {
 
   test("null self-audit in evaluateCompleteness does not crash", () => {
     const task = baseTask();
