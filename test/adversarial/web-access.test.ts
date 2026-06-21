@@ -29,8 +29,13 @@ test("[10E5-optin] enabled + explicit opt-in -> both web tools", () => {
   assert.deepEqual([...tools].sort(), [...WEB_TOOL_NAMES].sort());
 });
 
+test("[10E5-default] enabled + no opt-in -> [] (default-deny)", () => {
+  const tools = resolveWebTools({ webEnabled: true, profileWebOptIn: false });
+  assert.deepEqual(tools, []);
+});
+
 test("[10E5-strict] a truthy-but-not-true opt-in does NOT grant web access", () => {
-  for (const sneaky of ["yes", 1, {}, "true", [] as unknown]) {
+  for (const sneaky of ["yes", 1, {}, "true", [] as unknown, "1", "on"]) {
     const tools = resolveWebTools({ webEnabled: true, profileWebOptIn: sneaky as unknown as boolean });
     assert.deepEqual(tools, [], `opt-in ${JSON.stringify(sneaky)} must not grant access`);
   }
