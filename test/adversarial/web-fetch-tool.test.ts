@@ -90,7 +90,7 @@ test("[10E-fetchtool-4] output redacts secret-shaped content before returning to
 
   assert.equal(result.isError, undefined);
   assert.doesNotMatch(result.output, /sk-testsecret/);
-  assert.match(result.output, /\[REDACTED\]/);
+  assert.match(result.output, /\*\*\*/);
 });
 
 test("[10E-fetchtool-5] invalid arguments are rejected by the tool schema", () => {
