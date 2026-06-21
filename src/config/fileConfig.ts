@@ -143,6 +143,15 @@ const modelRouteConfigSchema = z.object({
   maxTurns: z.number().int().positive().optional(),
 });
 
+const policySchema = z.object({
+  enabled: z.boolean().optional(),
+  simpleRole: modelRoleSchema.optional(),
+  normalRole: modelRoleSchema.optional(),
+  hardRole: modelRoleSchema.optional(),
+  readOnlySimpleRole: modelRoleSchema.optional(),
+  safetyRole: modelRoleSchema.optional(),
+}).strict();
+
 const modelsSchema = z.object({
   roles: z.record(modelRoleSchema, modelRouteConfigSchema).optional(),
   fallbacks: z.record(modelRoleSchema, z.array(modelRoleSchema)).optional(),
@@ -293,9 +302,22 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
   const rawModels = (parsed as { models?: unknown }).models;
   let models: ModelsFileConfig | undefined;
   if (rawModels && typeof rawModels === "object") {
-    const result = modelsSchema.safeParse(rawModels);
+    // Parse policy block separately so a malformed policy doesn't discard roles/fallbacks.
+    const rawPolicy = (rawModels as Record<string, unknown>).policy;
+    let policy: ModelsFileConfig["policy"];
+    if (rawPolicy !== undefined) {
+      const policyResult = policySchema.safeParse(rawPolicy);
+      if (policyResult.success) {
+        policy = policyResult.data;
+      } else {
+        warn(`ignoring "models.policy": ${policyResult.error.issues.map((i) => i.message).join("; ")}`);
+      }
+    }
+    // Parse roles and fallbacks via the existing schema (policy field excluded).
+    const { policy: _omit, ...rest } = rawModels as Record<string, unknown>;
+    const result = modelsSchema.safeParse(rest);
     if (result.success) {
-      models = result.data as ModelsFileConfig;
+      models = { ...result.data, policy } as ModelsFileConfig;
       // Reject a cyclic fallback graph (would loop forever at resolution).
       if (hasFallbackCycle(models.fallbacks)) {
         warn(`ignoring "models.fallbacks": fallback cycle detected`);
