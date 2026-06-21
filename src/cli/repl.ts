@@ -40,6 +40,7 @@ import { wrapLine } from "../ui/textLayout.js";
 import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
+import { renderApprovalModal } from "../ui/approvalModal.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -485,6 +486,8 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let atBottom = true;
   let busy = false;
   let approvalResolve: ((k: string) => void) | null = null;
+  let pendingApproval: { description: string; diff?: string } | null = null;
+  let approvalScroll = 0;
   let restored = false;
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((r) => { resolveDone = r; });
@@ -577,11 +580,15 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const width = stdout.columns ?? 80;
     // Wrap logical lines to the terminal width so nothing is truncated off-screen
     // and a resize re-wraps cleanly. renderFrame's own (ANSI-aware) truncate no-ops.
-    const lines = buildLines(width);
     const composer = composerLines();
     const height = viewportH(composer.length);
+    // While an approval is pending, the content window IS the modal (diff overlay).
+    const lines = pendingApproval
+      ? renderApprovalModal({ description: pendingApproval.description, diff: pendingApproval.diff, width, height, scroll: approvalScroll, theme })
+      : buildLines(width);
     const maxTop = Math.max(0, lines.length - height);
-    if (atBottom) viewportTop = maxTop;
+    if (pendingApproval) viewportTop = 0;
+    else if (atBottom) viewportTop = maxTop;
     else viewportTop = Math.min(Math.max(0, viewportTop), maxTop);
     const status =
       theme.title("deepcoder") +
@@ -613,12 +620,14 @@ export async function runTuiRepl(session: Session): Promise<void> {
   };
   const approval = createTuiApproval({
     nextKey: () => new Promise<string>((res) => { approvalResolve = res; }),
-    onRender: (req) => {
-      transcript = applyEvent(transcript, { type: "notice", message: `Permission required: ${req.description}  [y] approve · [n] deny` });
-      redraw();
-    },
+    onRender: (req) => { pendingApproval = { description: req.description, diff: req.diff }; approvalScroll = 0; atBottom = true; redraw(); },
   });
-  const approve = (inv: ToolInvocation, _preview?: ToolPreview) => approval.approve({ description: inv.describe() });
+  const approve = async (inv: ToolInvocation, preview?: ToolPreview): Promise<boolean> => {
+    const ok = await approval.approve({ description: inv.describe(), diff: preview?.diff });
+    pendingApproval = null;
+    redraw();
+    return ok;
+  };
 
   function pushUser(line: string): void {
     transcript = { ...transcript, blocks: [...transcript.blocks, { id: `u${Date.now()}`, kind: "user", body: line, startedAt: new Date().toISOString() }] };
@@ -649,8 +658,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   function onKey(str: string | undefined, key: { name?: string; sequence?: string; ctrl?: boolean } | undefined): void {
     if (approvalResolve) {
+      // ↑/↓ (and PgUp/PgDn) scroll the diff without resolving; y/n/Esc resolve.
+      const a = key?.name ? keyToAction(key.name) : keyToAction(key?.sequence ?? str ?? "");
+      if (a === "history-up" || a === "scroll-up" || a === "half-up") { approvalScroll = Math.max(0, approvalScroll - 1); redraw(); return; }
+      if (a === "history-down" || a === "scroll-down" || a === "half-down") { approvalScroll += 1; redraw(); return; }
       const r = approvalResolve; approvalResolve = null;
-      r(key?.name === "return" ? "enter" : (str ?? key?.sequence ?? key?.name ?? ""));
+      r(key?.name === "escape" ? "escape" : (str ?? key?.sequence ?? key?.name ?? ""));
       return;
     }
     // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
