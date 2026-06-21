@@ -561,7 +561,12 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     workspaceRoot,
     mcpServers: file.mcpServers ?? {},
     checks: file.checks ?? {},
-    mcpExecuteEnabled: false, // Phase 4A: execute-mode MCP tools are denied
+    // Default-off / fail-closed: execute-mode MCP tools are denied unless
+    // explicitly opted in. Enabling only lifts the blanket deny — each call
+    // still flows through the permission policy (classifier + approval mode).
+    mcpExecuteEnabled:
+      process.env.DEEPCODER_MCP_EXECUTE === "1" ||
+      process.env.DEEPCODER_MCP_EXECUTE === "true",
     interactiveShell:
       process.env.DEEPCODER_INTERACTIVE_SHELL === "1" ||
       process.env.DEEPCODER_INTERACTIVE_SHELL === "true", // Phase 10G: default-off

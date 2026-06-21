@@ -28,7 +28,7 @@ called. Mostly small, high-value; several are latent correctness bugs.
 | **10H targeting not wired into solve/delegate** — `targeted-first` mode + config exist, never speed up retries | no `testTargetPlanner` in `solveRunner.ts`/`workerRunner.ts` | M |
 | ✅ **DONE** **10E quarantine** — `web_fetch` now hard-caps returned chars to `maxReturnedChars` (model can't exceed it) and frames the body as untrusted data; wired config → `createWebTools` → tool | `webFetch.ts` quarantine block; default-on/fail-closed | M |
 | **10D plugin contributions never composed** — plugins are inspect-only; their skills/checks/hooks do nothing | no `compose.ts`; not wired into `sessionFactory` | L |
-| **`mcpExecuteEnabled` hardwired `false`** — execute-mode MCP tools discovered but permanently denied | `config.ts:564` | M |
+| ✅ **DONE** **`mcpExecuteEnabled`** — now opt-in via `DEEPCODER_MCP_EXECUTE=1` (default-off); enabling only lifts the blanket deny, each call still gated by the policy/approval. Subagents stay hardwired-off | `config.ts` reads the env; policy unchanged | M |
 
 ---
 
