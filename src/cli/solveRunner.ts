@@ -6,6 +6,7 @@ import chalk from "chalk";
 import type { Session } from "./repl.js";
 import { runSolveLoop } from "../solve/solver.js";
 import type { SolveOptions, SolveResult } from "../solve/types.js";
+import type { UiEvent } from "../ui/events.js";
 import { Git } from "../workspace/git.js";
 import { redactSecrets } from "../workspace/redact.js";
 import { hookCtx, hooksFor } from "./repl.js";
@@ -35,6 +36,7 @@ export async function runSolveCommand(
   session: Session,
   opts: SolveOptions,
   runAgent: () => Promise<void>,
+  onUiEvent?: (e: UiEvent) => void,
 ): Promise<void> {
   const controller = new AbortController();
   const onSigint = () => controller.abort();
@@ -97,6 +99,7 @@ export async function runSolveCommand(
       runReproTurn,
       signal: controller.signal,
       snapshotPatch,
+      onUiEvent,
       onProgress: (e) => {
         if (e.type === "attempt-start") {
           stdout.write(chalk.cyan(`\nsolve attempt ${e.index}/${e.max}\n`));

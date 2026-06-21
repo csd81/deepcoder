@@ -19,6 +19,28 @@ import {
   runRunnable,
 } from "../../src/delegate/orchestrator.js";
 import type { DelegationPlan, WorkerRun, WorkerTask } from "../../src/delegate/types.js";
+import type { UiEvent } from "../../src/ui/events.js";
+
+test("runRunnable emits worker_start/worker_done per worker via onUiEvent", async () => {
+  const root = await makeRepo();
+  const plan = mkPlan([w("a"), w("b")]);
+  const runOne = async (_p: DelegationPlan, worker: WorkerTask): Promise<WorkerRun> =>
+    mkRun(worker.id, { checkPassed: true, changedFiles: ["x.ts"] });
+  const events: UiEvent[] = [];
+  await runRunnable(plan, { ...ctx(root, runOne), onUiEvent: (e: UiEvent) => events.push(e) });
+  await rm(root, { recursive: true, force: true });
+
+  const starts = events.filter((e) => e.type === "worker_start");
+  const dones = events.filter((e) => e.type === "worker_done");
+  assert.equal(starts.length, 2, "one worker_start per worker");
+  assert.equal(dones.length, 2, "one worker_done per worker");
+  const ids = starts.map((e) => (e as Extract<UiEvent, { type: "worker_start" }>).id).sort();
+  assert.deepEqual(ids, ["a", "b"]);
+  // start precedes done for worker "a"
+  const aStart = events.findIndex((e) => e.type === "worker_start" && e.id === "a");
+  const aDone = events.findIndex((e) => e.type === "worker_done" && e.id === "a");
+  assert.ok(aStart >= 0 && aDone > aStart, "worker_start precedes worker_done");
+});
 
 /* ------------------------------------------------------------------ */
 /*  Fixtures                                                           */

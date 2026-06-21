@@ -14,6 +14,8 @@ import {
 } from "./repro.js";
 import type { SolveOptions, SolveResult, SolveAttempt, ReproResult } from "./types.js";
 import type { CheckConfig } from "../config/fileConfig.js";
+import type { UiEvent } from "../ui/events.js";
+import { redactSecrets } from "../workspace/redact.js";
 
 export type SolveProgress =
   | { type: "attempt-start"; index: number; max: number }
@@ -28,6 +30,11 @@ export interface SolveDeps {
   onProgress?: (e: SolveProgress) => void;
   /** Live (already-redacted) check output sink. */
   onCheckData?: (chunk: string) => void;
+  /**
+   * Structured UI events for a TUI/SDK consumer (check_start/output/done). The
+   * solver core stays UI-agnostic — the caller maps these to its renderer/sink.
+   */
+  onUiEvent?: (e: UiEvent) => void;
   /**
    * Optional, git-agnostic snapshot of the patch the agent just produced, used
    * only for telemetry (detecting repeated/empty edits). Injected by the caller
@@ -155,12 +162,18 @@ export async function runSolveLoop(
       }
     }
 
+    deps.onUiEvent?.({ type: "check_start", name: loopName, command: redactSecrets(loopCheck.command) });
+    // Tee live check output to both the raw sink and the structured UI channel.
+    const onCheckData = (chunk: string): void => {
+      deps.onCheckData?.(chunk);
+      deps.onUiEvent?.({ type: "check_output", name: loopName, chunk });
+    };
     let run;
     try {
       run = await runCheck(loopName, loopCheck, {
         workspaceRoot: root,
         signal: deps.signal,
-        onData: deps.onCheckData,
+        onData: onCheckData,
         sandbox: session.config.sandbox,
         dependencyHealing: session.config.dependencyHealing,
       });
@@ -183,6 +196,7 @@ export async function runSolveLoop(
     }
 
     const passed = !run.timedOut && run.exitCode === 0;
+    deps.onUiEvent?.({ type: "check_done", name: loopName, exitCode: run.exitCode, passed });
     deps.onProgress?.({
       type: "check-result",
       index: i,

@@ -15,6 +15,7 @@ import * as path from "node:path";
 import { savePlan } from "./store.js";
 import { runWorker } from "./workerRunner.js";
 import type { DelegationPlan, WorkerRun, WorkerTask, WorkerLockSet, WorkerBatch, OrchestrationTrace } from "./types.js";
+import type { UiEvent } from "../ui/events.js";
 
 export interface FileConflict {
   a: string;
@@ -36,6 +37,8 @@ export interface RunRunnableOptions {
   parentEnv?: NodeJS.ProcessEnv;
   delegateDepth?: number;
   onData?(chunk: string): void;
+  /** Structured UI events (worker_start/done) for a TUI/SDK consumer. */
+  onUiEvent?(e: UiEvent): void;
   runOne?(plan: DelegationPlan, worker: WorkerTask): Promise<WorkerRun>;
 }
 
@@ -213,6 +216,7 @@ export async function runRunnable(
       continue;
     }
 
+    opts.onUiEvent?.({ type: "worker_start", id: workerId, label: worker.title });
     let run: WorkerRun | null = null;
     try {
       run = await runOne(plan, worker);
@@ -222,6 +226,11 @@ export async function runRunnable(
       worker.status = "failed";
       await savePlan(opts.realRoot, plan);
     }
+    opts.onUiEvent?.({
+      type: "worker_done",
+      id: workerId,
+      summary: `${run?.checkPassed ? "passed" : "failed"} · ${(run?.changedFiles ?? []).length} file(s) changed`,
+    });
 
     const passed = run?.checkPassed === true;
     const changedFiles = run?.changedFiles ?? [];
