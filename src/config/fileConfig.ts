@@ -20,7 +20,7 @@ export interface CheckConfig {
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
-import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig } from "./config.js";
+import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig, SemanticSearchConfig } from "./config.js";
 import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
 import type { ModelPricing } from "../providers/pricing.js";
@@ -45,6 +45,7 @@ export interface FileConfig {
   delegate?: Partial<DelegateConfig>;
   testTargeting?: Partial<TestTargetingConfig>;
   diagnostics?: Partial<DiagnosticsConfig>;
+  semanticSearch?: Partial<SemanticSearchConfig>;
   models?: ModelsFileConfig;
   telemetry?: TelemetryConfig;
 }
@@ -335,6 +336,21 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     };
   }
 
+  const rawSemanticSearch = (parsed as { semanticSearch?: unknown }).semanticSearch;
+  let semanticSearch: Partial<SemanticSearchConfig> | undefined;
+  if (rawSemanticSearch && typeof rawSemanticSearch === "object") {
+    const raw = rawSemanticSearch as Record<string, unknown>;
+    semanticSearch = {
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
+      provider: typeof raw.provider === "string" ? raw.provider : undefined,
+      model: typeof raw.model === "string" ? raw.model : undefined,
+      baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl : undefined,
+      dimensions: typeof raw.dimensions === "number" ? raw.dimensions : undefined,
+      hybridLexicalWeight: typeof raw.hybridLexicalWeight === "number" ? raw.hybridLexicalWeight : undefined,
+      topK: typeof raw.topK === "number" ? raw.topK : undefined,
+    };
+  }
+
   const rawTelemetry = (parsed as { telemetry?: unknown }).telemetry;
   let telemetry: TelemetryConfig | undefined;
   if (rawTelemetry && typeof rawTelemetry === "object") {
@@ -356,7 +372,7 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     };
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry };
+  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch };
 }
 
 function warn(msg: string): void {

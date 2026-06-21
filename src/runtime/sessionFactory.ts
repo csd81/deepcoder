@@ -215,6 +215,7 @@ export async function buildSession(
       recorder,
       instructionGraph: instr.graph,
       tokenUsage: { ...EMPTY_USAGE },
+      telemetry: saved.telemetry,
       modelRouter,
       providerPool,
     };
