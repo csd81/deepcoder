@@ -451,6 +451,44 @@ can `describe()` itself, `preview()` its effect, and `execute()`.
   `ask` mode when working in a sensitive directory.
 - Repo-map symbol extraction is regex-based (TS/JS), so it's approximate.
 
+## SDK / Embedding
+
+Deepcoder can be embedded programmatically in a Node.js application via the
+public SDK package exports.
+
+```ts
+import { DeepcoderClient, type TaskRunner } from "deepcoder";
+import { createStdioServer } from "deepcoder/server";
+
+// Provide a runner that connects to a provider or a test fake.
+const runner: TaskRunner = async function* (input) {
+  // yield SdkEvent values…
+};
+
+const client = new DeepcoderClient({ runner });
+
+// Stream events as they happen.
+for await (const event of client.streamTask({ prompt: "fix the bug" })) {
+  console.log(event.type);
+}
+
+// Or collect a structured result.
+const result = await client.runTask({ prompt: "fix the bug" });
+console.log(result.finalText);
+
+// The stdio server wraps a client for JSON-RPC over stdin/stdout.
+const server = createStdioServer({ client, write: (msg) => process.stdout.write(JSON.stringify(msg) + "\n") });
+```
+
+### Server
+
+The `deepcoder/server` entry provides HTTP policy helpers for building your own
+secure server frontend:
+
+```ts
+import { requireServerToken, resolveBindHost, checkAuth, withinBodyLimit, DEFAULT_MAX_BODY_BYTES, RunRegistry, formatSse, SseReplayBuffer } from "deepcoder/server";
+```
+
 ## Development & testing
 
 ```bash
