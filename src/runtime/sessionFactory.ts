@@ -5,8 +5,10 @@ import { writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { loadConfig } from "../config/config.js";
 import { discoverPlugins } from "../plugins/discovery.js";
-import { composePluginChecks } from "../plugins/compose.js";
+import { composePluginChecks, composePluginSkills } from "../plugins/compose.js";
 import type { PluginTrustStore } from "../plugins/trust.js";
+import type { Plugin } from "../plugins/types.js";
+import type { SkillSummary } from "../skills/types.js";
 import { createIsolatedWorkspace, WorkspaceIsolationError } from "../workspaceIsolation/index.js";
 import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
@@ -144,18 +146,21 @@ export async function finalizeIsolation(session: Session): Promise<void> {
  * leaves checks unchanged — composition must never break startup). Each
  * contributed check still runs through the classifier + runCheck gate.
  */
+async function loadPluginTrustStore(workspaceRoot: string): Promise<PluginTrustStore> {
+  try {
+    return JSON.parse(
+      await readFile(path.join(workspaceRoot, ".deepcoder", "plugin-trust.json"), "utf8"),
+    ) as PluginTrustStore;
+  } catch {
+    return { plugins: {} }; // no/unreadable store → nothing trusted → nothing composed
+  }
+}
+
 export async function composePluginContributions(config: Config): Promise<void> {
   try {
     const plugins = await discoverPlugins(config.workspaceRoot, os.homedir());
     if (plugins.length === 0) return;
-    let store: PluginTrustStore = { plugins: {} };
-    try {
-      store = JSON.parse(
-        await readFile(path.join(config.workspaceRoot, ".deepcoder", "plugin-trust.json"), "utf8"),
-      ) as PluginTrustStore;
-    } catch {
-      /* no/unreadable trust store → nothing is trusted → nothing composed */
-    }
+    const store = await loadPluginTrustStore(config.workspaceRoot);
     const composed = composePluginChecks(plugins, store, config.checks);
     config.checks = composed.checks;
     if (composed.added.length) {
@@ -163,6 +168,37 @@ export async function composePluginContributions(config: Config): Promise<void> 
     }
   } catch {
     /* plugin composition is best-effort and must never break session startup */
+  }
+}
+
+/**
+ * Phase 10D — fold trusted plugins' skills into a discovered-skills list. Best
+ * effort (returns the input unchanged on any error); fail-closed on trust and
+ * path-safety inside composePluginSkills.
+ */
+async function composePluginSkillsInto(
+  workspaceRoot: string,
+  discovered: SkillSummary[],
+): Promise<SkillSummary[]> {
+  try {
+    const plugins: Plugin[] = await discoverPlugins(workspaceRoot, os.homedir());
+    if (plugins.length === 0) return discovered;
+    const store = await loadPluginTrustStore(workspaceRoot);
+    const composed = await composePluginSkills(plugins, store, discovered, {
+      readFile: async (abs) => {
+        try {
+          return await readFile(abs, "utf8");
+        } catch {
+          return null;
+        }
+      },
+    });
+    if (composed.added.length) {
+      stdout.write(chalk.dim(`plugins: composed ${composed.added.length} skill(s): ${composed.added.join(", ")}\n`));
+    }
+    return composed.skills;
+  } catch {
+    return discovered;
   }
 }
 
@@ -199,7 +235,9 @@ export async function buildSession(
   let skillsCatalog = "";
   if (config.skills.enabled) {
     const disabled = new Set(config.skills.disabled);
-    const discovered = (await discoverSkills(config.workspaceRoot)).filter((s) => !disabled.has(s.name));
+    let discovered = (await discoverSkills(config.workspaceRoot)).filter((s) => !disabled.has(s.name));
+    // Phase 10D — trusted plugins may contribute additional skills (fail-closed).
+    discovered = (await composePluginSkillsInto(config.workspaceRoot, discovered)).filter((s) => !disabled.has(s.name));
     skillsCatalog = buildSkillCatalog(discovered, config.skills.catalogMaxChars);
   }
 
