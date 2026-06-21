@@ -21,6 +21,10 @@ export interface WebToolsOptions {
   /** Concrete search provider; defaults to the refusing `noneProvider`. */
   provider?: WebSearchProvider;
   fetchImpl?: typeof fetch;
+  /** Phase 10E — frame + hard-cap fetched content (default on / fail-closed). */
+  quarantine?: boolean;
+  /** Phase 10E — hard ceiling on returned chars under quarantine. */
+  maxReturnedChars?: number;
 }
 
 /** The web tools available for the given config; [] when web is disabled. */
@@ -30,6 +34,8 @@ export function createWebTools(opts: WebToolsOptions): Tool[] {
     createWebFetchTool({
       web: { allowedDomains: opts.allowedDomains, blockedDomains: opts.blockedDomains },
       fetchImpl: opts.fetchImpl,
+      quarantine: opts.quarantine,
+      maxReturnedChars: opts.maxReturnedChars,
     }),
     createWebSearchTool({ provider: opts.provider ?? noneProvider }),
   ];

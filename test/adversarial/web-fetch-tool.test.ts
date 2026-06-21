@@ -99,3 +99,51 @@ test("[10E-fetchtool-5] invalid arguments are rejected by the tool schema", () =
   assert.throws(() => tool.build({ url: "not a url" }), /invalid arguments/i);
   assert.throws(() => tool.build({ url: "https://example.com", maxChars: -1 }), /invalid arguments/i);
 });
+
+const ctx = () => ({
+  workspaceRoot: process.cwd(),
+  signal: new AbortController().signal,
+  readTracker: new Set<string>(),
+  todos: [],
+});
+
+test("[10E-quarantine-1] quarantine (default) frames the body as untrusted with a source citation", async () => {
+  const tool = createWebFetchTool({
+    web: allowExample,
+    fetchImpl: async () => makeResponse("the page body text"),
+  });
+  const result = await tool.build({ url: "https://example.com/docs" }).execute(ctx());
+  assert.equal(result.isError, undefined);
+  assert.match(result.output, /BEGIN UNTRUSTED WEB CONTENT/);
+  assert.match(result.output, /END UNTRUSTED WEB CONTENT/);
+  assert.match(result.output, /untrusted/i);
+  assert.match(result.output, /example\.com\/docs/);
+  assert.match(result.output, /the page body text/);
+});
+
+test("[10E-quarantine-2] quarantine hard-caps returned chars to maxReturnedChars even when the model asks for more", async () => {
+  const tool = createWebFetchTool({
+    web: allowExample,
+    quarantine: true,
+    maxReturnedChars: 10,
+    fetchImpl: async () => makeResponse("X".repeat(500)),
+  });
+  // The model requests far more than the configured ceiling.
+  const result = await tool.build({ url: "https://example.com/big", maxChars: 100000 }).execute(ctx());
+  assert.equal(result.isError, undefined);
+  const xCount = (result.output.match(/X/g) || []).length;
+  assert.ok(xCount <= 10, `expected <=10 body chars to reach history, got ${xCount}`);
+  assert.match(result.output, /quarantined/i);
+});
+
+test("[10E-quarantine-3] quarantine disabled returns raw bounded text with no untrusted framing", async () => {
+  const tool = createWebFetchTool({
+    web: allowExample,
+    quarantine: false,
+    fetchImpl: async () => makeResponse("plain body"),
+  });
+  const result = await tool.build({ url: "https://example.com/docs" }).execute(ctx());
+  assert.equal(result.isError, undefined);
+  assert.doesNotMatch(result.output, /UNTRUSTED WEB CONTENT/);
+  assert.match(result.output, /plain body/);
+});

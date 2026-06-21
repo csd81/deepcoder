@@ -26,7 +26,7 @@ called. Mostly small, high-value; several are latent correctness bugs.
 | ✅ **DONE** **9G `expectedSymbols`/`ExpectedSymbolRule`** — completeness gate now enforces `must_add_or_change` (per-file added-line scan) | consumed in `completeness.ts`; live via `validation.ts` Gate 4 | M |
 | ✅ **DONE** **10F router** — `edit` role wired into `runTask` (interactive/one-shot/solve) AND `delegate` role pins the worker subprocess model via `buildWorkerEnv` (orchestrator + TDD paths) | `repl.ts` resolves "edit"; `slashCommands` resolves "delegate" → `modelOverride`; byte-identical with no override | M |
 | **10H targeting not wired into solve/delegate** — `targeted-first` mode + config exist, never speed up retries | no `testTargetPlanner` in `solveRunner.ts`/`workerRunner.ts` | M |
-| **10E quarantine not implemented** — `web.quarantine` config exists; full page text still hits persisted history | `webFetch.ts` returns full content | M |
+| ✅ **DONE** **10E quarantine** — `web_fetch` now hard-caps returned chars to `maxReturnedChars` (model can't exceed it) and frames the body as untrusted data; wired config → `createWebTools` → tool | `webFetch.ts` quarantine block; default-on/fail-closed | M |
 | **10D plugin contributions never composed** — plugins are inspect-only; their skills/checks/hooks do nothing | no `compose.ts`; not wired into `sessionFactory` | L |
 | **`mcpExecuteEnabled` hardwired `false`** — execute-mode MCP tools discovered but permanently denied | `config.ts:564` | M |
 

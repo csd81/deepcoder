@@ -151,6 +151,8 @@ export async function buildSession(
     allowedDomains: config.web.allowedDomains,
     blockedDomains: config.web.blockedDomains,
     searchProvider: config.web.searchProvider,
+    quarantine: config.web.quarantine,
+    maxReturnedChars: config.web.maxReturnedChars,
   })) registry.register(t);
   // Phase 10G: register the persistent interactive-shell tool only when opted in
   // (default off / fail-closed); it still flows through the permission policy.
