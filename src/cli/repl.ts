@@ -316,11 +316,26 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
       write: (s) => stdout.write(s),
       renderAssistant: (text) => renderMarkdown(text, { width: stdout.columns ?? 80, theme: plainTheme }),
     });
+  // Phase 10F: route the main agent turn through the model router's "edit" role.
+  // With no role override this resolves to the current model on the current
+  // backend (byte-identical) and reuses session.provider; a same-backend model
+  // override just swaps the model name, and a different-backend route pulls a
+  // pooled provider. Routing never changes tool permissions.
+  let provider = session.provider;
+  let model = session.config.model;
+  if (session.modelRouter && session.providerPool) {
+    const route = session.modelRouter.resolve("edit");
+    model = route.model;
+    const sameBackend =
+      route.provider === session.config.provider &&
+      (route.baseUrl ?? "") === (session.config.baseUrl ?? "");
+    provider = sameBackend ? session.provider : session.providerPool.providerFor(route);
+  }
   const deps: AgentDeps = {
-    provider: session.provider,
+    provider,
     registry: session.registry,
     ctx,
-    model: session.config.model,
+    model,
     mode: session.mode,
     // Phase 7I — post-write diagnostics (no-op unless config.diagnostics.enabled).
     diagnostics: session.config.diagnostics,
