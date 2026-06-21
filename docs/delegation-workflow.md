@@ -144,6 +144,58 @@ rm -f .deepcoder/isolation-*.patch 2>/dev/null
 
 ---
 
+## Parallel delegation (separate branches)
+
+Multiple slices can be delegated **at the same time**. Each worker already self-isolates
+(its own `/tmp/deepcoder-ws-*/wt` + a uniquely-timestamped patch), so the workers never
+collide. To keep the *verify + land* steps from colliding too, give each slice its own git
+branch+worktree.
+
+**Hard rule: parallel slices must touch DISJOINT files.** Disjoint files merge cleanly;
+overlapping edits (shared `config.ts`/`registry.ts`/`sessionStore.ts`) will conflict on merge —
+keep those serial / in-house.
+
+### Simple parallel (same base, disjoint files)
+
+Seed each slice (sequential commits), then fire the workers concurrently with the launcher:
+
+```bash
+# 1. seed each slice's red test and commit (sequential — they're tiny)
+# 2. launch all workers at once:
+scripts/delegate.sh deepseek /tmp/task-A.txt /tmp/A.log
+scripts/delegate.sh deepseek /tmp/task-B.txt /tmp/B.log
+scripts/delegate.sh gemini   /tmp/task-C.txt /tmp/C.log
+# 3. as each finishes (its log shows `patch written`), verify-then-force that patch
+#    on a clean baseline (section 5) and commit. Patches are uniquely timestamped.
+```
+
+### Branch-per-slice (cleanest isolation for verify + land)
+
+Run each slice in its own branch worktree off the integration base, so verification and the
+landing commit are fully independent and merge at the end:
+
+```bash
+BASE=$(git rev-parse HEAD)            # integration base (or origin/master)
+for S in sliceA sliceB sliceC; do
+  git worktree add -b deleg/$S /tmp/deleg-$S "$BASE"
+  ln -sfn "$PWD/node_modules" /tmp/deleg-$S/node_modules   # gitignored; needed to run test:phase
+  # (in /tmp/deleg-$S) write + commit the red seed, then:
+  ( cd /tmp/deleg-$S && scripts/delegate.sh deepseek /tmp/task-$S.txt /tmp/$S.log )
+done
+
+# When a worker finishes, in its branch worktree:
+#   git -C /tmp/deleg-$S apply --whitespace=nowarn .deepcoder/isolation-*.patch
+#   verify (typecheck + red-on-baseline + test:phase)  →  git -C /tmp/deleg-$S commit
+# Then merge the disjoint branches back and clean up:
+git merge --no-ff deleg/sliceA deleg/sliceB deleg/sliceC   # clean if files are disjoint
+for S in sliceA sliceB sliceC; do git worktree remove /tmp/deleg-$S; git branch -D deleg/$S; done
+```
+
+Notes:
+- A fresh worktree has no `node_modules` (gitignored) — symlink it in to run `test:phase`.
+- Keep the concurrency sane (a few workers); each runs a full `test:phase`, which is CPU/IO heavy.
+- Verification is still mandatory **per slice** — parallelism changes scheduling, not the gate.
+
 ## Model choice
 
 - **`deepseek-v4-flash`** — bounded, well-seeded slices (cheap, one-passes most). Default.
