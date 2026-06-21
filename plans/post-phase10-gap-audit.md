@@ -25,10 +25,33 @@ called. Mostly small, high-value; several are latent correctness bugs.
 | ✅ **DONE** `9834947` **8E file-config `semanticSearch` silently dropped** — `.deepcoder/config.json` settings ignored | `FileConfig` has no `semanticSearch` field | S |
 | ✅ **DONE** **9G `expectedSymbols`/`ExpectedSymbolRule`** — completeness gate now enforces `must_add_or_change` (per-file added-line scan) | consumed in `completeness.ts`; live via `validation.ts` Gate 4 | M |
 | ✅ **DONE** **10F router** — `edit` role wired into `runTask` (interactive/one-shot/solve) AND `delegate` role pins the worker subprocess model via `buildWorkerEnv` (orchestrator + TDD paths) | `repl.ts` resolves "edit"; `slashCommands` resolves "delegate" → `modelOverride`; byte-identical with no override | M |
-| **10H targeting not wired into solve/delegate** — `targeted-first` mode + config exist, never speed up retries | no `testTargetPlanner` in `solveRunner.ts`/`workerRunner.ts` | M |
+| ⏸️ **DEFERRED (needs design sign-off)** **10H targeting into solve** — see design note below | `solver.ts` is intentionally git-agnostic; wiring belongs in `solveRunner.ts` | M |
 | ✅ **DONE** **10E quarantine** — `web_fetch` now hard-caps returned chars to `maxReturnedChars` (model can't exceed it) and frames the body as untrusted data; wired config → `createWebTools` → tool | `webFetch.ts` quarantine block; default-on/fail-closed | M |
 | ✅ **DONE** **10D plugin composition** — trusted plugins' **checks** (→ `config.checks`, namespaced) AND **skills** (→ skill catalog, path-gated) now compose, fail-closed on trust, wired into `buildSession`. (Manifest declares only skills+checks — no `hooks` field to compose.) | `plugins/compose.ts` (`composePluginChecks`/`composePluginSkills`) + `sessionFactory` | L |
 | ✅ **DONE** **`mcpExecuteEnabled`** — now opt-in via `DEEPCODER_MCP_EXECUTE=1` (default-off); enabling only lifts the blanket deny, each call still gated by the policy/approval. Subagents stay hardwired-off | `config.ts` reads the env; policy unchanged | M |
+
+### 10H design note (proposed — awaiting sign-off)
+
+`solver.ts` is intentionally git/SWE-agnostic: the patch snapshot and lifecycle
+hooks are all **injected** by `solveRunner` so the core has no git/targeting
+logic. Targeting must follow that pattern, NOT be inlined into the loop.
+
+Proposed safe slice (opt-in, default `mode:"off"` → byte-identical):
+- Add an injected `preCheck?: () => Promise<{ fastFail: boolean; summary?: string } | null>`
+  to `SolveDeps`. `solveRunner` implements it: gather changed files (git) + optional
+  repo index → `buildTestTargetPlan` → `runTargetedChecks`.
+- **Invariant (preserves the gate):** a targeted *failure* lets the attempt fast-fail
+  (skip the full run, feed the summary into the retry) — but a targeted *pass* or
+  insufficient/▸fallback plan ALWAYS falls through to the authoritative `loopCheck`,
+  which remains the **sole** success oracle. A solve is never declared solved on
+  targeted results alone. `targeted-only` is treated as `targeted-first` here (the
+  oracle is not skippable in solve).
+- TDD: fast-fail path skips the full check + retries; targeted-pass still runs the
+  full check; mode-off injects no preCheck (identical to today).
+
+Done so far this session (all TDD + `test:phase` green): 9G expectedSymbols,
+10F edit-role + delegate-role routing, 10E web quarantine, mcpExecuteEnabled
+opt-in, 10D plugin checks + skills composition.
 
 ---
 
