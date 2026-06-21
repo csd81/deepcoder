@@ -42,9 +42,17 @@ solved (proven by an adversarial test where a fast-fail skips an oracle that
 *would* have passed). Active only in `targeted-first`/`targeted-only` (default
 `off` → no `preCheck` injected → byte-identical).
 
+**Index-backed upgrade (follow-up, done):** `solveRunner` now loads the repo
+index (`loadIndex`) and passes it to `buildTestTargetPlan`, so a changed
+*source* file targets its dependent/naming-matched tests (the common case) — not
+just changed test files. Missing index → degrades to today's behavior. (This
+also surfaced + fixed a `Git.changedFiles()` bug: a whole-output `.trim()` ate
+the leading status space of an unstaged-modified first line.)
+
 **Tier-1 is now fully clear.** Done this session (all TDD + `test:phase` green):
 9G expectedSymbols, 10F edit-role + delegate-role routing, 10E web quarantine,
-mcpExecuteEnabled opt-in, 10D plugin checks + skills composition, 10H targeting.
+mcpExecuteEnabled opt-in, 10D plugin checks + skills composition, 10H targeting
+(+ repo-index-backed targeting).
 
 ---
 

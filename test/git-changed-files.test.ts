@@ -48,6 +48,21 @@ test("changedFiles reports modified, staged, and untracked paths", async () => {
   }
 });
 
+test("changedFiles parses a lone unstaged modification (leading-space porcelain line)", async () => {
+  // Regression: a leading trim of the whole output would eat the " " status
+  // column of the first line (" M aaa.txt") and corrupt the path.
+  const root = await initRepo();
+  try {
+    await writeFile(path.join(root, "aaa.txt"), "v0\n");
+    await exec("git", ["add", "-A"], { cwd: root });
+    await exec("git", ["commit", "-qm", "init"], { cwd: root });
+    await writeFile(path.join(root, "aaa.txt"), "v1\n"); // unstaged modification, sorts first
+    assert.deepEqual(await new Git(root).changedFiles(), ["aaa.txt"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("changedFiles reports the destination path of a rename", async () => {
   const root = await initRepo();
   try {

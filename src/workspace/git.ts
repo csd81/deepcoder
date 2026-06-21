@@ -42,10 +42,14 @@ export class Git {
    * path. Returns [] on a clean tree.
    */
   async changedFiles(): Promise<string[]> {
-    const out = (await this.run(["status", "--porcelain"])).trim();
-    if (!out) return [];
+    // Do NOT trim the whole output: porcelain lines for an unstaged change start
+    // with a space (" M path"), and a leading trim would eat the first line's
+    // status column and corrupt its path. Split first, parse each line from the
+    // fixed 3-char (XY + space) prefix.
+    const out = await this.run(["status", "--porcelain"]);
     const files: string[] = [];
     for (const line of out.split("\n")) {
+      if (line.length < 4) continue; // blank line or too short to carry a path
       let p = line.slice(3).trim(); // drop the 2-char status code + separator
       const arrow = p.indexOf(" -> ");
       if (arrow >= 0) p = p.slice(arrow + 4).trim(); // rename: take the destination

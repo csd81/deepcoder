@@ -11,6 +11,7 @@ import { Git } from "../workspace/git.js";
 import { redactSecrets } from "../workspace/redact.js";
 import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
 import { runTargetedChecks } from "../checks/targetedCheck.js";
+import { loadIndex } from "../index/store.js";
 import { loadCheckRun } from "../session/checkRuns.js";
 import { summarizeCheckFailure } from "../solve/failureSummary.js";
 import { hookCtx, hooksFor } from "./repl.js";
@@ -81,6 +82,10 @@ export async function runSolveCommand(
   const targetingRoot = session.executionRoot ?? session.config.workspaceRoot;
   const targetingActive = tt.enabled && (tt.mode === "targeted-first" || tt.mode === "targeted-only");
   const targetingGit = targetingActive ? new Git(targetingRoot) : null;
+  // Load the repo index once (best-effort): with it, the planner can target a
+  // changed SOURCE file's dependent/naming-matched tests — the common case.
+  // Without it, targeting degrades to changed-test-file detection only.
+  const targetingIndex = targetingActive ? (await loadIndex(targetingRoot))?.index : undefined;
   const preCheck = targetingActive
     ? async (): Promise<{ fastFail: boolean; summary?: string } | null> => {
         try {
@@ -89,6 +94,7 @@ export async function runSolveCommand(
           if (changedFiles.length === 0) return null;
           const plan = buildTestTargetPlan({
             changedFiles,
+            index: targetingIndex,
             maxTargets: tt.maxTargets,
             pathRules: tt.pathRules,
             languageCommands: tt.languageCommands,
