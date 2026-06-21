@@ -1,8 +1,12 @@
 import chalk from "chalk";
+import os from "node:os";
 import { stdin, stdout } from "node:process";
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import { loadConfig } from "../config/config.js";
+import { discoverPlugins } from "../plugins/discovery.js";
+import { composePluginChecks } from "../plugins/compose.js";
+import type { PluginTrustStore } from "../plugins/trust.js";
 import { createIsolatedWorkspace, WorkspaceIsolationError } from "../workspaceIsolation/index.js";
 import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
@@ -133,10 +137,40 @@ export async function finalizeIsolation(session: Session): Promise<void> {
   }
 }
 
+/**
+ * Phase 10D — compose TRUSTED plugins' named checks into config.checks so
+ * `/check <plugin:name>` and `--check` can use them. Fail-closed on trust
+ * (untrusted plugins contribute nothing) and best-effort on I/O (any error
+ * leaves checks unchanged — composition must never break startup). Each
+ * contributed check still runs through the classifier + runCheck gate.
+ */
+export async function composePluginContributions(config: Config): Promise<void> {
+  try {
+    const plugins = await discoverPlugins(config.workspaceRoot, os.homedir());
+    if (plugins.length === 0) return;
+    let store: PluginTrustStore = { plugins: {} };
+    try {
+      store = JSON.parse(
+        await readFile(path.join(config.workspaceRoot, ".deepcoder", "plugin-trust.json"), "utf8"),
+      ) as PluginTrustStore;
+    } catch {
+      /* no/unreadable trust store → nothing is trusted → nothing composed */
+    }
+    const composed = composePluginChecks(plugins, store, config.checks);
+    config.checks = composed.checks;
+    if (composed.added.length) {
+      stdout.write(chalk.dim(`plugins: composed ${composed.added.length} check(s): ${composed.added.join(", ")}\n`));
+    }
+  } catch {
+    /* plugin composition is best-effort and must never break session startup */
+  }
+}
+
 export async function buildSession(
   config: ReturnType<typeof loadConfig>,
   resume?: string | boolean,
 ): Promise<Session> {
+  await composePluginContributions(config);
   const provider = createProvider(config);
   const modelRouter = new ModelRouter(config, config.models);
   const providerPool = new ProviderPool(config);
