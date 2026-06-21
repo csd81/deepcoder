@@ -19,10 +19,10 @@ called. Mostly small, high-value; several are latent correctness bugs.
 
 | Gap | Evidence | Effort |
 |---|---|---|
-| **7E `setupCommands`** — config field parsed, never executed | `types.ts`/`fileConfig.ts` define it; zero execution sites | S |
-| **10C telemetry not restored on resume** — persisted but never read back | `sessionStore.ts:95` saves; `sessionFactory.ts` never reads `snapshot.telemetry` | S |
-| **8E `isStoreStale` never called** — switching embedding model silently queries stale vectors | defined `store.ts:152`, no callers | S |
-| **8E file-config `semanticSearch` silently dropped** — `.deepcoder/config.json` settings ignored | `FileConfig` has no `semanticSearch` field | S |
+| ✅ **DONE** `4b655e1` **7E `setupCommands`** — config field parsed, never executed | `types.ts`/`fileConfig.ts` define it; zero execution sites | S |
+| ✅ **DONE** `9834947` **10C telemetry not restored on resume** — persisted but never read back | `sessionStore.ts:95` saves; `sessionFactory.ts` never reads `snapshot.telemetry` | S |
+| ✅ **DONE** `f04fc0a` **8E `isStoreStale` never called** — switching embedding model silently queries stale vectors | defined `store.ts:152`, no callers | S |
+| ✅ **DONE** `9834947` **8E file-config `semanticSearch` silently dropped** — `.deepcoder/config.json` settings ignored | `FileConfig` has no `semanticSearch` field | S |
 | **9G `expectedSymbols`/`ExpectedSymbolRule`** — type exists, completeness gate never consumes it | `types.ts:41,307`; switch covers only file/test/diff/json_field | M |
 | **10F router not wired into edit/delegate/solve loops** — `edit`/`delegate` roles defined but inert | loops use `session.provider` directly | M |
 | **10H targeting not wired into solve/delegate** — `targeted-first` mode + config exist, never speed up retries | no `testTargetPlanner` in `solveRunner.ts`/`workerRunner.ts` | M |
