@@ -37,6 +37,7 @@ import { createTranscript, applyEvent, moveSelection, clearSelection, type Trans
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
+import { renderMarkdown } from "../ui/markdown.js";
 import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
@@ -515,9 +516,10 @@ export async function runTuiRepl(session: Session): Promise<void> {
     resolveColorEnabled({ env: process.env, isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) }),
   );
 
-  /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping). */
-  function flattenStyled(): { text: string; style: (s: string) => string }[] {
-    const out: { text: string; style: (s: string) => string }[] = [];
+  /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping).
+   *  `final` lines are already styled + wrapped to `width` (markdown) and must not be re-wrapped. */
+  function flattenStyled(width: number): { text: string; style: (s: string) => string; final?: boolean }[] {
+    const out: { text: string; style: (s: string) => string; final?: boolean }[] = [];
     const sel = transcript.selectedBlockId;
     for (const b of transcript.blocks) {
       const collapsible = b.kind === "tool" || b.kind === "check" || b.kind === "worker";
@@ -539,6 +541,11 @@ export async function runTuiRepl(session: Session): Promise<void> {
         if (expanded && b.body) {
           for (const ln of b.body.split("\n")) out.push({ text: "  " + ln, style: theme.dim });
         }
+      } else if (b.kind === "assistant" && b.finishedAt !== undefined && b.body) {
+        // A completed assistant message is rendered as markdown (headings, code,
+        // lists, emphasis). Streaming/unfinished assistant text stays raw below.
+        out.push({ text: theme.dim("assistant> "), style: (s) => s, final: true });
+        for (const ln of renderMarkdown(b.body, { width, theme })) out.push({ text: ln, style: (s) => s, final: true });
       } else {
         const prefix =
           b.kind === "assistant" ? "assistant> "
@@ -559,8 +566,9 @@ export async function runTuiRepl(session: Session): Promise<void> {
   /** Wrap each logical line to width, then color each wrapped row (color is zero-width). */
   function buildLines(width: number): string[] {
     const lines: string[] = [];
-    for (const sl of flattenStyled()) {
-      for (const chunk of wrapLine(sl.text, width)) lines.push(sl.style(chunk));
+    for (const sl of flattenStyled(width)) {
+      if (sl.final) lines.push(sl.text); // already markdown-rendered + wrapped
+      else for (const chunk of wrapLine(sl.text, width)) lines.push(sl.style(chunk));
     }
     return lines;
   }
