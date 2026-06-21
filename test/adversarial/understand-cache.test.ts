@@ -45,12 +45,20 @@ test("[8f-cache-key] computeRepoKey is deterministic and order-independent", () 
   assert.notEqual(a, c, "different mtimes -> different key");
 });
 
+test("[8f-cache-missing] a missing cache file reads as null", async () => {
+  const dir = await tmp();
+  const got = await readUnderstandCache(dir, "k1");
+  assert.equal(got, null);
+});
+
 test("[8f-cache-corrupt] a corrupt cache file reads as null (fail safe, no throw)", async () => {
   const dir = await tmp();
   await mkdir(path.join(dir, ".deepcoder"), { recursive: true }).catch(() => {});
   await writeUnderstandCache(dir, { key: "k1", createdAt: "x", data: 1 });
   // corrupt whatever file the cache wrote by overwriting a likely path; the read
   // must still not throw. (The impl decides the path; this asserts resilience.)
+  await writeFile(path.join(dir, ".deepcoder", "understand-cache.json"), "{ bad json");
   const got = await readUnderstandCache(dir, "k1").catch(() => "THREW");
   assert.notEqual(got, "THREW", "read must never throw");
+  assert.equal(got, null, "corrupt file returns null");
 });
