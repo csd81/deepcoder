@@ -12,6 +12,7 @@ import { summarizeRepo } from "../context/understand.js";
 import { computeRepoKey, readUnderstandCache, writeUnderstandCache } from "../context/understandCache.js";
 import os from "node:os";
 import { discoverPlugins } from "../plugins/discovery.js";
+import { summarizeWebTrace } from "../web/trace.js";
 import { pluginTrustKey, resolvePluginTrust, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import type { HookEvent } from "../hooks/types.js";
@@ -170,6 +171,15 @@ export async function handleSlashCommand(
     case "plugins":
       await runPlugins(session, arg);
       return { consumed: true };
+
+    case "web": {
+      const w = config.web;
+      console.log(chalk.bold("\nWeb access ") + (w.enabled ? chalk.green("enabled") : chalk.dim("disabled")));
+      console.log(chalk.dim(`  provider: ${w.searchProvider} · allowed: ${w.allowedDomains.join(", ") || "(any non-blocked)"} · blocked: ${w.blockedDomains.length}`));
+      console.log(chalk.dim("  trace:"));
+      console.log(summarizeWebTrace(session.webTrace ?? []).split("\n").map((l) => "    " + l).join("\n"));
+      return { consumed: true };
+    }
 
     case "mode":
       if (MODES.includes(arg as ApprovalMode)) {

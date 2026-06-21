@@ -41,6 +41,7 @@ import { renderMarkdown } from "../ui/markdown.js";
 import { buildStatusSnapshot } from "../telemetry/statusSnapshot.js";
 import { renderStatusline } from "../telemetry/statusline.js";
 import { estimateCost } from "../providers/pricing.js";
+import { appendWebTrace, type WebTraceRecord } from "../web/trace.js";
 import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
@@ -75,6 +76,8 @@ export interface Session {
   /** Explorer brief records — quarantined metadata, NEVER sent to the model. */
   briefs: BriefRunRecord[];
   activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
+  /** Phase 10E — auditable web trace (search/fetch citations). Absent until first web call. */
+  webTrace?: WebTraceRecord[];
   trustedWorkspaceSkills: Set<string>;
   /**
    * Phase 8A instruction graph (only when config.context.instructionGraph). The
@@ -265,6 +268,7 @@ function snapshot(session: Session): SessionSnapshot {
     reviews: session.reviews,
     briefs: session.briefs,
     activatedSkills: session.activatedSkills,
+    webTrace: session.webTrace,
   };
 }
 
@@ -319,7 +323,19 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
       if (text.trim()) stdout.write("\n" + chalk.bold("assistant> ") + text.trim() + "\n");
     },
     onToolCall: (name, describe) => renderer.emit({ type: "tool_start", name, description: describe }),
-    onToolResult: (_name, result: ToolResult) => renderer.emit({ type: "tool_result", name: _name, output: result.output, isError: !!result.isError }),
+    onToolResult: (_name, result: ToolResult) => {
+      renderer.emit({ type: "tool_result", name: _name, output: result.output, isError: !!result.isError });
+      // Phase 10E: record web tool calls into the auditable, bounded, redacted trace.
+      if (_name === "web_fetch" || _name === "web_search") {
+        session.webTrace = appendWebTrace(session.webTrace ?? [], {
+          id: `wt${(session.webTrace?.length ?? 0) + 1}`,
+          kind: _name === "web_fetch" ? "fetch" : "search",
+          fetchedAt: new Date().toISOString(),
+          blocked: !!result.isError,
+          reason: result.isError ? result.output.slice(0, 200) : undefined,
+        });
+      }
+    },
     onNotice: (m) => renderer.emit({ type: "notice", message: m }),
   };
 

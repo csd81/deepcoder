@@ -29,6 +29,8 @@ export interface PersistedSession {
   activatedSkills?: import("../skills/types.js").ActivatedSkillRecord[];
   /** Phase 10C — session usage/cost telemetry. Absent in pre-10C sessions (loads as undefined). */
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
+  /** Phase 10E — auditable web trace. Absent in pre-10E sessions (loads as undefined). */
+  webTrace?: import("../web/trace.js").WebTraceRecord[];
   createdAt: string;
   updatedAt: string;
 }
@@ -48,6 +50,7 @@ export interface SessionSnapshot {
   briefs: BriefRunRecord[];
   activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
+  webTrace?: import("../web/trace.js").WebTraceRecord[];
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -90,6 +93,7 @@ export class SessionStore {
       briefs: snapshot.briefs ?? [],
       activatedSkills: snapshot.activatedSkills ?? [],
       telemetry: snapshot.telemetry,
+      webTrace: snapshot.webTrace,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };
