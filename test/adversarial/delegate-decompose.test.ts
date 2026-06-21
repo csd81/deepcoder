@@ -3,7 +3,7 @@
  * core safety contract (validateDecomposition rejects a dependsOn cycle) so a
  * delegated worker MUST implement the pure decomposer (no green-check no-op),
  * then EXTENDS this file with the remaining validation/generation cases from
- * plans/phase9o-model-driven-task-decomposer-plan.md.
+ * plans/delegation/phase9o-model-driven-task-decomposer-plan.md.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

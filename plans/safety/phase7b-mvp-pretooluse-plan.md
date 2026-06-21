@@ -1,6 +1,6 @@
 # Phase 7B — MVP slice: PreToolUse lifecycle hooks
 
-De-ambiguated, minimal first slice of `plans/phase7b-lifecycle-hooks-plan.md`, folding in the
+De-ambiguated, minimal first slice of `plans/safety/phase7b-lifecycle-hooks-plan.md`, folding in the
 review findings. **Ship PreToolUse only.** Everything else (Post*/Session*/UserPromptSubmit,
 context injection, runtime enable/disable, project-trust mechanism) is deferred.
 

@@ -153,7 +153,7 @@ Required tests:
 5. Add terminal renderer reuse or profile-aware labels.
 6. Add persistence through the quarantined path.
 7. Add adversarial tests.
-8. Update README, ROADMAP, and `plans/phase4d-subagents-design.md` status.
+8. Update README, ROADMAP, and `plans/subagents/phase4d-subagents-design.md` status.
 9. Run `npm run typecheck` and `npm run test:phase`.
 
 ## Acceptance Criteria

@@ -7,6 +7,55 @@ export interface PatchStat {
   kind: "added" | "modified" | "deleted" | "renamed" | "unknown";
 }
 
+export interface DiffFileSection {
+  path: string;
+  kind: PatchStat["kind"];
+  /** Every original diff line for this file's section, verbatim (lossless). */
+  lines: string[];
+}
+
+/**
+ * Split a unified patch into per-file sections for an interactive viewer.
+ * Mirrors computePatchStat's boundary recognition so the file list and the diff
+ * body agree file-for-file. A section opens on `diff --git a/<a> b/<b>` (path =
+ * the b-side; renamed when a !== b); for headerless patches it opens on the
+ * first `--- a/<p>` / `+++ b/<p>`. Every line is preserved inside its section.
+ */
+export function splitPatchByFile(patchText: string): DiffFileSection[] {
+  if (!patchText.trim()) return [];
+  const lines = patchText.split("\n");
+  const sections: DiffFileSection[] = [];
+  let current: DiffFileSection | null = null;
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      const m = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+      const aPath = m?.[1];
+      const bPath = m?.[2] ?? aPath ?? "unknown";
+      current = { path: bPath, kind: aPath && bPath && aPath !== bPath ? "renamed" : "modified", lines: [line] };
+      sections.push(current);
+      continue;
+    }
+    if (!current) {
+      // Headerless patch (no `diff --git`): open a section on the first ---/+++.
+      const am = line.match(/^--- a\/(.+)$/);
+      const bm = line.match(/^\+\+\+ b\/(.+)$/);
+      if (am || bm) {
+        current = { path: (bm?.[1] ?? am?.[1])!, kind: "modified", lines: [line] };
+        sections.push(current);
+        continue;
+      }
+      // Pre-first-header preamble — skip (nothing to attribute it to).
+      continue;
+    }
+    current.lines.push(line);
+    if (line.startsWith("new file mode ") || line.startsWith("--- /dev/null")) current.kind = "added";
+    else if (line.startsWith("deleted file mode ") || line.startsWith("+++ /dev/null")) current.kind = "deleted";
+  }
+
+  return sections;
+}
+
 export function computePatchStat(patchText: string): PatchStat[] {
   const stats: Record<string, PatchStat> = {};
   

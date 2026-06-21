@@ -1,7 +1,7 @@
 # Post-Phase-10 Gap Audit — what was skipped / deferred and still missing
 
 _Audited 2026-06-21, against `master` after the dead-code wiring pass. Produced by reading all
-`plans/phase*.md` files and verifying each deferred/skipped item against the actual code (grep/read
+scoped `plans/**/*.md` files and verifying each deferred/skipped item against the actual code (grep/read
 `src/`, `evals/`). The repo has shipped the overwhelming majority of every plan; the items below are
 the confirmed leftovers._
 
