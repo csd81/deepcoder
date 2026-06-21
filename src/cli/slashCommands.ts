@@ -6,6 +6,10 @@ import { Git } from "../workspace/git.js";
 import { resolveReadPathInWorkspace, displayPath, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { summarizeRepo } from "../context/understand.js";
+import { computeRepoKey, readUnderstandCache, writeUnderstandCache } from "../context/understandCache.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import type { HookEvent } from "../hooks/types.js";
 import { estimateMessages } from "../context/tokenBudget.js";
@@ -154,6 +158,10 @@ export async function handleSlashCommand(
       session.messages.length = 1; // keep the system prompt
       session.todos.length = 0;
       console.log(chalk.dim("Conversation and todos cleared."));
+      return { consumed: true };
+
+    case "understand":
+      await runUnderstand(session);
       return { consumed: true };
 
     case "mode":
@@ -2127,6 +2135,48 @@ function printInstructionGraph(session: Session, sub: string): void {
  * text is injected as a normal user message — it becomes part of the transcript
  * (and is preserved verbatim on resume), without mutating the system prompt.
  */
+const execFileP = promisify(execFile);
+
+/**
+ * Phase 8F — `/understand`: enumerate tracked files, key the repo by (path,mtime),
+ * reuse a cached structured summary when fresh, else compute + persist one. Wires
+ * the understand producer + cache.
+ */
+async function runUnderstand(session: Session): Promise<void> {
+  const root = session.config.workspaceRoot;
+  let files: { path: string; mtimeMs: number }[] = [];
+  try {
+    const { stdout } = await execFileP("git", ["ls-files"], { cwd: root, maxBuffer: 64 * 1024 * 1024 });
+    const paths = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+    files = await Promise.all(
+      paths.map(async (p) => {
+        let mtimeMs = 0;
+        try { mtimeMs = (await fs.stat(path.join(root, p))).mtimeMs; } catch { /* ignored/deleted */ }
+        return { path: p, mtimeMs };
+      }),
+    );
+  } catch {
+    console.log(chalk.dim("/understand: not a git repo (or git unavailable) — cannot enumerate files."));
+    return;
+  }
+  const key = computeRepoKey(files);
+  let entry = await readUnderstandCache(root, key);
+  const cached = entry !== null;
+  if (!entry) {
+    entry = { key, createdAt: new Date().toISOString(), data: summarizeRepo(files) };
+    await writeUnderstandCache(root, entry);
+  }
+  const u = entry.data as ReturnType<typeof summarizeRepo>;
+  const exts = Object.entries(u.byExtension)
+    .sort((a, b) => b[1] - a[1]).slice(0, 8)
+    .map(([e, n]) => `${e || "(none)"}:${n}`).join("  ");
+  console.log(chalk.bold(`\nRepo understanding ${chalk.dim(cached ? "(cached)" : "(fresh)")}`));
+  console.log(`  files:     ${u.fileCount}`);
+  console.log(`  top dirs:  ${u.topDirs.join(", ") || "—"}`);
+  console.log(`  key files: ${u.keyFiles.join(", ") || "—"}`);
+  console.log(`  by ext:    ${exts}`);
+}
+
 async function activateSkillSlash(session: Session, name: string, args: string): Promise<void> {
   const res = await activateSkill(
     { name, arguments: args, modelRequested: false },
