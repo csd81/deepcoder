@@ -33,7 +33,7 @@ import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import type { UiEvent } from "../ui/events.js";
-import { createTranscript, applyEvent, type TranscriptState } from "../ui/transcript.js";
+import { createTranscript, applyEvent, moveSelection, clearSelection, type TranscriptState } from "../ui/transcript.js";
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
@@ -515,22 +515,40 @@ export async function runTuiRepl(session: Session): Promise<void> {
   /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping). */
   function flattenStyled(): { text: string; style: (s: string) => string }[] {
     const out: { text: string; style: (s: string) => string }[] = [];
+    const sel = transcript.selectedBlockId;
     for (const b of transcript.blocks) {
-      const prefix =
-        b.kind === "assistant" ? "assistant> "
-        : b.kind === "user" ? "> "
-        : b.kind === "tool" ? `tool ${b.title ?? ""}${b.body ? ": " : ""}`
-        : b.kind === "check" ? `check ${b.title ?? ""}${b.body ? ": " : ""}`
-        : b.kind === "notice" ? "! "
-        : "";
-      const style: (s: string) => string =
-        b.kind === "user" ? theme.title
-        : b.kind === "tool" ? theme.dim
-        : b.kind === "check" ? (b.isError ? theme.error : theme.success)
-        : b.kind === "notice" ? (b.isError ? theme.warning : theme.dim)
-        : b.isError ? theme.error
-        : (s) => s;
-      for (const ln of (prefix + (b.body ?? "")).split("\n")) out.push({ text: ln, style });
+      const collapsible = b.kind === "tool" || b.kind === "check" || b.kind === "worker";
+      if (collapsible) {
+        // Collapsible blocks show a one-line header by default; the focused block
+        // (Tab cursor) — or one explicitly expanded — also shows its body ("logs").
+        const focused = b.id === sel;
+        const expanded = focused || b.expanded === true;
+        const mark = expanded ? "▾" : "▸";
+        const statusMark =
+          b.kind === "check" && b.finishedAt ? (b.isError ? " ✗" : " ✓")
+          : b.finishedAt ? ""
+          : " …";
+        const base: (s: string) => string =
+          b.kind === "check" ? (b.isError ? theme.error : theme.success)
+          : b.kind === "worker" ? (b.isError ? theme.error : (s) => s)
+          : theme.dim;
+        out.push({ text: `${mark} ${b.kind} ${b.title ?? ""}${statusMark}`, style: focused ? theme.selected : base });
+        if (expanded && b.body) {
+          for (const ln of b.body.split("\n")) out.push({ text: "  " + ln, style: theme.dim });
+        }
+      } else {
+        const prefix =
+          b.kind === "assistant" ? "assistant> "
+          : b.kind === "user" ? "> "
+          : b.kind === "notice" ? "! "
+          : "";
+        const style: (s: string) => string =
+          b.kind === "user" ? theme.title
+          : b.kind === "notice" ? (b.isError ? theme.warning : theme.dim)
+          : b.isError ? theme.error
+          : (s) => s;
+        for (const ln of (prefix + (b.body ?? "")).split("\n")) out.push({ text: ln, style });
+      }
     }
     return out;
   }
@@ -640,6 +658,16 @@ export async function runTuiRepl(session: Session): Promise<void> {
       if (!busy) { editor = reduceEditor(editor, { type: "newline" }).state; redraw(); }
       return;
     }
+    // Tab / Shift+Tab step the focus cursor across collapsible blocks (expanding
+    // the focused one to show its full output). Follow to bottom so it's visible.
+    if (key?.name === "tab") {
+      if (!busy) {
+        transcript = moveSelection(transcript, (key as { shift?: boolean }).shift ? -1 : 1);
+        atBottom = true;
+        redraw();
+      }
+      return;
+    }
     const named = key?.name ? keyToAction(key.name) : "none";
     const action = named !== "none" ? named : keyToAction(key?.sequence ?? str ?? "");
     const inputCount = composerLines().length;
@@ -660,7 +688,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       case "bottom": atBottom = true; redraw(); return;
       case "history-up": if (!busy) { editor = reduceEditor(editor, { type: "history-prev" }).state; redraw(); } return;
       case "history-down": if (!busy) { editor = reduceEditor(editor, { type: "history-next" }).state; redraw(); } return;
-      case "escape": atBottom = true; redraw(); return;
+      case "escape": transcript = clearSelection(transcript); atBottom = true; redraw(); return;
       case "submit": {
         if (busy) return;
         const { state, submitted } = reduceEditor(editor, { type: "submit" });
@@ -686,7 +714,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   process.on("exit", onProcExit);
   process.on("SIGTERM", onProcExit);
   stdout.on("resize", onResize);
-  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — PgUp/PgDn scroll · ↑/↓ history · Alt+Enter newline · Enter submit · Ctrl+C exit · /exit quits" });
+  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — PgUp/PgDn scroll · Tab inspect tool output · ↑/↓ history · Alt+Enter newline · Enter submit · Esc collapse · Ctrl+C exit · /exit quits" });
   redraw();
   try {
     await done;
