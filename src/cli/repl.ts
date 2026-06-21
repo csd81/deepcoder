@@ -38,6 +38,7 @@ import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
 import { renderMarkdown } from "../ui/markdown.js";
+import { solveLayout, flattenLayout, validateLayoutTree, type LayoutNode } from "../ui/layout.js";
 import { buildStatusSnapshot } from "../telemetry/statusSnapshot.js";
 import { renderStatusline } from "../telemetry/statusline.js";
 import { estimateCost } from "../providers/pricing.js";
@@ -627,8 +628,28 @@ export async function runTuiRepl(session: Session): Promise<void> {
   }
 
   // Window height = rows minus status(1) + indicator-reserve(1) + composer rows,
-  // so the absolutely-positioned diff frame never overflows the screen.
-  const viewportH = (inputCount = 1) => Math.max(1, (stdout.rows ?? 24) - 2 - inputCount);
+  // so the absolutely-positioned diff frame never overflows the screen. The region
+  // split is expressed as a column layout solved by the ui/layout engine: a fixed
+  // status row + indicator row + composer (inputCount rows) with the transcript
+  // window taking the remaining grow space. The solved transcript height equals
+  // rows-2-inputCount, identical to the prior hand arithmetic, clamped to >=1.
+  const viewportH = (inputCount = 1): number => {
+    const tree: LayoutNode = {
+      id: "tui-root",
+      direction: "column",
+      children: [
+        { id: "status", fixedHeight: 1 },
+        { id: "transcript", grow: 1 },
+        { id: "indicator", fixedHeight: 1 },
+        { id: "composer", fixedHeight: Math.max(0, inputCount) },
+      ],
+    };
+    validateLayoutTree(tree);
+    const boxes = flattenLayout(
+      solveLayout(tree, { width: stdout.columns ?? 80, height: stdout.rows ?? 24 }),
+    );
+    return Math.max(1, boxes.get("transcript")?.h ?? 0);
+  };
 
   function redraw(): void {
     if (restored) return;
