@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { WorkspaceIsolationError, type IsolatedWorkspace, type ProvisionedLink } from "./types.js";
-import { provisionWorktree } from "./provision.js";
+import { provisionWorktree, runSetupCommands } from "./provision.js";
 
 interface GitResult {
   status: number | null;
@@ -33,7 +33,7 @@ export function isDirty(root: string): boolean {
  */
 export async function createGitWorktree(
   realRoot: string,
-  opts: { includeDirty: boolean; provision?: string[] },
+  opts: { includeDirty: boolean; provision?: string[]; setupCommands?: string[] },
 ): Promise<IsolatedWorkspace> {
   if (!isGitRepo(realRoot)) {
     throw new WorkspaceIsolationError(
@@ -63,6 +63,19 @@ export async function createGitWorktree(
     provisioned = await provisionWorktree(realRoot, isolatedRoot, opts.provision ?? []);
   } catch {
     /* provisioning is best-effort */
+  }
+
+  // Phase 7E: run configured setup commands in the worktree (e.g. `npm ci`).
+  // Fail-closed — if setup fails, tear down the worktree and surface the error
+  // rather than letting checks run in a half-provisioned tree.
+  if (opts.setupCommands && opts.setupCommands.length > 0) {
+    try {
+      runSetupCommands(isolatedRoot, opts.setupCommands);
+    } catch (err) {
+      git(realRoot, ["worktree", "remove", "--force", isolatedRoot]);
+      await rm(base, { recursive: true, force: true });
+      throw err;
+    }
   }
 
   const stageAll = () => git(isolatedRoot, ["add", "-A"]); // worktree has its own index; .gitignore respected

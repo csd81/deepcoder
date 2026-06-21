@@ -24,5 +24,9 @@ export async function createIsolatedWorkspace(
     const { WorkspaceIsolationError } = await import("./types.js");
     throw new WorkspaceIsolationError("copy backend is not implemented yet (Phase 7D v1 is git-only).");
   }
-  return createGitWorktree(realRoot, { includeDirty: config.includeDirty, provision: config.provision });
+  return createGitWorktree(realRoot, {
+    includeDirty: config.includeDirty,
+    provision: config.provision,
+    setupCommands: config.setupCommands,
+  });
 }
