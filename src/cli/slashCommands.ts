@@ -170,7 +170,7 @@ export async function handleSlashCommand(
       await runUnderstand(session);
       return { consumed: true };
 
-    case "index":
+    case "semantic":
       await runIndex(session);
       return { consumed: true };
 
@@ -2248,12 +2248,12 @@ async function runIndex(session: Session): Promise<void> {
   const root = session.config.workspaceRoot;
   const cfg = session.config.semanticSearch;
   if (!cfg.enabled) {
-    console.log(chalk.dim("/index: semantic search is disabled. Enable it with DEEPCODER_SEMANTIC_SEARCH=1 and a local embedding backend."));
+    console.log(chalk.dim("/semantic: semantic search is disabled. Enable it with DEEPCODER_SEMANTIC_SEARCH=1 and a local embedding backend."));
     return;
   }
   const provider = createEmbeddingProvider(cfg);
   if (!provider) {
-    console.log(chalk.red(`/index: no embedding provider for "${cfg.provider}". Configure a local backend (e.g. ollama).`));
+    console.log(chalk.red(`/semantic: no embedding provider for "${cfg.provider}". Configure a local backend (e.g. ollama).`));
     return;
   }
   let paths: string[];
@@ -2261,7 +2261,7 @@ async function runIndex(session: Session): Promise<void> {
     const { stdout } = await execFileP("git", ["ls-files"], { cwd: root, maxBuffer: 64 * 1024 * 1024 });
     paths = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
   } catch {
-    console.log(chalk.dim("/index: not a git repo (or git unavailable) — cannot enumerate files."));
+    console.log(chalk.dim("/semantic: not a git repo (or git unavailable) — cannot enumerate files."));
     return;
   }
   const files: { path: string; content: string }[] = [];
@@ -2269,7 +2269,7 @@ async function runIndex(session: Session): Promise<void> {
     try { files.push({ path: p, content: await fs.readFile(path.join(root, p), "utf8") }); }
     catch { /* skip unreadable/binary/deleted */ }
   }
-  console.log(chalk.dim(`/index: chunking ${files.length} file(s) and embedding via ${cfg.provider}/${cfg.model}…`));
+  console.log(chalk.dim(`/semantic: chunking ${files.length} file(s) and embedding via ${cfg.provider}/${cfg.model}…`));
   try {
     const res = await buildSemanticIndex({
       root,
@@ -2279,9 +2279,9 @@ async function runIndex(session: Session): Promise<void> {
       model: cfg.model,
       dimensions: cfg.dimensions,
     });
-    console.log(chalk.green(`/index: built ${res.chunkCount} chunk(s) from ${files.length - res.skipped.length} file(s); ${res.skipped.length} skipped.`));
+    console.log(chalk.green(`/semantic: built ${res.chunkCount} chunk(s) from ${files.length - res.skipped.length} file(s); ${res.skipped.length} skipped.`));
   } catch (err) {
-    console.log(chalk.red(`/index: failed — ${(err as Error).message}`));
+    console.log(chalk.red(`/semantic: failed — ${(err as Error).message}`));
   }
 }
 
