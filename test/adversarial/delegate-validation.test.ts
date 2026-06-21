@@ -344,3 +344,56 @@ test("[9g-selfaudit-absent] no self-audit provided → prior behavior (no malfor
   assert.ok(!v.warnings.some((wn) => /malformed/.test(wn)));
   assert.ok(v.evidence.some((e) => /no self-audit provided/.test(e.note)));
 });
+
+/* ---------------- Phase 9J: LLM quality gate producer wired into applyWorker ---------------- */
+
+import { DEFAULT_QUALITY_GATE } from "../../src/config/config.js";
+
+function fakeReviewer(verdict: "pass" | "block") {
+  const finalText = JSON.stringify({
+    verdict,
+    findings: verdict === "block"
+      ? [{ severity: "critical", claim: "introduces a command injection", evidence: "shell concat", path: "src/foo.ts" }]
+      : [],
+  });
+  return async () => ({
+    result: { summary: "", completedDeliverables: [], notices: [], errors: [] },
+    trace: { toolsCalled: [], turns: 1, notices: [], errors: [] },
+    finalText,
+  });
+}
+
+const qgOpts = (over: Record<string, unknown> = {}) => ({
+  options: { ...DEFAULT_QUALITY_GATE, enabled: true, mode: "mandatory" as const },
+  provider: {} as never,
+  parentModel: "m",
+  compactAt: 0.8,
+  ...over,
+});
+
+test("[9j-qualitygate-wired] applyWorker runs the quality gate and refuses a blocked verdict", async () => {
+  const root = await repo();
+  try {
+    await savePlan(root, planOf(w()));
+    await artifacts(root);
+    const r = await applyWorker(root, "p1", "w1", {
+      isTTY: true, confirmResult: true,
+      qualityGate: qgOpts({ reviewerRunner: fakeReviewer("block") }) as never,
+    });
+    assert.equal(r.ok, false);
+    assert.match(r.message, /quality gate blocked/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("[9j-qualitygate-pass] a passing verdict does not quality-block the apply", async () => {
+  const root = await repo();
+  try {
+    await savePlan(root, planOf(w()));
+    await artifacts(root);
+    const r = await applyWorker(root, "p1", "w1", {
+      isTTY: true, confirmResult: true,
+      qualityGate: qgOpts({ reviewerRunner: fakeReviewer("pass") }) as never,
+    });
+    assert.doesNotMatch(r.message, /quality gate blocked/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

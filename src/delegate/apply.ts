@@ -24,6 +24,10 @@ import { assertSafeId } from "../workspace/paths.js";
 import { loadPlan, savePlan } from "./store.js";
 import { validatePatch } from "./patchValidator.js";
 import { validateWorkerResult } from "./validation.js";
+import { runQualityGate } from "./qualityGate.js";
+import type { ModelProvider } from "../providers/types.js";
+import type { QualityGateOptions } from "../config/config.js";
+import type { runSubagent } from "../subagents/runner.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { confirm } from "../permissions/prompt.js";
 import { readTddRecord } from "./tddArtifacts.js";
@@ -90,6 +94,23 @@ export interface ApplyOptions {
    * gate is refused only when this is set (mandatory mode).
    */
   requireQualityGate?: boolean;
+  /**
+   * Phase 9J: when provided AND `options.enabled`, run the LLM quality gate
+   * before validation and populate `run.qualityGate` (unless already set).
+   * Default-off — omit this entirely to skip the gate (no model call). The
+   * resulting gate is then enforced by validation Gate 6 (a blocked verdict is
+   * always refused; a missing gate is refused only in mandatory mode).
+   */
+  qualityGate?: {
+    options: QualityGateOptions;
+    provider: ModelProvider;
+    parentModel: string;
+    subagentModel?: string;
+    compactAt: number;
+    signal?: AbortSignal;
+    /** Test seam — defaults to the real runSubagent inside runQualityGate. */
+    reviewerRunner?: typeof runSubagent;
+  };
   /** Phase 9L flip: require a validated (red→green) test (green_confirmed) to apply. */
   requireValidatedTest?: boolean;
 }
@@ -156,6 +177,29 @@ export async function applyWorker(
     return { ok: false, message: `Patch file for worker "${workerId}" not found.` };
   }
 
+  // ── Gate 1.4 (9J): run the LLM quality gate when configured (default-off). ──
+  // Populates run.qualityGate so the validation pipeline's Gate 6 can enforce it.
+  const qgOpt = opts.qualityGate;
+  if (qgOpt?.options.enabled && !run.qualityGate) {
+    run.qualityGate = await runQualityGate({
+      workspaceRoot: root,
+      provider: qgOpt.provider,
+      parentModel: qgOpt.parentModel,
+      subagentModel: qgOpt.subagentModel,
+      compactAt: qgOpt.compactAt,
+      signal: qgOpt.signal ?? new AbortController().signal,
+      task: worker,
+      patchText,
+      changedFiles: run.changedFiles,
+      deterministicSummary: run.summary ?? "",
+      options: qgOpt.options,
+      reviewerRunner: qgOpt.reviewerRunner,
+    });
+  }
+  const qualityGateRequired =
+    opts.requireQualityGate ??
+    (qgOpt?.options.enabled && qgOpt.options.mode === "mandatory" ? true : false);
+
   // ── Gate 1.5 (9K): Run the full validation pipeline ─────────────
   const validation = validateWorkerResult({
     root,
@@ -164,7 +208,7 @@ export async function applyWorker(
     run,
     patchText,
     alreadyChangedPaths,
-    qualityGateRequired: opts.requireQualityGate ?? false,
+    qualityGateRequired,
     requireValidatedTest: opts.requireValidatedTest ?? false,
   });
 

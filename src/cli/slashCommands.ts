@@ -1514,7 +1514,23 @@ export async function handleSlashCommand(
           console.log(chalk.red("Refusing to apply in a non-interactive session — run /delegate apply from an interactive terminal."));
           return { consumed: true };
         }
-        const result = await applyWorker(root, planId, workerId, { checks: config.checks });
+        const result = await applyWorker(root, planId, workerId, {
+          checks: config.checks,
+          // Phase 9J: run the LLM quality gate before apply only when opted in
+          // (config.delegate.qualityGate.enabled, default-off); it uses the live session
+          // provider and is enforced by the validation pipeline's Gate 6.
+          ...(config.delegate.qualityGate.enabled
+            ? {
+                requireQualityGate: config.delegate.qualityGate.mode === "mandatory",
+                qualityGate: {
+                  options: config.delegate.qualityGate,
+                  provider: session.provider,
+                  parentModel: config.model,
+                  compactAt: config.compactAt,
+                },
+              }
+            : {}),
+        });
         if (result.ok) {
           console.log(chalk.green(result.message));
           if (result.globalCheckResults?.length) {
