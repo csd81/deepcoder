@@ -21,6 +21,7 @@ import type { HookEvent } from "../hooks/types.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
+import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
@@ -450,10 +451,10 @@ export async function handleSlashCommand(
 
     case "triage": {
       const parsed = parseTriageArgs(arg);
-      if (!parsed.scope && !parsed.file && !parsed.failure) {
+      if (!parsed.scope && !parsed.file && !parsed.failure && !parsed.run) {
         console.log(
           chalk.dim(
-            "usage: /triage <failure>  |  /triage --file <path>  |  /triage --scope <scope> <failure>",
+            "usage: /triage <failure>  |  /triage --file <path>  |  /triage --run <check-run-id>  |  /triage --scope <scope> <failure>",
           ),
         );
         return { consumed: true };
@@ -474,6 +475,23 @@ export async function handleSlashCommand(
         }
         taskParts.push(
           `\nFailure log from ${parsed.file}${log.truncated ? " (truncated)" : ""}:\n\`\`\`\n${log.text}\n\`\`\``,
+        );
+      }
+      if (parsed.run) {
+        // Triage a saved/quarantined check run by id (closes the check→triage loop).
+        let loaded: { run: { name: string; exitCode: number | null; command: string }; log: string };
+        try {
+          loaded = await loadCheckRun(session.config.workspaceRoot, parsed.run);
+        } catch {
+          const ids = (await listCheckRuns(session.config.workspaceRoot)).slice(0, 8).map((r) => r.id);
+          console.log(chalk.red(`No saved check run "${parsed.run}".`));
+          if (ids.length) console.log(chalk.dim(`recent runs: ${ids.join(", ")}`));
+          return { consumed: true }; // no provider call
+        }
+        const r = loaded.run;
+        taskParts.push(
+          `\nFailure from check "${r.name}" (command: ${r.command}; exit ${r.exitCode ?? "?"}), run ${parsed.run}:\n` +
+            `\`\`\`\n${loaded.log}\n\`\`\``,
         );
       }
 
@@ -540,7 +558,7 @@ export async function handleSlashCommand(
         console.log(
           `\n${status} · ${Math.round(run.durationMs)}ms${run.truncated ? " · output truncated" : ""} · run ${run.id}`,
         );
-        console.log(chalk.dim(`saved to ${run.logPath} (quarantined; /triage --run integration lands in 5B)`));
+        console.log(chalk.dim(`saved to ${run.logPath} (quarantined) · triage with /triage --run ${run.id}`));
       } catch (err) {
         if (err instanceof CheckRefusedError) console.log(chalk.red(err.message));
         else console.log(chalk.red(`check failed to start: ${(err as Error).message}`));
@@ -1921,7 +1939,7 @@ export async function handleSlashCommand(
           "/mcp [reload]    list configured MCP servers and tools",
           "/review <scope>  run a read-only reviewer subagent over files/topic",
           "/research <q>    run a read-only researcher subagent to explain the codebase",
-          "/triage <fail>   diagnose a failure (also: --file <log>, --scope <scope>)",
+          "/triage <fail>   diagnose a failure (also: --file <log>, --run <check-run-id>, --scope <scope>)",
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
           "/hooks [enable|disable]  show lifecycle hooks; toggle them for this session (Phase 7B)",
           "/skills          list discovered skills (.deepcoder/skills, Phase 7C)",
@@ -1988,6 +2006,8 @@ interface TriageArgs {
   scope?: string;
   file?: string;
   failure?: string;
+  /** A saved/quarantined check-run id whose log should be triaged. */
+  run?: string;
 }
 
 /** Parse `/triage` args: `--file <path>`, `--scope <scope>`, rest = pasted failure text. */
@@ -1998,6 +2018,7 @@ export function parseTriageArgs(arg: string): TriageArgs {
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i] === "--file" && i + 1 < tokens.length) out.file = tokens[++i];
     else if (tokens[i] === "--scope" && i + 1 < tokens.length) out.scope = tokens[++i];
+    else if (tokens[i] === "--run" && i + 1 < tokens.length) out.run = tokens[++i];
     else rest.push(tokens[i]!);
   }
   if (rest.length) out.failure = rest.join(" ");

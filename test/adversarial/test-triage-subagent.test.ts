@@ -76,6 +76,13 @@ test("parseTriageArgs handles pasted text, --file, and --scope", () => {
   assert.equal(p.failure, "resume fails");
 });
 
+test("parseTriageArgs parses --run <id> (triage a saved check run)", () => {
+  assert.deepEqual(parseTriageArgs("--run 2026-01-02T03-04-05Z-ab12"), { run: "2026-01-02T03-04-05Z-ab12" });
+  const p = parseTriageArgs("--run abc123 --scope src/foo");
+  assert.equal(p.run, "abc123");
+  assert.equal(p.scope, "src/foo");
+});
+
 test("readLogInput rejects sensitive and out-of-workspace paths without leaking bytes", async () => {
   const root = await ws();
   await writeFile(path.join(root, ".env"), "DEEPSEEK_API_KEY=sk-SECRET-triage", "utf8");
@@ -156,6 +163,43 @@ test("/triage --file .env is rejected and never calls the provider", async () =>
   await writeFile(path.join(root, ".env"), "DEEPSEEK_API_KEY=sk-SECRET-triage2", "utf8");
   const session = await makeSession(provider, root);
   await handleSlashCommand("/triage --file .env", session, async () => {});
+  assert.equal(called, false);
+  assert.equal(session.reviews.length, 0);
+});
+
+test("/triage --run <id> feeds the saved check run's log to the triage subagent", async () => {
+  const { saveCheckRun } = await import("../../src/session/checkRuns.js");
+  const root = await ws();
+  await saveCheckRun(
+    root,
+    {
+      id: "runid-1", name: "unit", command: "npm test", startedAt: "2026-01-01T00:00:00Z",
+      finishedAt: "2026-01-01T00:00:01Z", durationMs: 1, exitCode: 1, timedOut: false, truncated: false,
+      logPath: ".deepcoder/check-runs/runid-1.log",
+    },
+    "FAILMARKER: assertion failed at foo.ts:10",
+  );
+
+  let seen = "";
+  const provider: ModelProvider = {
+    async chat(req) {
+      seen += req.messages.map((m) => m.content).join("\n");
+      return { text: JSON.stringify({ summary: "ok", findings: [], suggestedNextSteps: [] }), toolCalls: [] };
+    },
+  };
+  const session = await makeSession(provider, root);
+  await handleSlashCommand("/triage --run runid-1", session, async () => {});
+
+  assert.ok(seen.includes("FAILMARKER"), "the quarantined log was fed to triage");
+  assert.ok(seen.includes("runid-1"), "the run id was cited");
+  assert.equal(session.reviews.length, 1, "a triage review was produced");
+});
+
+test("/triage --run <unknown> reports the error and never calls the provider", async () => {
+  let called = false;
+  const provider: ModelProvider = { async chat() { called = true; return { text: "", toolCalls: [] }; } };
+  const session = await makeSession(provider);
+  await handleSlashCommand("/triage --run does-not-exist", session, async () => {});
   assert.equal(called, false);
   assert.equal(session.reviews.length, 0);
 });
