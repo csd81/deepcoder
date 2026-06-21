@@ -93,9 +93,10 @@ See `plans/phase5-verification-workflows-plan.md`.
   `oracle_failure_category` classification (wrong_location/partial_fix/invariant_broken/…), and
   `requiredBehaviorNotes` recorded as metadata for the later reviewer gate; report shows oracle
   failures by category. The 10–20-file correctness-hard cases are deferred to follow-up iterations.
-- [ ] follow-ups: wire the read-only `reviewer` subagent as an LLM quality gate; consider a
-  non-empty-patch hard requirement in the core solver (flask-5063 empty-patch finding); expand the
-  hard set toward the full "Hard 20" once the first 5 discriminate.
+- [ ] follow-ups: a non-empty-patch hard requirement in the core solver (flask-5063 empty-patch
+  finding); expand the hard set toward the full "Hard 20" once the first 5 discriminate.
+  (The earlier "wire the `reviewer` subagent as an LLM quality gate" follow-up was **dropped** — the
+  delegate quality gate it pointed at, 9J, was removed in favor of deterministic verify-then-force (9N).)
 
 ## Phase 7 — Extensibility & isolation
 
@@ -221,9 +222,12 @@ every patch before anything touches the repo. Plans/runs persist under
   confirmation only when explicitly enabled (`DEEPCODER_DELEGATE_AUTO_APPLY`) AND every gate passes
   (single worker, check passed, size cap, validate) — then delegates to the 9C `applyWorker` (no gate
   reimplemented/weakened).
-- [x] **9G** — deterministic completeness gates (`completeness.ts`, `selfAudit.ts`): task-packet
-  deliverables/expected-files/tests + worker self-audit cross-check, between "check passed" and
-  "apply" (the 8D lesson: a worker can pass its check while skipping deliverables).
+- [x] **9G** — deterministic completeness gates (`completeness.ts`): task-packet
+  deliverables/expected-files/tests, between "check passed" and "apply" (the 8D lesson: a worker can
+  pass its check while skipping deliverables). _Update 2026-06-21:_ the separate `selfAudit.ts` parser
+  (worker self-audit cross-check) was **removed** — the completeness gate evaluates deliverables from
+  the patch directly, which is the authoritative signal; `evaluateCompleteness` still tolerates a
+  null/undefined self-audit.
 
 - [x] **9H delegated-worker isolation defaults** (`src/delegate/workerRunner.ts`, `…types.ts`,
   `plans/phase9h-…-plan.md`): make worker isolation a mandatory, audited invariant — `runWorker`
@@ -244,7 +248,12 @@ every patch before anything touches the repo. Plans/runs persist under
   sequential `runRunnable` is unchanged + remains the default. `/delegate run <plan> --parallel
   [--max-concurrency N]`. Deferred: cross-process plan locking, config-gated default.
 
-- [x] **9J in-loop read-only LLM quality gate** (`src/delegate/qualityGate.ts`, `plans/phase9j-…-plan.md`):
+- [removed] **9J in-loop read-only LLM quality gate** (~~`src/delegate/qualityGate.ts`~~, `plans/phase9j-…-plan.md`)
+  — **removed 2026-06-21**: superseded by deterministic **verify-then-force (9N)**, which the project
+  adopted as the default gate. The LLM-reviewer producer `qualityGate.ts` was deleted; the enforcement
+  scaffolding it fed — `apply.ts` Gate 3.5, validation Gate 6, `config.delegate.qualityGate`, and the
+  `WorkerQualityGate` type — **remains** but is inert (nothing populates `run.qualityGate` now). The
+  original design, kept for the record:
   an apply-time, **downgrade-only** reviewer gate. `runQualityGate` runs the existing read-only
   `reviewer` subagent (asserts the registry is read-only; patch truncated to maxPatchBytes) over a
   deterministically-passing patch and parses a bounded verdict/findings; `verdict:block` or a finding
@@ -290,6 +299,42 @@ parent review closing recurring gaps (skipped/thin/hallucinated tests). Deferred
 autonomous delegation, the `delegate` config block + remaining env wiring; the per-sub-task cumulative
 base via a temp integration branch (default seams currently isolate from HEAD + apply the cumulative
 patch).
+
+## Phase 10 — Product surface: TUI, headless, web, routing
+
+Shipped largely via delegated workers (DeepSeek, OpenAI Codex via the Responses provider, Gemini)
+with parent review. All of the below are wired into the production path; default-off capabilities are
+noted as such. Plans: `plans/phase10*-plan.md`.
+
+- [x] **10A scrollable non-Ink TUI** (`src/cli/repl.ts` `runTuiRepl`, `src/ui/{transcript,minimalRenderer,
+  frameWriter,textLayout,markdown,theme,inputEditor,layout}.ts`): a from-scratch scrollable transcript
+  renderer (no Ink), terminal-friendly markdown + syntax highlighting, and a yoga-inspired layout engine
+  (`ui/layout.ts`) that solves the status/transcript/composer regions.
+- [x] **10B headless SDK + server mode** (`src/sdk/index.ts`, `src/server/{stdioServer,stdioTransport,
+  httpCore}.ts`): a public SDK barrel + a stdio/HTTP server surface (auth, body limits, SSE replay,
+  run registry) for non-interactive embedding. The two barrels are intentionally external-facing.
+- [x] **10C statusline + cost telemetry** (`src/ui/{statusline,statusSnapshot}.ts`,
+  `src/telemetry/sessionTelemetry.ts`): per-session usage/cost tracking + a one-line status renderer
+  (provider/model/mode/sandbox/usage/cost), persisted with the session.
+- [x] **10D plugin / extension system** (`src/plugins/{discovery,trust}.ts`): plugin discovery + a
+  trust store (`.deepcoder/plugin-trust.json`); `/plugins list|trust|untrust`. Untrusted by default.
+- [x] **10E read-only web search/fetch** (`src/tools/{webTools,webFetch,webSearch}.ts`,
+  `src/web/{access,trace,searchProvider}.ts`): **default-off** web tools with allow/block-domain
+  policy and an auditable web trace; `/web` shows status + trace. Researcher-subagent web opt-in is
+  gated through `resolveWebTools`.
+- [x] **10F model + task router** (`src/models/{router,providerPool}.ts`): role-based model resolution
+  (review/research/…) + a provider pool, so subagents and delegated workers can run on different models.
+- [x] **10G patch review browser** (`src/delegate/{reviewBrowser,reviewRender}.ts`): an interactive
+  browser over a delegated worker's patch/findings before apply.
+- [x] **10H automatic minimal test targeting** (`src/checks/{testTargetPlanner,targetedCheck}.ts`):
+  infer the minimal test set impacted by a change and run that first (targeted-first / targeted-only modes).
+
+_Dead-code wiring pass (2026-06-21):_ connected built-but-unwired producers to their production paths —
+`resolveWebTools` → researcher web opt-in (10E), `ui/layout` → TUI viewport sizing (10A),
+`pty/session` (7H) → the **default-off** `run_in_shell` tool, and `semantic/chunker` (8E) →
+`buildSemanticIndex` + the **opt-in** `/index` command. The `delegate/selfAudit` and
+`delegate/qualityGate` orphans were **deleted** (superseded by verify-then-force; see 9G/9J). The
+dead-code audit is now clean except the two intentional public barrels (`sdk/index`, `server/index`).
 
 ## Non-goals (for now)
 
