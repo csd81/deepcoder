@@ -36,6 +36,26 @@ export class Git {
     return (await this.run(args)).trim();
   }
 
+  /**
+   * Workspace-relative paths of changed files (staged, unstaged, and untracked)
+   * from `git status --porcelain`. Rename entries (`old -> new`) report the new
+   * path. Returns [] on a clean tree.
+   */
+  async changedFiles(): Promise<string[]> {
+    const out = (await this.run(["status", "--porcelain"])).trim();
+    if (!out) return [];
+    const files: string[] = [];
+    for (const line of out.split("\n")) {
+      let p = line.slice(3).trim(); // drop the 2-char status code + separator
+      const arrow = p.indexOf(" -> ");
+      if (arrow >= 0) p = p.slice(arrow + 4).trim(); // rename: take the destination
+      // Strip surrounding quotes git adds for paths with special chars.
+      if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
+      if (p) files.push(p);
+    }
+    return files;
+  }
+
   /** One-line summary of how dirty the tree is. */
   async dirtySummary(): Promise<string> {
     const out = (await this.run(["status", "--porcelain"])).trim();

@@ -63,6 +63,79 @@ test("solve retries after the first failure and stops once the check passes", as
   assert.ok(session.messages.some((m) => m.role === "user" && /untrusted check output/.test(m.content)));
 });
 
+function plainSession(root: string, config: ReturnType<typeof loadConfig>): Session {
+  return {
+    config,
+    provider: deadProvider,
+    registry: defaultRegistry(),
+    store: new SessionStore(root, newSessionId()),
+    messages: [{ role: "system", content: "sys" }],
+    mode: "auto",
+    todos: [],
+    readTracker: new Set(),
+    writeTracker: new Set(),
+    reviews: [],
+  };
+}
+
+test("Phase 10H: a fast-fail preCheck skips the authoritative check and feeds the summary into the retry", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "solve-10h-"));
+  const config = loadConfig({
+    workspaceRoot: root,
+    apiKey: "fixture",
+    approvalMode: "auto",
+    checks: { test: { command: `node -e "process.exit(require('fs').existsSync('fixed.txt')?0:1)"` } },
+  });
+  const session = plainSession(root, config);
+
+  let attempt = 0;
+  let preChecks = 0;
+  const res = await runSolveLoop(session, { task: "fix", checkName: "test", maxAttempts: 4 }, {
+    runAgent: async () => {
+      attempt++;
+      if (attempt === 2) await writeFile(path.join(root, "fixed.txt"), "ok", "utf8");
+    },
+    // Targeted tests "fail" on attempt 1, then targeting is insufficient (null).
+    preCheck: async () => {
+      preChecks++;
+      return preChecks === 1 ? { fastFail: true, summary: "TARGETED-FAILED-XYZ" } : null;
+    },
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(res.solved, true);
+  assert.equal(res.attempts.length, 2);
+  // Attempt 1 fast-failed: the authoritative check never ran (no run id).
+  assert.equal(res.attempts[0]!.checkPassed, false);
+  assert.equal(res.attempts[0]!.checkRunId, undefined, "fast-fail runs no authoritative check");
+  // Attempt 2 fell through to the authoritative check, which is the sole oracle.
+  assert.equal(res.attempts[1]!.checkPassed, true);
+  assert.ok(res.attempts[1]!.checkRunId, "the authoritative check ran on the fall-through attempt");
+  // The fast-fail summary was fed back into the retry prompt.
+  assert.ok(session.messages.some((m) => m.role === "user" && /TARGETED-FAILED-XYZ/.test(m.content)));
+});
+
+test("Phase 10H: preCheck can NEVER declare a solve solved — a final-attempt fast-fail ends unsolved", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "solve-10h-gate-"));
+  const config = loadConfig({
+    workspaceRoot: root,
+    apiKey: "fixture",
+    approvalMode: "auto",
+    // This check WOULD pass (exit 0) — but a fast-fail must skip it entirely.
+    checks: { test: { command: `node -e "process.exit(0)"` } },
+  });
+  const session = plainSession(root, config);
+
+  const res = await runSolveLoop(session, { task: "fix", checkName: "test", maxAttempts: 1 }, {
+    runAgent: async () => {},
+    preCheck: async () => ({ fastFail: true, summary: "still red" }),
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(res.solved, false, "a fast-fail never reaches the oracle, so the solve cannot be solved");
+  assert.equal(res.attempts[0]!.checkRunId, undefined, "the authoritative check was skipped");
+});
+
 test("the runner writes a telemetry file with per-attempt patch hashes (headless eval)", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "solve-tele-"));
   // A real git repo so the runner's git-diff snapshot produces a patch hash.

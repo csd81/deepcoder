@@ -9,6 +9,10 @@ import type { SolveOptions, SolveResult } from "../solve/types.js";
 import type { UiEvent } from "../ui/events.js";
 import { Git } from "../workspace/git.js";
 import { redactSecrets } from "../workspace/redact.js";
+import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
+import { runTargetedChecks } from "../checks/targetedCheck.js";
+import { loadCheckRun } from "../session/checkRuns.js";
+import { summarizeCheckFailure } from "../solve/failureSummary.js";
 import { hookCtx, hooksFor } from "./repl.js";
 import { runAdvisoryHooks } from "../hooks/runner.js";
 import type { HookEvent } from "../hooks/types.js";
@@ -67,6 +71,56 @@ export async function runSolveCommand(
         };
       }
     : undefined;
+  // ---- Phase 10H: optional fast-fail test-targeting pre-check ----
+  // Targeting/git logic stays out of the solver core; the solver only consumes
+  // the injected `preCheck`. Active only in targeted-first/targeted-only modes
+  // (default off → undefined → byte-identical). A targeted FAILURE fast-fails
+  // the attempt; a pass / insufficient plan / refusal falls through to the
+  // authoritative check, which remains the sole success oracle.
+  const tt = session.config.testTargeting;
+  const targetingRoot = session.executionRoot ?? session.config.workspaceRoot;
+  const targetingActive = tt.enabled && (tt.mode === "targeted-first" || tt.mode === "targeted-only");
+  const targetingGit = targetingActive ? new Git(targetingRoot) : null;
+  const preCheck = targetingActive
+    ? async (): Promise<{ fastFail: boolean; summary?: string } | null> => {
+        try {
+          if (!targetingGit || !(await targetingGit.isRepo())) return null;
+          const changedFiles = await targetingGit.changedFiles();
+          if (changedFiles.length === 0) return null;
+          const plan = buildTestTargetPlan({
+            changedFiles,
+            maxTargets: tt.maxTargets,
+            pathRules: tt.pathRules,
+            languageCommands: tt.languageCommands,
+            fallbackCheck: tt.fallbackCheck,
+          });
+          // Insufficient/sensitive targeting → let the authoritative check decide.
+          if (plan.fallbackRequired || plan.commands.length === 0) return null;
+          const res = await runTargetedChecks(plan, {
+            workspaceRoot: targetingRoot,
+            signal: controller.signal,
+            sandbox: session.config.sandbox,
+            dependencyHealing: session.config.dependencyHealing,
+          });
+          // All targeted commands refused by the classifier → fall through.
+          if (res.fallbackRequired || res.targetedRuns.length === 0) return null;
+          const failed = res.targetedRuns.find((r) => r.run.timedOut || r.run.exitCode !== 0);
+          if (!failed) return null; // targeted PASS → authoritative check still decides
+          // Targeted FAILURE → fast-fail. Distil a bounded, redacted retry summary.
+          let summary = `Targeted tests failed: ${failed.command.label}.`;
+          try {
+            const { log } = await loadCheckRun(targetingRoot, failed.run.id);
+            summary = summarizeCheckFailure(failed.run, log);
+          } catch {
+            /* fall back to the label-only summary */
+          }
+          return { fastFail: true, summary };
+        } catch {
+          return null; // advisory: any failure falls through to the full check
+        }
+      }
+    : undefined;
+
   // ---- Phase 8D: preflight context gathering (before attempt 1) ----
   let preflightExplorerTurns = 0;
   let preflightFilesCited = 0;
@@ -97,6 +151,7 @@ export async function runSolveCommand(
     const result = await runSolveLoop(session, opts, {
       runAgent,
       runReproTurn,
+      preCheck,
       signal: controller.signal,
       snapshotPatch,
       onUiEvent,
@@ -114,6 +169,12 @@ export async function runSolveCommand(
               ? chalk.green("passed (exit 0)")
               : chalk.red(`failed (exit ${e.exitCode ?? "?"})`);
           stdout.write(`check ${label}: ${status} · run ${e.runId}\n`);
+        } else if (e.type === "fast-fail") {
+          if (checkStreaming) {
+            stdout.write("\n");
+            checkStreaming = false;
+          }
+          stdout.write(chalk.yellow(`targeted tests failed (attempt ${e.index}) — fast-fail, skipping the full check\n`));
         } else if (e.type === "retrying") {
           stdout.write(chalk.dim("retrying with a redacted failure summary…\n"));
         } else if (e.type === "repro") {

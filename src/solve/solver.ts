@@ -21,6 +21,7 @@ export type SolveProgress =
   | { type: "attempt-start"; index: number; max: number }
   | { type: "check-result"; index: number; passed: boolean; timedOut: boolean; exitCode: number | null; runId: string }
   | { type: "retrying"; index: number }
+  | { type: "fast-fail"; index: number }
   | { type: "repro"; phase: "generated" | "validated" | "invalid"; path: string; reason?: string };
 
 export interface SolveDeps {
@@ -55,6 +56,17 @@ export interface SolveDeps {
    * solver core stays free of provider/agent details. Mirrors `runAgent`.
    */
   runReproTurn?: (reproPath: string) => Promise<void>;
+  /**
+   * Phase 10H — optional fast-fail pre-check, run AFTER the agent edits but
+   * BEFORE the authoritative check. Injected by the caller so targeting/git
+   * logic stays out of the solver core. Returning `{ fastFail: true }` (a
+   * targeted-test FAILURE) marks the attempt failed WITHOUT running the
+   * authoritative check — its `summary` feeds the retry. Returning `null` or
+   * `{ fastFail: false }` (targeted pass / insufficient plan) falls through to
+   * the authoritative check, which remains the SOLE success oracle: a preCheck
+   * NEVER declares a solve solved. Failures are swallowed (advisory).
+   */
+  preCheck?: () => Promise<{ fastFail: boolean; summary?: string } | null>;
 }
 
 /**
@@ -160,6 +172,47 @@ export async function runSolveLoop(
       } catch {
         /* a checkpoint failure must not abort the solve */
       }
+    }
+
+    // Phase 10H — optional fast-fail pre-check. A targeted-test FAILURE short-
+    // circuits this attempt's authoritative run (its tests are a subset, so the
+    // full check would fail too); a pass / insufficient plan falls through to
+    // the authoritative check below — which is the ONLY thing that can mark the
+    // solve solved. preCheck failures are advisory and never break the solve.
+    let preFastFail: { summary?: string } | null = null;
+    if (deps.preCheck) {
+      try {
+        const pc = await deps.preCheck();
+        if (pc && pc.fastFail) preFastFail = { summary: pc.summary };
+      } catch {
+        /* targeting is advisory — a failure just falls through to the full check */
+      }
+    }
+    if (preFastFail) {
+      let patch: { hash: string; bytes: number } | null = null;
+      if (deps.snapshotPatch) {
+        try {
+          patch = await deps.snapshotPatch();
+        } catch {
+          /* telemetry must never break the solve */
+        }
+      }
+      const failureSummary =
+        preFastFail.summary ?? "Targeted tests failed (fast-fail; the full check was skipped this attempt).";
+      attempts.push({
+        index: i,
+        checkPassed: false,
+        checkTimedOut: false,
+        failureSummary,
+        patchHash: patch?.hash,
+        patchBytes: patch?.bytes,
+      });
+      deps.onProgress?.({ type: "fast-fail", index: i });
+      if (i < opts.maxAttempts) {
+        session.messages.push({ role: "user", content: buildRetryPrompt(failureSummary, i) });
+        deps.onProgress?.({ type: "retrying", index: i });
+      }
+      continue;
     }
 
     deps.onUiEvent?.({ type: "check_start", name: loopName, command: redactSecrets(loopCheck.command) });
