@@ -67,38 +67,42 @@ git add test/adversarial/<slice>.test.ts && git commit -q -m "test(<area>): <sli
 
 ## 4. Launch the worker
 
+`scripts/delegate.sh` is now self-contained — it creates the branch worktree,
+provisions deps, launches the worker, writes a completion sentinel, and
+auto-commits on a passing check:
+
 ```bash
-set -a && . ./.env 2>/dev/null && set +a
-# Do NOT `rm -rf /tmp/deepcoder-ws-*` — it deletes other agents' in-flight worker trees
-# (see the multi-agent hazard box). For a single bounded slice, prefer a branch worktree +
-# isolation=off (no shared /tmp namespace); `keep` is shown here for the one-shot case.
-DEEPCODER_PROVIDER=deepseek DEEPCODER_MODEL=deepseek-v4-flash \
-DEEPCODER_BASE_URL=https://api.deepseek.com \
-DEEPCODER_API_KEY="$DEEPSEEK_API_KEY" \
-nohup node --import tsx src/cli/main.ts \
-  --mode auto --sandbox off --workspace-isolation keep \
-  --solve --check phase --solve-attempts 3 \
-  "$(cat /tmp/task-XX.txt)" > /tmp/XX-run.log 2>&1 &
+scripts/delegate.sh deepseek /tmp/task-XX.txt feat-XX        # provider task-file branch
+# → worktree:  ../deleg-feat-XX   (branch feat-XX off master; slug-on-collision)
+# → log:       /tmp/deleg-feat-XX.log
+# → sentinel:  /tmp/deleg-feat-XX.log.exit   (worker exit code, written on finish)
 ```
 
-Or just `scripts/delegate.sh deepseek /tmp/task-XX.txt /tmp/XX-run.log` (defaults to
-`isolation=off` — run it from a branch worktree).
+Run it N times with disjoint branch names to delegate in parallel — each gets its
+OWN branch worktree (no shared `/tmp/deepcoder-ws-*` namespace), so parallel and
+multi-agent runs are safe. `DELEGATE_DRY_RUN=1` prints the plan without launching.
 
-Flag rationale:
-- `--workspace-isolation keep` — worker edits land in a throwaway git worktree
-  (`/tmp/deepcoder-ws-*/wt`), it writes a patch (`.deepcoder/isolation-*.patch`), and your real
-  tree is never touched.
+Flag rationale (the script sets these — do not "modernise" them away):
+- **branch worktree + `--workspace-isolation off`** — the branch IS the isolation
+  boundary; the worker edits the worktree in place, master is untouched.
 - `--solve --check phase` — the worker's own gate is `npm run test:phase`.
-- `--solve-attempts 3` — **cap at 3**. More re-dumps the entire check log into the model's
-  context each attempt; by ~attempt 4 a 128K-window model chokes/stalls (proc `Sl`, ~0% CPU).
-- `--mode auto` headless auto-denies the worker's own `npm install` etc.; `--sandbox off` lets
-  the full `test:phase` run.
+- `--solve-attempts 3` — **cap at 3**. More re-dumps the entire check log into the
+  model's context each attempt; by ~attempt 4 a 128K-window model chokes/stalls.
+- `--mode auto` headless auto-denies the worker's own `npm install` etc.
+- **`--sandbox off --no-contain`** (load-bearing, NOT cruft): `test:phase` itself
+  EXECUTES bubblewrap, and nested unprivileged bwrap fails on this kernel — a
+  contained worker could never pass the check. The worktree + the always-on
+  `resolveInWorkspace` file guard still confine *file* edits; only `run_bash` is
+  unsandboxed, acceptable for a trusted, bounded slice.
 
-Poll the log for the result (don't tail the agent transcript):
+Poll the **sentinel** for completion (no PID-watching), then read the log:
 ```bash
-grep -E 'solve attempt|check phase:|patch written|isolated workspace kept' /tmp/XX-run.log | tail
+until [ -f /tmp/deleg-feat-XX.log.exit ]; do sleep 5; done   # fires when the worker exits
+cat /tmp/deleg-feat-XX.log.exit                               # 0 = solved (+ auto-committed)
+grep -E 'solve attempt|check phase:|solved in' /tmp/deleg-feat-XX.log | tail
 ```
-A clean win shows `check phase: passed (exit 0)` then `patch written to: …`.
+A clean win shows `check phase: passed (exit 0)` and `solved in N attempt(s)`, and
+the worker's changes are already committed on `feat-XX` (still verify before merge).
 
 ## 5. Verify-then-force IN-HOUSE (the default — never trust the green)
 
