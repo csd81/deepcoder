@@ -37,6 +37,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "rollback", args: "<id> [--force]", description: "Undo agent edits to a checkpoint", category: "session" },
 
   // context
+  { name: "init", description: "Bootstrap .deepcoder/instructions.md from project analysis", category: "context" },
   { name: "understand", description: "Summarize the repository", category: "context" },
   { name: "semantic", description: "Build the semantic index", category: "context" },
   { name: "context", description: "Show context-token usage", category: "context" },

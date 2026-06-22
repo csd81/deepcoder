@@ -1,4 +1,4 @@
-import { promises as fs, openSync, readSync, fstatSync, closeSync } from "node:fs";
+import { promises as fs, openSync, readSync, fstatSync, closeSync, statSync } from "node:fs";
 import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
 import { estimateCost } from "../providers/pricing.js";
@@ -40,6 +40,7 @@ import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
+import { detectTestFramework, detectPkgManager, detectLinter, detectLanguage, buildStarterMd, type ProjectProfile } from "./initProject.js";
 import { buildDeterministicPlan } from "../context/contextPlanner.js";
 import { renderExplorerBrief } from "../context/explorerBrief.js";
 import { activityRegistry, runPsSlash, runStopSlash } from "../runtime/activityRegistry.js";
@@ -204,6 +205,11 @@ export async function handleSlashCommand(
       session.todos.length = 0;
       console.log(chalk.dim("Conversation and todos cleared."));
       return { consumed: true };
+
+    case "init": {
+      await runInit(session);
+      return { consumed: true };
+    }
 
     case "understand":
       await runUnderstand(session);
@@ -3056,6 +3062,172 @@ function resolveDelegateOverride(session: Session): WorkerModelOverride | undefi
   const route = session.modelRouter?.resolve("delegate");
   if (!route || route.source === "default") return undefined;
   return { provider: route.provider, model: route.model, baseUrl: route.baseUrl };
+}
+
+/**
+ * `/init`: scan the workspace, build a ProjectProfile, and write
+ * .deepcoder/instructions.md. Refuses if any instruction file already exists.
+ */
+async function runInit(session: Session): Promise<void> {
+  const root = session.config.workspaceRoot;
+
+  // ── Safety guard: refuse if any instruction file already exists ──
+  const existing = findExistingInstruction(root);
+  if (existing) {
+    if (existing === ".deepcoder/instructions.md") {
+      console.log(chalk.yellow(`Project already initialized (${existing}). Edit it directly or remove it first.`));
+    } else {
+      console.log(chalk.yellow(
+        `Found existing ${existing}. /init would write .deepcoder/instructions.md — remove the existing file first, or add this content manually.`,
+      ));
+    }
+    return;
+  }
+
+  // ── Enumerate tracked files ──
+  let paths: string[];
+  try {
+    const { stdout } = await execFileP("git", ["ls-files"], { cwd: root, maxBuffer: 64 * 1024 * 1024 });
+    paths = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  } catch {
+    console.log(chalk.dim("/init: not a git repo (or git unavailable) — cannot enumerate files."));
+    return;
+  }
+
+  // ── Read package.json ──
+  let hasPackageJson = false;
+  let scripts: Record<string, string> = {};
+  let deps: Record<string, string> = {};
+  let devDeps: Record<string, string> = {};
+  const pkgPath = path.join(root, "package.json");
+  try {
+    const raw = await fs.readFile(pkgPath, "utf8");
+    const pkg = JSON.parse(raw) as Record<string, unknown>;
+    hasPackageJson = true;
+    scripts = (pkg.scripts as Record<string, string>) ?? {};
+    deps = (pkg.dependencies as Record<string, string>) ?? {};
+    devDeps = (pkg.devDependencies as Record<string, string>) ?? {};
+  } catch {
+    // No package.json — proceed with empty defaults.
+  }
+
+  // ── Read tsconfig.json ──
+  let hasTsconfig = false;
+  let tsStrict: boolean | null = null;
+  const tsconfigPath = path.join(root, "tsconfig.json");
+  try {
+    const raw = await fs.readFile(tsconfigPath, "utf8");
+    const tsconfig = JSON.parse(raw) as Record<string, unknown>;
+    hasTsconfig = true;
+    const compilerOptions = tsconfig.compilerOptions as Record<string, unknown> ?? {};
+    tsStrict = compilerOptions.strict === true;
+  } catch {
+    // No tsconfig — proceed with null.
+  }
+
+  // ── Detect well-known root files ──
+  const topFiles: string[] = [];
+  const wellKnownRootFiles = [
+    "package.json", "tsconfig.json", "README.md", ".gitignore",
+    "Dockerfile", ".dockerignore", ".editorconfig", ".prettierrc",
+    ".eslintrc", ".eslintrc.json", ".eslintrc.yaml", ".eslintrc.js",
+    "biome.json", ".oxlintrc.json", ".ruff.toml", "dprint.json",
+    ".node-version", ".nvmrc", ".env.example",
+  ];
+  for (const f of wellKnownRootFiles) {
+    try {
+      await fs.access(path.join(root, f));
+      topFiles.push(f);
+    } catch { /* not present */ }
+  }
+
+  const hasReadme = topFiles.some((f) => f.toLowerCase().startsWith("readme"));
+  const hasGitignore = topFiles.includes(".gitignore");
+  const hasDockerfile = topFiles.includes("Dockerfile");
+
+  // ── Detect source directories ──
+  const srcDirs = new Set<string>();
+  const srcExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs"];
+  for (const p of paths) {
+    const firstSlash = p.indexOf("/");
+    if (firstSlash > 0) {
+      const top = p.slice(0, firstSlash);
+      const ext = p.slice(p.lastIndexOf("."));
+      if (srcExtensions.includes(ext)) {
+        srcDirs.add(top);
+      }
+    }
+  }
+
+  // ── Count files ──
+  const fileCount = paths.length;
+
+  // ── Collect devDeps ∪ deps for detection ──
+  const allDeps: Record<string, string> = { ...deps, ...devDeps };
+
+  // ── Detect lockfiles ──
+  const lockFiles = paths.filter((p) =>
+    p === "package-lock.json" || p === "pnpm-lock.yaml" || p === "yarn.lock" || p === "bun.lockb"
+  );
+
+  // ── Detect source files for language detection ──
+  const srcFiles = paths.filter((p) => srcExtensions.some((ext) => p.endsWith(ext)));
+
+  // ── Build profile (pure) ──
+  const profile: ProjectProfile = {
+    hasPackageJson,
+    scripts,
+    hasTsconfig,
+    tsStrict,
+    hasReadme,
+    hasGitignore,
+    hasDockerfile,
+    testFramework: detectTestFramework(allDeps),
+    linter: detectLinter(allDeps, topFiles),
+    formatter: null, // simplified: not doing deep config-file detection
+    pkgManager: detectPkgManager(lockFiles),
+    lang: detectLanguage(srcFiles),
+    srcDirs: [...srcDirs].sort(),
+    topFiles,
+    fileCount,
+  };
+
+  // ── Write .deepcoder/instructions.md ──
+  const mdContent = buildStarterMd(profile);
+  const deepcoderDir = path.join(root, ".deepcoder");
+  const instructionsPath = path.join(deepcoderDir, "instructions.md");
+  try {
+    await fs.mkdir(deepcoderDir, { recursive: true });
+    await fs.writeFile(instructionsPath, mdContent, "utf8");
+    console.log(chalk.green(`Wrote ${displayPath(root, instructionsPath)}`));
+    console.log(chalk.dim(
+      `  Project: ${profile.lang} · ${profile.fileCount} files · ` +
+      `test: ${profile.testFramework ?? "none"} · ` +
+      `linter: ${profile.linter ?? "none"} · ` +
+      `pkg: ${profile.pkgManager ?? "none"}`,
+    ));
+    console.log(chalk.dim("  Review and edit the generated file — /init never overwrites."));
+  } catch (err) {
+    console.log(chalk.red(`Failed to write instructions: ${(err as Error).message}`));
+  }
+}
+
+/**
+ * Check for any existing instruction file at the workspace root.
+ * Returns the relpath or null.
+ */
+function findExistingInstruction(root: string): string | null {
+  const candidates = [".deepcoder/instructions.md", "AGENTS.md", "CLAUDE.md"];
+  for (const rel of candidates) {
+    try {
+      const abs = resolveReadPathInWorkspace(root, rel);
+      statSync(abs);
+      return rel;
+    } catch {
+      // Not found or inaccessible — try next.
+    }
+  }
+  return null;
 }
 
 async function runUnderstand(session: Session): Promise<void> {
