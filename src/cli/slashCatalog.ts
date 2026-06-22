@@ -72,6 +72,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "isolation", args: "[status|diff|apply|discard|path]", description: "Manage workspace isolation", category: "config" },
   { name: "mcp", args: "[reload]", description: "List configured MCP servers and tools", category: "config" },
   { name: "models", description: "Show the model routing table", category: "config" },
+  { name: "theme", args: "[default|high-contrast|monochrome|muted]", description: "Switch the TUI color theme", category: "config" },
   { name: "model", args: "[<role> [<provider>/<model>]] | reset <role|all>", description: "Inspect or set a session-local model override", category: "config" },
   { name: "effort", args: "[[<role>] <low|medium|high>] | reset <role|all>", description: "Inspect or set reasoning effort", category: "config" },
 

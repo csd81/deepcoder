@@ -50,6 +50,7 @@ import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
 import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
 import { renderFooterHints, type FooterHintMode } from "../ui/footerHints.js";
+import { createNamedTheme, listThemeNames, isValidThemeName, type ThemeName } from "../ui/themes.js";
 import { createSearchState, updateSearch, moveSearchSelection, selectedMatch, type TranscriptSearchState } from "../ui/transcriptSearch.js";
 import { formatTranscriptBlockMarkdown, selectedBlock } from "../ui/transcriptExport.js";
 import { safeExportFilename } from "../ui/exportWriter.js";
@@ -649,7 +650,9 @@ export async function runTuiRepl(session: Session): Promise<void> {
     // stdout.isTTY unset — treat either stream being a TTY as color-capable.
     isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) || Boolean((stdin as { isTTY?: boolean }).isTTY),
   });
-  const theme: Theme = createTheme(colorEnabled);
+  // ── 10A.18: runtime-switchable named theme (/theme <name>) ──
+  let themeName: ThemeName = "default";
+  let theme: Theme = createNamedTheme(themeName, colorEnabled);
   // ── 10A.13: contextual help overlay (toggled with `?`) ──
   let helpVisible = false;
   // ── 10A.9: scrollback search (Ctrl+F) ──
@@ -956,6 +959,19 @@ export async function runTuiRepl(session: Session): Promise<void> {
     if (line === "/exit" || line === "/quit") { restore(); resolveDone(); return; }
     if (line.startsWith("/")) {
       const cmd = (line.slice(1).split(/\s+/)[0] ?? "").toLowerCase();
+      // 10A.18: /theme switches the live palette and repaints (no suspend).
+      if (cmd === "theme") {
+        const name = line.slice(1).split(/\s+/)[1];
+        if (!name) {
+          transcript = applyEvent(transcript, { type: "notice", message: `theme: ${themeName} · available: ${listThemeNames().join(", ")} · use /theme <name>` });
+        } else if (isValidThemeName(name)) {
+          themeName = name; theme = createNamedTheme(themeName, colorEnabled); prevFrame = [];
+          transcript = applyEvent(transcript, { type: "notice", message: `theme set to ${themeName}` });
+        } else {
+          transcript = applyEvent(transcript, { type: "notice", message: `unknown theme "${name}" · available: ${listThemeNames().join(", ")}` });
+        }
+        stickBottom(); redraw(); return;
+      }
       if (TUI_INLINE_SLASH.has(cmd)) {
         // Capture the command's stdout and show it as a transcript block — no
         // alt-screen suspend, so the output stays in the scrollable UI.
