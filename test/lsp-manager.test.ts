@@ -90,6 +90,18 @@ test("a failed launch yields null, and a later call retries", async () => {
   assert.equal(state.launches, 2, "launch attempted again after the failure");
 });
 
+test("real spawnLaunch: a missing server binary degrades to null (never crashes)", async () => {
+  // Uses the DEFAULT (real) spawnLaunch — no fake. A non-existent command makes
+  // child_process.spawn emit an async ENOENT 'error'; the manager must swallow it
+  // and resolve null, NOT let an unhandled error crash the process.
+  const mgr = createLspManager(
+    { enabled: true, servers: { typescript: { command: "definitely-no-such-lsp-bin-xyz", args: [] } } },
+    "/tmp",
+  );
+  assert.equal(await mgr.forFile("/tmp/a.ts"), null);
+  await mgr.closeAll();
+});
+
 test("closeAll stops every client (shutdown+exit+dispose) and kills the process", async () => {
   const { launch, state } = fakeLauncher();
   const mgr = createLspManager(cfg, "/ws", launch);

@@ -27,6 +27,15 @@ export type Launch = (spec: LspServerSpec, workspaceRoot: string) => Promise<Lau
 /** Production launcher: spawn the server child and wire its stdio to JSON-RPC. */
 export const spawnLaunch: Launch = async (spec, workspaceRoot) => {
   const child = spawn(spec.command, spec.args, { cwd: workspaceRoot, stdio: ["pipe", "pipe", "pipe"] });
+  // A failed spawn (e.g. ENOENT for a missing binary) emits an async 'error'
+  // event; without a listener Node throws an UNCAUGHT exception that crashes the
+  // whole process. Keep a permanent no-op listener so a later error can't crash
+  // us, and resolve only once the process has actually spawned.
+  child.on("error", () => { /* surfaced via the spawn/error race + onExit eviction */ });
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", () => resolve());
+    child.once("error", (err) => reject(err)); // missing binary / exec failure → reject
+  });
   if (!child.stdout || !child.stdin) throw new Error(`lsp: failed to open stdio for ${spec.command}`);
   const conn = createJsonRpcConnection(child.stdout, child.stdin);
   return {
@@ -35,6 +44,15 @@ export const spawnLaunch: Launch = async (spec, workspaceRoot) => {
     onExit: (cb) => { child.once("exit", cb); },
   };
 };
+
+/** Reject after `ms` (unref'd so it never keeps the event loop alive). */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`lsp: ${label} timed out after ${ms}ms`)), ms);
+    if (typeof timer.unref === "function") timer.unref();
+    p.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
 
 interface Entry { client: LspClient; kill: () => void; }
 
@@ -58,12 +76,18 @@ export function createLspManager(
     if (!spec) return null;
     try {
       const server = await launch(spec, workspaceRoot);
-      const client = await createLspClient(server.conn, rootUri);
-      // Crash supervision: on exit, evict so the next forFile() relaunches.
-      server.onExit?.(() => { byLanguage.delete(language); });
-      return { client, kill: server.kill };
+      try {
+        // Bound the handshake so a spawned-but-silent server can't hang forever.
+        const client = await withTimeout(createLspClient(server.conn, rootUri), 10_000, "initialize");
+        // Crash supervision: on exit, evict so the next forFile() relaunches.
+        server.onExit?.(() => { byLanguage.delete(language); });
+        return { client, kill: server.kill };
+      } catch (e) {
+        try { server.kill(); } catch { /* */ } // don't leak the child on handshake failure
+        throw e;
+      }
     } catch {
-      return null; // launch/handshake failed → unavailable
+      return null; // launch/handshake failed → unavailable (never throw into the loop)
     }
   }
 
