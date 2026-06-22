@@ -19,8 +19,17 @@ export const readFileTool: Tool = {
   name: "read_file",
   kind: "read-only",
   description:
-    "Read a UTF-8 text file from the workspace and return its contents with 1-indexed line numbers." +
-    " Use offset+limit to read a slice of a large file instead of the whole file.",
+    `Read a file from the workspace. If the path does not exist, an error is returned.
+
+Usage:
+- The path parameter is relative to the workspace root.
+- Returns up to 2000 lines by default. Use offset+limit to read specific ranges.
+- Lines are prefixed with "<line>: <content>" (e.g., "1: import fs from 'fs'").
+- Use grep to find specific content in large files.
+- If unsure of the path, use glob to find files by pattern.
+- Call this tool in parallel when you need multiple files.
+- Avoid tiny 30-line slices — read a larger window in one call.
+- This tool cannot read binary files or files over 1 MB.`,
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("read_file", schema, raw);

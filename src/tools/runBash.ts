@@ -14,8 +14,14 @@ export const runBashTool: Tool = {
   name: "run_bash",
   kind: "execute",
   description:
-    "Run a bash command from the workspace root and return combined stdout/stderr. " +
-    "Subject to the permission policy: dangerous commands are blocked or require approval.",
+    `Run a bash command from the workspace root. Do NOT use for file operations (read, write, edit) — use the dedicated tools instead.
+
+Usage:
+- The command runs from the workspace root. Use workdir instead of cd <dir> && <cmd>.
+- Dangerous commands (rm, sudo, chmod, redirects outside workspace) may be blocked by the permission policy.
+- For git operations: stage explicit paths, never git add -A. Review changes before committing.
+- Prefer read_file/grep over cat/grep in bash — the tool versions are more reliable.
+- Combined stdout/stderr are returned.`,
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("run_bash", schema, raw);

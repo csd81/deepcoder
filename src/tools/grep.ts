@@ -25,9 +25,15 @@ export const grepTool: Tool = {
   name: "grep",
   kind: "read-only",
   description:
-    "Search file contents for a regex. Uses ripgrep (rg) when available, otherwise a built-in scan. " +
-    "Returns matching lines with file:line prefixes. " +
-    "Use when you know the literal/regex to match; for a conceptual query use semantic_search.",
+    `Search file contents for a regex pattern. For finding files by name, use glob instead.
+
+Usage:
+- Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+").
+- Filter by file pattern using the glob parameter (e.g., "*.ts", "*.{ts,js}").
+- Returns matching lines with file:line prefixes.
+- Use before reading to locate the right file.
+- For open-ended searches, prefer this over reading every file.
+- For a conceptual query when you don't have a specific pattern, use semantic_search.`,
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("grep", schema, raw);

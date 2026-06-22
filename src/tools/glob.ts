@@ -18,7 +18,8 @@ const MAX_MATCHES = 1000;
 export const globTool: Tool = {
   name: "glob",
   kind: "read-only",
-  description: "Find files matching a glob pattern (supports *, **, ?). Returns matching paths.",
+  description:
+    "Find files matching a glob pattern (supports *, **, ?). Returns matching paths.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("glob", schema, raw);

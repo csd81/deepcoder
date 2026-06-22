@@ -84,7 +84,8 @@ export function createPtyTools(opts: PtyToolsOptions): Tool[] {
     description:
       "Write to a long-lived interactive shell session and return its accumulated output. " +
       "The session persists across calls (stateful: cd, env vars, REPLs survive). " +
-      "Subject to the command permission policy. Use read_only to poll for more output.",
+      "Subject to the command permission policy. Use read_only to poll for more output." +
+      " Do NOT use for file operations (read, write, edit) — use the dedicated tools instead.",
     schema,
     build(raw): ToolInvocation {
       const args = parseArgs("run_in_shell", schema, raw);

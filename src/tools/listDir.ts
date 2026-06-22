@@ -16,7 +16,8 @@ const MAX_ENTRIES = 1000;
 export const listDirTool: Tool = {
   name: "list_dir",
   kind: "read-only",
-  description: "List the entries of a directory in the workspace (directories marked with a trailing /).",
+  description:
+    "List the entries of a directory in the workspace (directories marked with a trailing /).",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("list_dir", schema, raw);

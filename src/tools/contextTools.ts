@@ -38,7 +38,8 @@ const findSymbolsSchema = z.object({
 export const findSymbolsTool: Tool = {
   name: "find_symbols",
   kind: "read-only",
-  description: "Search the repo's indexed top-level symbols by name and return matching file:symbol locations.",
+  description:
+    "Search the repo's indexed top-level symbols by name and return matching file:symbol locations.",
   schema: findSymbolsSchema,
   build(raw): ToolInvocation {
     const args = parseArgs("find_symbols", findSymbolsSchema, raw);
