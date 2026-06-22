@@ -170,9 +170,21 @@ const acceptanceFirstSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
+const autopilotSchema = z.object({
+  enabled: z.boolean().optional(),
+  maxRounds: z.number().int().positive().optional(),
+  maxWorkers: z.number().int().positive().optional(),
+  maxConcurrency: z.number().int().positive().optional(),
+  acceptanceFirst: z.boolean().optional(),
+  autoApply: z.boolean().optional(),
+  stopOnConflict: z.boolean().optional(),
+  stopOnQualityWarning: z.boolean().optional(),
+});
+
 const delegateSchema = z.object({
   qualityGate: qualityGateSchema.optional(),
   acceptanceFirst: acceptanceFirstSchema.optional(),
+  autopilot: autopilotSchema.optional(),
 });
 
 const diagnosticRuleSchema = z.object({
