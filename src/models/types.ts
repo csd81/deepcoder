@@ -70,7 +70,7 @@ export interface ResolvedModelRoute {
   baseUrl: string;
   temperature?: number;
   reasoningEffort?: "low" | "medium" | "high";
-  source: "default" | "file" | "env" | "cli";
+  source: "default" | "file" | "env" | "cli" | "session";
 }
 
 /** Shape of the `models` block in .deepcoder/config.json. */
