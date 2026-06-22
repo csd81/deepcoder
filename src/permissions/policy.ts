@@ -26,6 +26,12 @@ export function checkPermission(
     return "deny";
   }
 
+  // Phase 10T — yolo: auto-approve everything. Placed AFTER the MCP-execute deny
+  // (so it never resurrects an uncontained MCP tool) but before all else, so
+  // mutate + execute (even deny-classified) run unprompted. Safe ONLY because
+  // --yolo forces workspace containment ON and the PTY/MCP escape hatches OFF.
+  if (mode === "yolo") return "allow";
+
   // Read-only and session-state tools never touch the filesystem/shell, so
   // they are always allowed regardless of mode.
   if (invocation.kind === "read-only" || invocation.kind === "session") return "allow";

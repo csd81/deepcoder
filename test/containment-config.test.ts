@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { loadConfig } from "../src/config/config.js";
 
 function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
-  const keys = ["DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_CONTAIN", "DEEPCODER_SANDBOX"];
+  const keys = ["DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_CONTAIN", "DEEPCODER_SANDBOX", "DEEPCODER_MCP_EXECUTE", "DEEPCODER_INTERACTIVE_SHELL"];
   const saved: Record<string, string | undefined> = {};
   for (const k of keys) { saved[k] = process.env[k]; delete process.env[k]; }
   Object.assign(process.env, env);
@@ -60,5 +60,40 @@ test("containment WINS over an explicit --sandbox off", () => {
     const c = loadConfig({ workspaceRoot: "/tmp", sandbox: { mode: "off" }, containment: { enabled: true } });
     assert.equal(c.sandbox.mode, "bubblewrap");
     assert.equal(c.sandbox.fallback, "fail");
+  });
+});
+
+// ── Phase 10T: yolo couples containment ON + escape hatches OFF ──
+test("yolo forces containment ON + bubblewrap + escape hatches OFF", () => {
+  withEnv(KEY, () => {
+    const c = loadConfig({ workspaceRoot: "/tmp", approvalMode: "yolo" });
+    assert.equal(c.approvalMode, "yolo");
+    assert.equal(c.containment.enabled, true);
+    assert.equal(c.sandbox.mode, "bubblewrap");
+    assert.equal(c.mcpExecuteEnabled, false);
+    assert.equal(c.interactiveShell, false);
+  });
+});
+
+test("yolo + --no-contain → containment still ON (yolo wins)", () => {
+  withEnv(KEY, () => {
+    const c = loadConfig({ workspaceRoot: "/tmp", approvalMode: "yolo", containment: { enabled: false } });
+    assert.equal(c.containment.enabled, true);
+  });
+});
+
+test("yolo forces escape hatches off even when env tries to enable them", () => {
+  withEnv({ ...KEY, DEEPCODER_MCP_EXECUTE: "1", DEEPCODER_INTERACTIVE_SHELL: "1" }, () => {
+    const c = loadConfig({ workspaceRoot: "/tmp", approvalMode: "yolo" });
+    assert.equal(c.mcpExecuteEnabled, false);
+    assert.equal(c.interactiveShell, false);
+  });
+});
+
+test("without yolo, env CAN enable the escape hatches (sanity)", () => {
+  withEnv({ ...KEY, DEEPCODER_MCP_EXECUTE: "1", DEEPCODER_INTERACTIVE_SHELL: "1" }, () => {
+    const c = loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } });
+    assert.equal(c.mcpExecuteEnabled, true);
+    assert.equal(c.interactiveShell, true);
   });
 });

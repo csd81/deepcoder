@@ -42,7 +42,8 @@ export function renderStatusBar(info: StatusBarInfo, width: number, theme: Theme
   // empty " ·  · " gaps.
   const segs: string[] = [];
   segs.push(theme.title("deepcoder"));
-  segs.push(theme.dim(info.mode));
+  // 10T: yolo is a powerful mode — highlight it (warning color) vs a dim chip.
+  segs.push(info.mode === "yolo" ? theme.warning("YOLO") : theme.dim(info.mode));
   segs.push(theme.dim(`${info.provider}/${info.model}`));
   segs.push(theme.dim(`sandbox ${info.sandbox}`));
   segs.push(theme.dim(`web ${info.web ? "on" : "off"}`));

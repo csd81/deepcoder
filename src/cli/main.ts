@@ -31,6 +31,7 @@ program
   .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
   .option("--contain", "hard workspace containment: no file/shell access escapes the workspace (DEFAULT ON; requires bubblewrap)")
   .option("--no-contain", "disable workspace containment (allow shell access outside the workspace)")
+  .option("--yolo", "approve ALL actions within the workspace — no prompts; forces containment ON and disables the MCP-execute + interactive-shell escape hatches")
   .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
   .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
   .option("--tui", "interactive: use the experimental scrollable terminal UI (TTY only)")
@@ -54,6 +55,7 @@ program
         telemetry?: string;
         sandbox?: string;
         contain?: boolean;
+        yolo?: boolean;
         workspaceIsolation?: string;
         workspaceIsolationIncludeDirty?: boolean;
         tui?: boolean;
@@ -77,6 +79,8 @@ program
       // --contain / --no-contain → commander gives opts.contain (boolean | undefined).
       // undefined leaves env/file to decide; a boolean makes the CLI win.
       ...(opts.contain !== undefined ? { containment: { enabled: opts.contain } } : {}),
+      // --yolo: approval mode "yolo" (loadConfig forces containment on + escape hatches off).
+      ...(opts.yolo ? { approvalMode: "yolo" as ApprovalMode } : {}),
       ...(opts.workspaceIsolation || opts.workspaceIsolationIncludeDirty
         ? {
             workspaceIsolation: {
@@ -93,6 +97,16 @@ program
         "Install bubblewrap, or drop --contain to run without containment.",
       ));
       process.exit(1);
+    }
+    // Phase 10T — loud banner: yolo trades the classifier/prompt guardrail for the
+    // sandbox guardrail, so make it unmistakable (and note --no-contain was ignored).
+    if (baseConfig.approvalMode === "yolo") {
+      console.error(chalk.yellow(
+        "⚠ YOLO — auto-approving ALL actions; workspace containment FORCED ON; MCP-execute + interactive-shell disabled.",
+      ));
+      if (opts.contain === false) {
+        console.error(chalk.yellow("  (--no-contain ignored: --yolo requires the sandbox as its safety net.)"));
+      }
     }
     if (opts.preflight) baseConfig.context.preflight = true;
 

@@ -106,7 +106,7 @@ export interface SlashOutcome {
   exit?: boolean;
 }
 
-const MODES: ApprovalMode[] = ["ask", "auto", "readonly"];
+const MODES: ApprovalMode[] = ["ask", "auto", "readonly", "yolo"];
 
 /**
  * Phase 9M — load + validate a deliverable coverage manifest from a workspace
@@ -248,8 +248,14 @@ export async function handleSlashCommand(
 
     case "mode":
       if (MODES.includes(arg as ApprovalMode)) {
+        // 10T: switching TO yolo at runtime can't re-lock the sandbox (it's built
+        // at load), so only allow it when containment is already on; else refuse.
+        if (arg === "yolo" && !config.containment.enabled) {
+          console.log(chalk.yellow("Refusing /mode yolo: the sandbox isn't locked this session. Start with --yolo for a contained yolo session."));
+          return { consumed: true };
+        }
         session.mode = arg as ApprovalMode;
-        console.log(chalk.dim(`Approval mode: ${session.mode}`));
+        console.log(chalk.dim(`Approval mode: ${session.mode}${session.mode === "yolo" ? " (auto-approve all, workspace-contained)" : ""}`));
       } else {
         console.log(chalk.dim(`Current mode: ${session.mode}. Use one of: ${MODES.join(", ")}`));
       }

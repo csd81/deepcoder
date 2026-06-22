@@ -64,7 +64,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "web", description: "Show web access status and trace", category: "web" },
 
   // config
-  { name: "mode", args: "[ask|auto|readonly]", description: "Show or set approval mode", category: "config" },
+  { name: "mode", args: "[ask|auto|readonly|yolo]", description: "Show or set approval mode", category: "config" },
   { name: "sandbox", args: "[off|fast|local|bubblewrap | network on|off]", description: "Show or set sandbox status", category: "config" },
   { name: "hooks", args: "[enable|disable]", description: "Show or toggle lifecycle hooks", category: "config" },
   { name: "skills", args: "[activate <name>|reload]", description: "List discovered skills", category: "config" },

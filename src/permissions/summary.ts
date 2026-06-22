@@ -259,7 +259,7 @@ export async function buildPermissionSummary(
 export function formatPermissionSummary(summary: PermissionSummary): string {
   const lines: string[] = ["Permissions"];
 
-  lines.push(`  approval mode: ${summary.approvalMode}`);
+  lines.push(`  approval mode: ${summary.approvalMode}${summary.approvalMode === "yolo" ? " (auto-approve all, workspace-contained)" : ""}`);
   if (summary.containment.enabled) {
     lines.push(`  containment: ON (workspace-locked, fail-closed)`);
   }

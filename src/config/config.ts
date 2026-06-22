@@ -19,7 +19,7 @@ const SANDBOX_MODES: SandboxMode[] = [
 ];
 const WS_ISOLATION_MODES: WorkspaceIsolationMode[] = ["off", "patch", "keep"];
 
-export type ApprovalMode = "ask" | "auto" | "readonly";
+export type ApprovalMode = "ask" | "auto" | "readonly" | "yolo";
 export type CheckpointMode = "off" | "manual" | "auto";
 
 /** Phase 8E semantic-search settings (opt-in; default disabled). */
@@ -429,6 +429,14 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...(overrides.containment ?? {}), // CLI wins
   };
 
+  // Phase 10T — yolo couples three settings: it auto-approves everything (handled
+  // in checkPermission), so it MUST keep the sandbox as the only safety net —
+  // force containment ON (overriding --no-contain) and force the UNCONTAINED
+  // escape hatches (MCP-execute, PTY shell) OFF so "approve all" can't reach out.
+  const effectiveApproval = (overrides.approvalMode as ApprovalMode | undefined) ?? approval;
+  const isYolo = effectiveApproval === "yolo";
+  if (isYolo) containment.enabled = true;
+
   const envIso = (process.env.DEEPCODER_WORKSPACE_ISOLATION || "").toLowerCase();
   const workspaceIsolation: WorkspaceIsolationConfig = {
     ...DEFAULT_WORKSPACE_ISOLATION,
@@ -676,12 +684,13 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     // Default-off / fail-closed: execute-mode MCP tools are denied unless
     // explicitly opted in. Enabling only lifts the blanket deny — each call
     // still flows through the permission policy (classifier + approval mode).
-    mcpExecuteEnabled:
-      process.env.DEEPCODER_MCP_EXECUTE === "1" ||
-      process.env.DEEPCODER_MCP_EXECUTE === "true",
-    interactiveShell:
-      process.env.DEEPCODER_INTERACTIVE_SHELL === "1" ||
-      process.env.DEEPCODER_INTERACTIVE_SHELL === "true", // Phase 10G: default-off
+    // 10T: yolo forces these uncontained escape hatches OFF regardless of env.
+    mcpExecuteEnabled: isYolo ? false :
+      (process.env.DEEPCODER_MCP_EXECUTE === "1" ||
+       process.env.DEEPCODER_MCP_EXECUTE === "true"),
+    interactiveShell: isYolo ? false :
+      (process.env.DEEPCODER_INTERACTIVE_SHELL === "1" ||
+       process.env.DEEPCODER_INTERACTIVE_SHELL === "true"), // Phase 10G: default-off
     ...rest,
     // A CLI partial (e.g. {mode}) layers on top of the file/env-resolved sandbox
     // rather than replacing it wholesale. 10S: when containment is on it WINS —
