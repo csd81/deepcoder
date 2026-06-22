@@ -16,6 +16,7 @@ import { webStatus, webSearch, webFetch, webTrace, webClear } from "../web/webCo
 import { createWebSearchProviderFromConfig } from "../web/providerFactory.js";
 import { renderSlashResultPlain } from "./slashResult.js";
 import { buildDebugConfig, formatDebugConfig } from "../config/debugConfig.js";
+import { buildPermissionSummary, formatPermissionSummary } from "../permissions/summary.js";
 import { buildSemanticIndex } from "../semantic/indexer.js";
 import { createEmbeddingProvider } from "../semantic/provider.js";
 import { pluginTrustKey, resolvePluginTrust, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
@@ -1059,6 +1060,38 @@ export async function handleSlashCommand(
       const wantJson = arg.trim().split(/\s+/).includes("--json");
       const report = buildDebugConfig({ config, workspaceRoot: config.workspaceRoot, env: process.env });
       console.log(wantJson ? JSON.stringify(report, null, 2) : formatDebugConfig(report));
+      return { consumed: true };
+    }
+
+    case "permissions": {
+      // 10P: bounded summary of the effective permission/sandbox/web/MCP/plugin policy.
+      const wantJson = arg.trim().split(/\s+/).includes("--json");
+      const root = session.executionRoot ?? config.workspaceRoot;
+      const plugins = await discoverPlugins(root, os.homedir());
+      let pluginTrustStore: PluginTrustStore = { plugins: {} };
+      try {
+        pluginTrustStore = JSON.parse(await fs.readFile(path.join(config.workspaceRoot, ".deepcoder", "plugin-trust.json"), "utf8")) as PluginTrustStore;
+      } catch { /* default empty store */ }
+      const mcpStatus = session.mcp?.status() ?? [];
+      const sum = (mode: "execute" | "readonly") =>
+        mcpStatus.filter((s) => s.mode === mode).reduce((n, s) => n + s.tools.length, 0);
+      const summary = await buildPermissionSummary({
+        approvalMode: session.mode,
+        sandboxConfig: config.sandbox,
+        workspaceIsolationConfig: config.workspaceIsolation,
+        hooksConfig: config.hooks,
+        webConfig: config.web,
+        mcpExecuteEnabled: config.mcpExecuteEnabled,
+        mcpServersCount: mcpStatus.length,
+        mcpExecuteToolsCount: sum("execute"),
+        mcpReadonlyToolsCount: sum("readonly"),
+        checksConfig: config.checks,
+        plugins,
+        pluginTrustStore,
+        classifyCommand,
+        resolveBackend,
+      });
+      console.log(wantJson ? JSON.stringify(summary, null, 2) : formatPermissionSummary(summary));
       return { consumed: true };
     }
 

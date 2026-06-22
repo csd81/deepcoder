@@ -605,7 +605,7 @@ async function injectSessionStartContext(session: Session): Promise<void> {
 const TUI_INLINE_SLASH = new Set([
   "help", "status", "models", "model", "effort", "mode", "usage", "cost",
   "telemetry", "checks", "todos", "context", "web", "doctor", "ps", "goal",
-  "memory", "instructions", "skills", "plugins", "mcp", "isolation", "sandbox", "diff", "debug-config",
+  "memory", "instructions", "skills", "plugins", "mcp", "isolation", "sandbox", "diff", "debug-config", "permissions",
 ]);
 
 export async function runTuiRepl(session: Session): Promise<void> {
