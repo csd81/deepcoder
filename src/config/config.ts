@@ -630,7 +630,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     solveReproPath: process.env.DEEPCODER_SOLVE_REPRO_PATH || undefined,
     solveTelemetry: process.env.DEEPCODER_SOLVE_TELEMETRY || undefined,
     subagentModel: process.env.DEEPCODER_SUBAGENT_MODEL,
-    maxTurns: numEnv(process.env.DEEPCODER_MAX_TURNS, 20),
+    maxTurns: numEnv(process.env.DEEPCODER_MAX_TURNS, 40),
     approvalMode: approval,
     contextBudgetTokens: numEnv(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS, 120000),
     compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, 0.8),
