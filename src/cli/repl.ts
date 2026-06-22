@@ -48,7 +48,7 @@ import { appendWebTrace, type WebTraceRecord } from "../web/trace.js";
 import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
-import { renderApprovalModal } from "../ui/approvalModal.js";
+import { buildApprovalReview, renderApprovalReview } from "../ui/approvalReview.js";
 import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
 import { renderFooterHints, type FooterHintMode } from "../ui/footerHints.js";
 import { createNamedTheme, listThemeNames, isValidThemeName, type ThemeName } from "../ui/themes.js";
@@ -641,6 +641,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let approvalResolve: ((k: string) => void) | null = null;
   let pendingApproval: { description: string; diff?: string } | null = null;
   let approvalScroll = 0;
+  let approvalReviewMode: "diff" | "details" = "diff"; // 10A.20: `d` toggles
   let restored = false;
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((r) => { resolveDone = r; });
@@ -927,7 +928,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const lines = built
       ? built.lines
       : pendingApproval
-        ? renderApprovalModal({ description: pendingApproval.description, diff: pendingApproval.diff, width, height, scroll: approvalScroll, theme })
+        ? renderApprovalReview({ review: buildApprovalReview({ description: pendingApproval.description, diff: pendingApproval.diff }), width, height, scroll: approvalScroll, mode: approvalReviewMode, theme })
         : renderHelpOverlay({ mode: currentHelpMode(), width, height, color: colorEnabled }, theme);
     const maxTop = Math.max(0, lines.length - height);
     // Derive the display offset from chat state without mutating it: an approval
@@ -986,7 +987,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   };
   const approval = createTuiApproval({
     nextKey: () => new Promise<string>((res) => { approvalResolve = res; }),
-    onRender: (req) => { pendingApproval = { description: req.description, diff: req.diff }; approvalScroll = 0; stickBottom(); redraw(); },
+    onRender: (req) => { pendingApproval = { description: req.description, diff: req.diff }; approvalScroll = 0; approvalReviewMode = "diff"; stickBottom(); redraw(); },
   });
   const approve = async (inv: ToolInvocation, preview?: ToolPreview): Promise<boolean> => {
     const ok = await approval.approve({ description: inv.describe(), diff: preview?.diff });
@@ -1080,6 +1081,8 @@ export async function runTuiRepl(session: Session): Promise<void> {
       const a = key?.name ? keyToAction(key.name) : keyToAction(key?.sequence ?? str ?? "");
       if (a === "history-up" || a === "scroll-up" || a === "half-up") { approvalScroll = Math.max(0, approvalScroll - 1); redraw(); return; }
       if (a === "history-down" || a === "scroll-down" || a === "half-down") { approvalScroll += 1; redraw(); return; }
+      // `d` toggles the review panel between diff and details (10A.20) without resolving.
+      if (str === "d") { approvalReviewMode = approvalReviewMode === "diff" ? "details" : "diff"; approvalScroll = 0; redraw(); return; }
       const r = approvalResolve; approvalResolve = null;
       r(key?.name === "escape" ? "escape" : (str ?? key?.sequence ?? key?.name ?? ""));
       return;
