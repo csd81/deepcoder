@@ -68,8 +68,10 @@ git add test/adversarial/<slice>.test.ts && git commit -q -m "test(<area>): <sli
 ## 4. Launch the worker
 
 `scripts/delegate.sh` is now self-contained — it creates the branch worktree,
-provisions deps, launches the worker, writes a completion sentinel, and
-auto-commits on a passing check:
+provisions deps, launches the worker, and writes a completion sentinel. It does
+NOT commit or merge: the worker's changes are left UNCOMMITTED on the branch, so
+landing toward master is an explicit, human-gated step (verify → commit → merge).
+A delegation never integrates itself.
 
 ```bash
 scripts/delegate.sh deepseek /tmp/task-XX.txt feat-XX        # provider task-file branch
@@ -98,11 +100,12 @@ Flag rationale (the script sets these — do not "modernise" them away):
 Poll the **sentinel** for completion (no PID-watching), then read the log:
 ```bash
 until [ -f /tmp/deleg-feat-XX.log.exit ]; do sleep 5; done   # fires when the worker exits
-cat /tmp/deleg-feat-XX.log.exit                               # 0 = solved (+ auto-committed)
+cat /tmp/deleg-feat-XX.log.exit                               # 0 = solved
 grep -E 'solve attempt|check phase:|solved in' /tmp/deleg-feat-XX.log | tail
 ```
-A clean win shows `check phase: passed (exit 0)` and `solved in N attempt(s)`, and
-the worker's changes are already committed on `feat-XX` (still verify before merge).
+A clean win shows `check phase: passed (exit 0)` and `solved in N attempt(s)`. The
+worker's changes sit UNCOMMITTED in `../deleg-feat-XX` — verify in-house (section 5),
+then commit + merge by hand. The delegation will not land anything on its own.
 
 ## 5. Verify-then-force IN-HOUSE (the default — never trust the green)
 

@@ -3,8 +3,9 @@
 # delegate.sh — delegate ONE bounded slice to a DeepSeek/Gemini model worker.
 #
 # Self-contained: creates the branch worktree, provisions deps, launches the
-# worker in the background, writes a completion sentinel, and auto-commits the
-# result on a passing check. See docs/delegation-workflow.md.
+# worker in the background, and writes a completion sentinel. It does NOT commit
+# or merge — landing work toward master is an explicit, human-gated step.
+# See docs/delegation-workflow.md.
 #
 # Usage:
 #   scripts/delegate.sh <provider> <task-file> <branch> [attempts] [base]
@@ -22,8 +23,8 @@
 # OUTPUTS (printed at the end, and machine-readable):
 #   <log>        — combined worker stdout/stderr
 #   <log>.exit   — the worker's exit code, written when it finishes (poll for this)
-#   the worktree — on a passing check (exit 0) the worker's changes are committed
-#                  on <branch>; otherwise they are left uncommitted for inspection.
+#   the worktree — the worker's changes are left UNCOMMITTED on <branch> for an
+#                  explicit human verify-then-commit-then-merge (no auto-landing).
 #
 # WHY --sandbox off --no-contain (NOT a leftover — load-bearing):
 #   The acceptance check is `npm run test:phase`, whose adversarial suite EXECUTES
@@ -86,30 +87,23 @@ git worktree add "$DIR" -b "$branch" "$base" >/dev/null
 
 task_text="$(cat "$taskfile")"
 
-# ── Launch: worker → sentinel → auto-commit on pass, all detached ────────────
+# ── Launch: worker → sentinel, all detached ──────────────────────────────────
 # Provider env is exported (NOT on the command line) so the key never hits argv.
+#
+# NO auto-commit / auto-merge. The worker's changes are left UNCOMMITTED in the
+# branch worktree on purpose: landing work toward master must be an explicit,
+# human-gated step (verify-then-force, then commit + merge by hand). A delegation
+# never integrates itself.
 export DEEPCODER_PROVIDER="$P" DEEPCODER_MODEL="$M" DEEPCODER_BASE_URL="$U" \
        DEEPCODER_API_KEY="$K" DEEPCODER_ALLOW_UNCONTAINED=1
-export WT="$DIR" ATT="$attempts" LOG="$log" BR="$branch" TASKTEXT="$task_text"
+export WT="$DIR" ATT="$attempts" LOG="$log" TASKTEXT="$task_text"
 
 nohup bash -c '
   cd "$WT"
   node --import tsx src/cli/main.ts \
     --mode auto --sandbox off --no-contain --workspace-isolation off \
     --solve --check phase --solve-attempts "$ATT" "$TASKTEXT"
-  rc=$?
-  printf "%s\n" "$rc" > "$LOG.exit"
-  if [ "$rc" -eq 0 ]; then
-    git -C "$WT" add -A
-    git -C "$WT" commit -q -F - <<COMMIT || true
-feat: $BR (delegated worker, --check phase passed)
-
-Auto-committed by delegate.sh after a passing check. NOT yet verified — run the
-in-house verify-then-force (scope, non-vacuous anchors, green test:phase) before merge.
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-COMMIT
-  fi
+  printf "%s\n" "$?" > "$LOG.exit"
 ' > "$log" 2>&1 &
 
 pid=$!
@@ -117,4 +111,4 @@ echo "launched $provider worker (pid $pid, model $M) on branch $branch"
 echo "  worktree: $DIR"
 echo "  log:      $log"
 echo "  sentinel: $log.exit   (poll: 'until [ -f $log.exit ]; do sleep 5; done')"
-echo "  on pass:  changes auto-committed on $branch — still verify in-house before merge"
+echo "  on done:  changes left UNCOMMITTED on $branch — verify in-house, then commit + merge by hand"
