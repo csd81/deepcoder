@@ -259,6 +259,15 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "raw": {
+      const trimmed = arg.trim().toLowerCase();
+      if (trimmed === "on") session.rawMode = true;
+      else if (trimmed === "off") session.rawMode = false;
+      else session.rawMode = !session.rawMode; // toggle
+      console.log(chalk.dim(`Raw mode ${session.rawMode ? "on" : "off"}.`));
+      return { consumed: true };
+    }
+
     case "plan-mode":
       if ((session.planState ?? initPlanMode()).phase === "off") {
         session.planState = enterPlanMode(session.planState ?? initPlanMode(), session.mode);
