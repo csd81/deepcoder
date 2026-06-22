@@ -64,7 +64,7 @@ export const writeFileTool: Tool = {
         try {
           ({ real, lexical, existing } = readExisting(ctx));
         } catch (err) {
-          return { output: (err as Error).message, isError: true };
+          return { output: `Cannot write ${args.path}: ${(err as Error).message}`, isError: true };
         }
         if (existing !== null && !ctx.readTracker.has(lexical) && !ctx.readTracker.has(real)) {
           return {

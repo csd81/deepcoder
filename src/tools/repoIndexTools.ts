@@ -6,6 +6,15 @@ import { impactedBy, reverseGraph } from "../index/impact.js";
 import { relevantTests } from "../index/testTargeting.js";
 import { findReferences } from "../index/references.js";
 import type { FileKind } from "../index/types.js";
+import { boundLines } from "./outputBound.js";
+
+// Hard line caps on rendered lists so a hot identifier / large changeset can't
+// flood the model context. MAX_REF_LINES is the binding cap on the rendered
+// reference list; we ask the scan for a bit more so this cap (with its explicit
+// marker) is what the model actually sees.
+const MAX_REF_LINES = 100;
+const REF_SCAN_MAX = 300;
+const MAX_TEST_LINES = 100;
 
 // Model-callable, read-only repo-index tools (Phase 8C). Each builds the index
 // fresh for the call (bounded by the scanner) so results reflect edits made this
@@ -25,7 +34,8 @@ export const repoIndexTool: Tool = {
   kind: "read-only",
   description:
     "List indexed workspace files with their kind (code/test/config/docs/generated/other) and language. " +
-    "Optionally filter by path prefix and/or kind. Read-only; respects .gitignore/.deepcoderignore.",
+    "Optionally filter by path prefix and/or kind. Read-only; respects .gitignore/.deepcoderignore. " +
+    "A file inventory by kind — for a symbol overview use repo_map.",
   schema: repoIndexSchema,
   build(raw): ToolInvocation {
     const args = parseArgs("repo_index", repoIndexSchema, raw);
@@ -63,7 +73,8 @@ export const findReferencesTool: Tool = {
   kind: "read-only",
   description:
     "Find where an identifier is defined and referenced across indexed code/test files (lexical, bounded). " +
-    "Good for orienting before an edit; not a type-aware resolver.",
+    "Good for orienting before an edit; not a type-aware resolver. " +
+    "Fast lexical scan, no language server required; for precise type-aware results use lsp_references when a server is configured.",
   schema: findReferencesSchema,
   build(raw): ToolInvocation {
     const args = parseArgs("find_references", findReferencesSchema, raw);
@@ -72,12 +83,18 @@ export const findReferencesTool: Tool = {
       describe: () => `Find references to "${args.symbol}"`,
       async execute(ctx) {
         const idx = await buildRepoIndex(ctx.workspaceRoot, { symbols: true });
-        const res = await findReferences(ctx.workspaceRoot, idx, args.symbol, { pathHint: args.pathHint });
+        const res = await findReferences(ctx.workspaceRoot, idx, args.symbol, { pathHint: args.pathHint, max: REF_SCAN_MAX });
         const defs = res.definitions.length
           ? res.definitions.map((d) => `  ${d.kind} ${d.file}:${d.line}`).join("\n")
           : "  (no definition found in the index)";
+        // Enforce a real line cap on the rendered references (the underlying scan
+        // flags truncation but the tool would otherwise dump every ref line).
         const refs = res.references.length
-          ? res.references.map((r) => `  ${r.file}:${r.line}: ${r.text}`).join("\n")
+          ? boundLines(
+              res.references.map((r) => `  ${r.file}:${r.line}: ${r.text}`),
+              MAX_REF_LINES,
+              "references",
+            ).join("\n")
           : "  (no references found)";
         return {
           output:
@@ -150,7 +167,11 @@ export const targetTestsTool: Tool = {
         const tests = [...out].sort();
         return {
           output: tests.length
-            ? `suggested tests (${tests.length}; not run):\n${tests.map((t) => `  ${t}`).join("\n")}`
+            ? `suggested tests (${tests.length}; not run):\n${boundLines(
+                tests.map((t) => `  ${t}`),
+                MAX_TEST_LINES,
+                "tests",
+              ).join("\n")}`
             : "no tests obviously relevant to the changed files.",
         };
       },

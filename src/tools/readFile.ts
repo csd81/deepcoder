@@ -19,7 +19,8 @@ export const readFileTool: Tool = {
   name: "read_file",
   kind: "read-only",
   description:
-    "Read a UTF-8 text file from the workspace and return its contents with 1-indexed line numbers.",
+    "Read a UTF-8 text file from the workspace and return its contents with 1-indexed line numbers." +
+    " Use offset+limit to read a slice of a large file instead of the whole file.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("read_file", schema, raw);

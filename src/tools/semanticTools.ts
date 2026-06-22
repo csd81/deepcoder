@@ -32,6 +32,14 @@ const NO_INDEX = "No semantic index found. Run /semantic rebuild first.";
 const STALE_INDEX =
   "Semantic index was built with a different embedding model/provider — its vectors are not comparable to the current model. Rebuild it with /semantic.";
 const MAX_SNIPPET_BYTES = 600;
+// Hard upper bound on returned results, applied on top of config.topK / the
+// caller's topK — so a misconfigured topK (or a huge caller value) can't flood
+// the model context with snippets.
+const MAX_RESULTS = 25;
+/** Clamp the requested result count to MAX_RESULTS (and at least 1). */
+function boundTopK(requested: number): number {
+  return Math.max(1, Math.min(requested, MAX_RESULTS));
+}
 
 /**
  * Phase 8E staleness guard: refuse to query a vector store whose manifest was
@@ -124,7 +132,7 @@ export function createSemanticTools(deps: SemanticToolDeps): Tool[] {
         if (!store) return { output: NO_INDEX };
         { const stale = staleGuard(store, config); if (stale) return stale; }
         const [qv] = await embed([args.query]);
-        const scored = rankBySimilarity(store.records, qv ?? [], args.topK ?? config.topK);
+        const scored = rankBySimilarity(store.records, qv ?? [], boundTopK(args.topK ?? config.topK));
         return { output: await formatResults(ctx.workspaceRoot, scored) };
       });
     },
@@ -133,7 +141,8 @@ export function createSemanticTools(deps: SemanticToolDeps): Tool[] {
   const hybrid_search: Tool = {
     name: "hybrid_search",
     description:
-      "Semantic search optionally restricted to a path prefix, blended with a lexical (path-term) signal.",
+      "Semantic search optionally restricted to a path prefix, blended with a lexical (path-term) signal. " +
+      "Use when you have a natural-language query AND a rough path; for a pure concept with no path use semantic_search.",
     kind: "read-only",
     schema: hybridSchema,
     build(raw) {
@@ -156,7 +165,7 @@ export function createSemanticTools(deps: SemanticToolDeps): Tool[] {
         }
         const scored = hybridRank(recs, qv ?? [], lex, {
           lexicalWeight: config.hybridLexicalWeight,
-          topK: args.topK ?? config.topK,
+          topK: boundTopK(args.topK ?? config.topK),
         });
         return { output: await formatResults(ctx.workspaceRoot, scored) };
       });
@@ -188,7 +197,7 @@ export function createSemanticTools(deps: SemanticToolDeps): Tool[] {
         const recs = store.records.filter(
           (r) => !(r.chunk.path === args.path && r.chunk.startLine === args.startLine),
         );
-        const scored = rankBySimilarity(recs, qv ?? [], config.topK);
+        const scored = rankBySimilarity(recs, qv ?? [], boundTopK(config.topK));
         return { output: await formatResults(ctx.workspaceRoot, scored) };
       });
     },

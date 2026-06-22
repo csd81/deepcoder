@@ -112,6 +112,55 @@ test("forFile null → isError with graceful message (no throw)", async () => {
   }
 });
 
+test("lsp_diagnostics caps a large list with an explicit truncation marker", async () => {
+  const many = Array.from({ length: 250 }, (_, i): LspDiagnostic => ({
+    severity: 1,
+    message: `diag ${i}`,
+    range: { start: { line: i, character: 0 }, end: { line: i, character: 1 } },
+  }));
+  const { map } = byName(fakeRuntime(fakeClient({ diagnostics: () => many })));
+  const inv = map.get("lsp_diagnostics")!.build({ file: "a.ts" });
+  const res = await inv.execute(makeCtx());
+  assert.equal(res.isError, undefined);
+  const lines = res.output.split("\n");
+  // 200 capped lines + 1 marker line.
+  assert.equal(lines.length, 201, `got ${lines.length} lines`);
+  assert.match(res.output, /200 of 250 diagnostics shown; truncated/);
+  assert.ok(!res.output.includes("diag 200"), "content beyond cap must be hidden");
+});
+
+test("lsp_references caps a large list with an explicit truncation marker", async () => {
+  const many = Array.from({ length: 250 }, (_, i): LspLocation => ({
+    uri: `file:///ws/f${i}.ts`,
+    range: { start: { line: i, character: 0 }, end: { line: i, character: 1 } },
+  }));
+  const { map } = byName(fakeRuntime(fakeClient({ async references() { return many; } })));
+  const inv = map.get("lsp_references")!.build({ file: "a.ts", line: 1, character: 1 });
+  const res = await inv.execute(makeCtx());
+  assert.equal(res.isError, undefined);
+  const lines = res.output.split("\n");
+  assert.equal(lines.length, 201, `got ${lines.length} lines`);
+  assert.match(res.output, /200 of 250 references shown; truncated/);
+  assert.ok(!res.output.includes("f200.ts"), "content beyond cap must be hidden");
+});
+
+test("a throwing LSP runtime call degrades gracefully (isError, no throw)", async () => {
+  const boom = (): never => {
+    throw new Error("server crashed");
+  };
+  const cases: Array<[string, Partial<LspClient>, Record<string, unknown>]> = [
+    ["lsp_diagnostics", { diagnostics: boom }, { file: "a.ts" }],
+    ["lsp_definition", { async definition() { return boom(); } }, { file: "a.ts", line: 1, character: 1 }],
+    ["lsp_references", { async references() { return boom(); } }, { file: "a.ts", line: 1, character: 1 }],
+  ];
+  for (const [name, override, args] of cases) {
+    const { map } = byName(fakeRuntime(fakeClient(override)));
+    const res = await map.get(name)!.build(args).execute(makeCtx());
+    assert.equal(res.isError, true, `${name} should be isError`);
+    assert.match(res.output, /LSP unavailable for a\.ts \(server crashed\) — proceed without it\./, `${name}: ${res.output}`);
+  }
+});
+
 test("the file is passed to the client as a file:// URI", async () => {
   let seenUri = "";
   const client = fakeClient({
