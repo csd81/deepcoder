@@ -38,6 +38,7 @@ import { impactedBy, reverseGraph } from "../index/impact.js";
 import { relevantTests } from "../index/testTargeting.js";
 import { findReferences } from "../index/references.js";
 import { saveIndex, loadIndex, ensureIndex } from "../index/store.js";
+import { runDoctor, formatDoctorReport } from "../doctor/doctor.js";
 import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
@@ -991,6 +992,44 @@ export async function handleSlashCommand(
       const git = new Git(config.workspaceRoot);
       if (await git.isRepo()) console.log((await git.diff()) || chalk.dim("No unstaged changes."));
       else console.log(chalk.dim("Not a git repository."));
+      return { consumed: true };
+    }
+
+    case "doctor": {
+      const parts = arg.trim().split(/\s+/).filter(Boolean);
+      const isJson = parts.includes("--json");
+      const sectionIdx = parts.indexOf("--section");
+      const sectionFilter = sectionIdx !== -1 && parts[sectionIdx + 1] ? parts[sectionIdx + 1]!.trim().toLowerCase() : undefined;
+
+      const report = await runDoctor({
+        workspaceRoot: config.workspaceRoot,
+        config,
+        env: process.env,
+        home: os.homedir(),
+      });
+
+      if (isJson) {
+        // When --section is specified, filter findings to just that section
+        let output = report;
+        if (sectionFilter) {
+          const filtered = report.findings.filter((f) => f.section === sectionFilter);
+          output = {
+            ok: filtered.every((f) => f.level !== "error"),
+            summary: { ok: filtered.filter((f) => f.level === "ok").length, warn: filtered.filter((f) => f.level === "warn").length, error: filtered.filter((f) => f.level === "error").length },
+            findings: filtered,
+          };
+        }
+        console.log(JSON.stringify(output, null, 2));
+      } else if (sectionFilter) {
+        // Show only the filtered section + summary
+        console.log(formatDoctorReport(report).split("\n").filter((l) => {
+          const sectionMatch = l.match(/^(ERR|WARN|OK )\s+(\S+)/);
+          if (!sectionMatch) return true; // keep summary and blank lines
+          return sectionMatch[2] === sectionFilter;
+        }).join("\n"));
+      } else {
+        console.log(formatDoctorReport(report));
+      }
       return { consumed: true };
     }
 
