@@ -107,10 +107,18 @@ export function buildStructuredSummary(
   lines.push("");
   lines.push("## Unresolved items");
   const pending = todos.filter((t) => t.status !== "completed");
-  if (pending.length === 0) {
+  // Preserve the last error/diagnostic too (the legacy compaction kept this — the
+  // model needs the most recent failure to keep solving).
+  const lastError = [...messages].reverse().find(
+    (m) => typeof m.content === "string" && /\b(error|exit code [1-9]|failed|exception|traceback)\b/i.test(m.content),
+  );
+  if (pending.length === 0 && !lastError) {
     lines.push("(none)");
   } else {
     for (const t of pending) lines.push(`- [${t.status}] ${t.content}`);
+    if (lastError && typeof lastError.content === "string") {
+      lines.push(`- last error: ${lastError.content.slice(0, 300).replace(/\s+/g, " ").trim()}`);
+    }
   }
   lines.push("");
   lines.push("Continue the task using the recent messages below.");

@@ -27,7 +27,7 @@ test("compaction is a no-op under budget", () => {
   assert.equal(res.compacted, false);
 });
 
-test("compaction shrinks history and preserves task, files, todos", () => {
+test("compaction shrinks history and preserves task, files, todos, errors", () => {
   const msgs = convo();
   const before = estimateMessages(msgs);
   const todos: Todo[] = [{ id: "1", content: "finish refactor", status: "in_progress" }];
@@ -46,6 +46,8 @@ test("compaction shrinks history and preserves task, files, todos", () => {
   assert.match(summary!.content, /src\/auth\.ts/);
   assert.match(summary!.content, /## Unresolved items/);
   assert.match(summary!.content, /finish refactor/);
+  // The last error must survive compaction (regression guard — see undoApply note).
+  assert.match(summary!.content, /Exit code 1/);
 
   // System prompt stays first; recent user turn is retained.
   assert.equal(msgs[0]!.role, "system");
