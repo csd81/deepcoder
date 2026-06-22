@@ -112,8 +112,8 @@ export interface Config {
    * Precedence: CLI `--sandbox` > `DEEPCODER_SANDBOX` env > config file > default `fast`.
    */
   sandbox: SandboxConfig;
-  /** Phase 10S — opt-in workspace containment (fail-closed, default off). When
-   *  enabled, `sandbox` is rewritten to a workspace-only bubblewrap profile. */
+  /** Phase 10S — workspace containment (fail-closed, default ON). When enabled,
+   *  `sandbox` is rewritten to a workspace-only bubblewrap profile. */
   containment: ContainmentConfig;
   /**
    * Workspace isolation policy. When not "off", agent file edits + checks run in

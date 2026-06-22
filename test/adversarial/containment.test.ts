@@ -17,8 +17,8 @@ const base = (over: Partial<SandboxConfig> = {}): SandboxConfig => ({
   ...over,
 });
 
-test("default containment is OFF", () => {
-  assert.equal(DEFAULT_CONTAINMENT.enabled, false);
+test("default containment is ON (secure by default)", () => {
+  assert.equal(DEFAULT_CONTAINMENT.enabled, true);
 });
 
 test("forces bubblewrap + fail-closed regardless of input mode/fallback", () => {

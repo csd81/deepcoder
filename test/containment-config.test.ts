@@ -19,21 +19,27 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
 }
 const KEY = { DEEPCODER_PROVIDER: "openrouter", DEEPCODER_API_KEY: "k" };
 
-test("default: containment OFF, sandbox untouched", () => {
+test("default: containment ON → sandbox is fail-closed bubblewrap/no-mounts", () => {
   withEnv(KEY, () => {
     const c = loadConfig({ workspaceRoot: "/tmp" });
+    assert.equal(c.containment.enabled, true);
+    assert.equal(c.sandbox.mode, "bubblewrap");
+    assert.equal(c.sandbox.fallback, "fail");
+    assert.deepEqual(c.sandbox.extraMounts, []);
+  });
+});
+
+test("--no-contain (CLI false) disables it → sandbox untouched (fast)", () => {
+  withEnv(KEY, () => {
+    const c = loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } });
     assert.equal(c.containment.enabled, false);
     assert.equal(c.sandbox.mode, "fast");
   });
 });
 
-test("CLI override enables it → sandbox becomes bubblewrap/fail/no-mounts", () => {
-  withEnv(KEY, () => {
-    const c = loadConfig({ workspaceRoot: "/tmp", containment: { enabled: true } });
-    assert.equal(c.containment.enabled, true);
-    assert.equal(c.sandbox.mode, "bubblewrap");
-    assert.equal(c.sandbox.fallback, "fail");
-    assert.deepEqual(c.sandbox.extraMounts, []);
+test("env DEEPCODER_CONTAIN=0 disables the default", () => {
+  withEnv({ ...KEY, DEEPCODER_CONTAIN: "0" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).containment.enabled, false);
   });
 });
 

@@ -175,10 +175,12 @@ test("config precedence: env DEEPCODER_SANDBOX overrides file/default; CLI overr
   process.env.DEEPCODER_SANDBOX = "off";
   process.env.DEEPCODER_API_KEY = "k"; // loadConfig requires a key before it returns
   try {
-    const fromEnv = loadConfig({ apiKey: "k", workspaceRoot: "/tmp" });
+    // Disable containment so we observe raw sandbox-mode precedence (containment,
+    // on by default, would otherwise rewrite the mode to bubblewrap).
+    const fromEnv = loadConfig({ apiKey: "k", workspaceRoot: "/tmp", containment: { enabled: false } });
     assert.equal(fromEnv.sandbox.mode, "off");
     // CLI partial layers on top of env without dropping other fields.
-    const fromCli = loadConfig({ apiKey: "k", workspaceRoot: "/tmp", sandbox: { mode: "fast" } });
+    const fromCli = loadConfig({ apiKey: "k", workspaceRoot: "/tmp", sandbox: { mode: "fast" }, containment: { enabled: false } });
     assert.equal(fromCli.sandbox.mode, "fast");
     assert.equal(fromCli.sandbox.network, "on"); // default preserved through the merge
   } finally {

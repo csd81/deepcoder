@@ -51,7 +51,7 @@ DEEPCODER_MODEL="$M" \
 DEEPCODER_BASE_URL="$U" \
 DEEPCODER_API_KEY="$K" \
 nohup node --import tsx src/cli/main.ts \
-  --mode auto --sandbox off --workspace-isolation "$isolation" \
+  --mode auto --sandbox off --no-contain --workspace-isolation "$isolation" \
   --solve --check phase --solve-attempts "$attempts" \
   "$(cat "$taskfile")" > "$log" 2>&1 &
 

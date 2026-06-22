@@ -19,8 +19,11 @@ containment a **guaranteed, fail-closed** property.
   impossible. System dirs (`/usr /bin /sbin /lib /lib64 /etc`) stay **read-only**
   so commands (bash/git/node, libc, TLS) can run — this is the existing bubblewrap
   behavior. Containment is **filesystem-only** (network is left as configured).
-- **Opt-in, default OFF.** Enable with `--contain` / `DEEPCODER_CONTAIN=1` / config
-  `containment.enabled`. Off → behavior unchanged.
+- **Default ON (secure by default).** Disable with `--no-contain` /
+  `DEEPCODER_CONTAIN=0` / config `containment.enabled=false`. Requires bubblewrap;
+  without it, a contained run refuses at startup (use `--no-contain`). The
+  delegate.sh / dogfood.sh harnesses pass `--no-contain` because they symlink
+  node_modules outside the worktree.
 
 ## Architecture: one chokepoint
 

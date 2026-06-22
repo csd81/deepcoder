@@ -1,8 +1,9 @@
 /**
  * Phase 10S — workspace containment.
  *
- * An opt-in (`--contain` / `DEEPCODER_CONTAIN=1` / config) guarantee that no file
- * access escapes the workspace root. File tools are already contained by
+ * Containment is a guarantee that no file access escapes the workspace root. It
+ * is ON BY DEFAULT (secure by default); disable with `--no-contain` /
+ * `DEEPCODER_CONTAIN=0` / config. File tools are already contained by
  * src/workspace/paths.ts; this closes the SHELL gap by forcing a fail-closed,
  * workspace-only sandbox for every command that flows through `wrapCommand`
  * (run_bash, configured checks, `!cmd`, hooks).
@@ -13,11 +14,11 @@
 import type { SandboxConfig } from "../sandbox/types.js";
 
 export interface ContainmentConfig {
-  /** Master switch — default OFF. When on, the effective sandbox is workspace-locked. */
+  /** Master switch — default ON. When on, the effective sandbox is workspace-locked. */
   enabled: boolean;
 }
 
-export const DEFAULT_CONTAINMENT: ContainmentConfig = { enabled: false };
+export const DEFAULT_CONTAINMENT: ContainmentConfig = { enabled: true };
 
 /**
  * Rewrite a sandbox config into a fail-closed, workspace-only profile:
