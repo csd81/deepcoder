@@ -64,6 +64,8 @@ import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from ".
 import { renderStatusBar, type StatusBarInfo } from "../ui/statusBar.js";
 import { createActivityTimeline, applyActivityEvent, renderActivityTimeline, type ActivityTimelineState } from "../ui/activityTimeline.js";
 import { renderAssistantBlock } from "../ui/assistantRenderState.js";
+import { renderEmptyState } from "../ui/emptyState.js";
+import { createStyleTokens } from "../ui/styleTokens.js";
 import { Git } from "../workspace/git.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
@@ -935,11 +937,16 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const height = viewportH(composer.length, menu.length);
     // While an approval/help overlay is up, the content window IS the overlay.
     const built = overlayActive ? null : buildLinesWithMeta(width);
-    const lines = built
-      ? built.lines
-      : pendingApproval
-        ? renderApprovalReview({ review: buildApprovalReview({ description: pendingApproval.description, diff: pendingApproval.diff }), width, height, scroll: approvalScroll, mode: approvalReviewMode, theme })
-        : renderHelpOverlay({ mode: currentHelpMode(), width, height, color: colorEnabled }, theme);
+    // 10A.19: a fresh session (no conversation yet, only the intro notice) shows
+    // a welcome empty-state instead of a near-blank screen.
+    const showEmpty = built !== null && !transcript.blocks.some((b) => b.kind !== "notice");
+    const lines = showEmpty
+      ? renderEmptyState({ width, height, tokens: createStyleTokens(theme) })
+      : built
+        ? built.lines
+        : pendingApproval
+          ? renderApprovalReview({ review: buildApprovalReview({ description: pendingApproval.description, diff: pendingApproval.diff }), width, height, scroll: approvalScroll, mode: approvalReviewMode, theme })
+          : renderHelpOverlay({ mode: currentHelpMode(), width, height, color: colorEnabled }, theme);
     const maxTop = Math.max(0, lines.length - height);
     // Derive the display offset from chat state without mutating it: an approval
     // pins to top, a bottom-stuck view snaps to maxTop, else clamp the saved top.
@@ -950,7 +957,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       : chat.atBottom ? maxTop : Math.min(Math.max(0, chat.viewportTop), maxTop);
     const hasNewOutputBelow = !overlayActive && !search.active && !chat.atBottom && viewportTop < maxTop;
     // Capture geometry for mouse hit-testing (only meaningful for the transcript).
-    lastRowMeta = built ? built.meta : [];
+    lastRowMeta = built && !showEmpty ? built.meta : [];
     lastViewportTop = viewportTop;
     lastRegions = computeFrameRegions({ height, composerRows: composer.length, hasIndicator: hasNewOutputBelow, menuRows: menu.length });
     const usage = session.tokenUsage;
