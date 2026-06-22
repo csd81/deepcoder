@@ -11,8 +11,34 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderFrame, keyToAction } from "../../src/ui/minimalRenderer.js";
+import { renderFrame, keyToAction, truncate } from "../../src/ui/minimalRenderer.js";
 import type { FrameInput } from "../../src/ui/minimalRenderer.js";
+
+test("[frame-menu] renderFrame inserts menuLines between the indicator and the composer", () => {
+  const frame = renderFrame({
+    statusLine: "status",
+    lines: ["a", "b", "c"],
+    viewportTop: 0,
+    height: 3,
+    width: 40,
+    inputLine: "> /de",
+    inputLines: ["> /de"],
+    hasNewOutputBelow: false,
+    menuLines: ["+ commands +", "| /delegate |", "+----------+"],
+  });
+  assert.equal(frame[frame.length - 1], truncate("> /de", 40));
+  assert.equal(frame[frame.length - 2], truncate("+----------+", 40));
+  assert.equal(frame[frame.length - 3], truncate("| /delegate |", 40));
+  assert.equal(frame[frame.length - 4], truncate("+ commands +", 40));
+});
+
+test("[frame-menu-absent] no menuLines region when omitted", () => {
+  const frame = renderFrame({
+    statusLine: "s", lines: ["a"], viewportTop: 0, height: 1, width: 20,
+    inputLine: "> ", inputLines: ["> "], hasNewOutputBelow: false,
+  });
+  assert.ok(!frame.some((l) => l.includes("commands")));
+});
 
 // ── renderFrame ──────────────────────────────────────────────────────────────
 

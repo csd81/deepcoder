@@ -48,6 +48,11 @@ import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
+import { MOUSE_ENABLE, MOUSE_DISABLE, parseSgrMouse } from "../ui/mouse.js";
+import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
+import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from "../ui/chatUiState.js";
+import { renderStatusBar, type StatusBarInfo } from "../ui/statusBar.js";
+import { Git } from "../workspace/git.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -575,8 +580,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
   const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
   let transcript: TranscriptState = createTranscript();
   let editor = createEditor();
-  let viewportTop = 0;
-  let atBottom = true;
+  // Viewport (scroll/atBottom), the slash-command menu, and focus all live in a
+  // pure ChatUiState; the shell folds keystrokes/mouse into reduceChatUi actions.
+  let chat: ChatUiState = initChatUi({ width: stdout.columns ?? 80, height: stdout.rows ?? 24 });
+  // Git branch/dirty for the status bar — resolved once at startup (cheap), best-effort.
+  let branch: string | undefined;
+  let dirty = false;
   let busy = false;
   let approvalResolve: ((k: string) => void) | null = null;
   let pendingApproval: { description: string; diff?: string } | null = null;
@@ -592,7 +601,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   // Enter the alternate screen, hide the cursor, clear it, and invalidate the diff
   // baseline so the first redraw is a full paint.
-  const enterAlt = () => { stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H"); prevFrame = []; };
+  const enterAlt = () => { stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H" + MOUSE_ENABLE); prevFrame = []; };
   const leaveAlt = () => stdout.write("\x1b[?25h\x1b[?1049l");
 
   function restore(): void {
@@ -600,6 +609,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     restored = true;
     try { if (tty.isTTY) tty.setRawMode?.(false); } catch { /* best effort */ }
     try { stdin.removeListener("keypress", onKey); } catch { /* */ }
+    try { stdout.write(MOUSE_DISABLE); } catch { /* */ }
     try { leaveAlt(); } catch { /* */ }
     try { stdin.pause(); } catch { /* */ }
   }
@@ -682,7 +692,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   // status row + indicator row + composer (inputCount rows) with the transcript
   // window taking the remaining grow space. The solved transcript height equals
   // rows-2-inputCount, identical to the prior hand arithmetic, clamped to >=1.
-  const viewportH = (inputCount = 1): number => {
+  const viewportH = (inputCount = 1, menuCount = 0): number => {
     const tree: LayoutNode = {
       id: "tui-root",
       direction: "column",
@@ -690,6 +700,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
         { id: "status", fixedHeight: 1 },
         { id: "transcript", grow: 1 },
         { id: "indicator", fixedHeight: 1 },
+        { id: "menu", fixedHeight: Math.max(0, menuCount) },
         { id: "composer", fixedHeight: Math.max(0, inputCount) },
       ],
     };
@@ -700,29 +711,71 @@ export async function runTuiRepl(session: Session): Promise<void> {
     return Math.max(1, boxes.get("transcript")?.h ?? 0);
   };
 
+  /** Slash dropdown rows (empty when the menu is closed). */
+  function menuRows(width: number): string[] {
+    return chat.slashMenu.open ? renderSlashMenu(chat.slashMenu, width, theme) : [];
+  }
+
+  /** Largest valid transcript scroll offset for the current content + window. */
+  function transcriptMaxTop(): number {
+    const width = stdout.columns ?? 80;
+    const vh = viewportH(composerLines().length, menuRows(width).length);
+    return Math.max(0, buildLines(width).length - vh);
+  }
+
+  /** Apply a ChatUiState action with the current maxTop, then repaint. */
+  function dispatch(action: ChatUiAction): void {
+    chat = reduceChatUi(chat, action, { maxTop: transcriptMaxTop() });
+    redraw();
+  }
+
+  /** Re-pin the view to the bottom (does not repaint). */
+  function stickBottom(): void {
+    chat = reduceChatUi(chat, { type: "scroll-bottom" }, { maxTop: transcriptMaxTop() });
+  }
+
+  /** Recompute the slash menu from the current composer text (does not repaint). */
+  function syncMenu(): void {
+    chat = reduceChatUi(chat, { type: "input-changed", text: editor.text }, { maxTop: transcriptMaxTop() });
+  }
+
   function redraw(): void {
     if (restored) return;
     const width = stdout.columns ?? 80;
     // Wrap logical lines to the terminal width so nothing is truncated off-screen
     // and a resize re-wraps cleanly. renderFrame's own (ANSI-aware) truncate no-ops.
     const composer = composerLines();
-    const height = viewportH(composer.length);
+    // The slash dropdown is suppressed while an approval modal owns the screen.
+    const menu = pendingApproval ? [] : menuRows(width);
+    const height = viewportH(composer.length, menu.length);
     // While an approval is pending, the content window IS the modal (diff overlay).
     const lines = pendingApproval
       ? renderApprovalModal({ description: pendingApproval.description, diff: pendingApproval.diff, width, height, scroll: approvalScroll, theme })
       : buildLines(width);
     const maxTop = Math.max(0, lines.length - height);
-    if (pendingApproval) viewportTop = 0;
-    else if (atBottom) viewportTop = maxTop;
-    else viewportTop = Math.min(Math.max(0, viewportTop), maxTop);
-    const status =
-      theme.title("deepcoder") +
-      theme.dim(` · ${session.mode} · ${session.config.provider}/${session.config.model} · sandbox ${session.config.sandbox.mode}`) +
-      (busy ? theme.warning(" · running…") : "");
+    // Derive the display offset from chat state without mutating it: an approval
+    // pins to top, a bottom-stuck view snaps to maxTop, else clamp the saved top.
+    const viewportTop = pendingApproval ? 0 : chat.atBottom ? maxTop : Math.min(Math.max(0, chat.viewportTop), maxTop);
+    const usage = session.tokenUsage;
+    const cost = session.telemetry?.estimatedCost;
+    const info: StatusBarInfo = {
+      mode: session.mode,
+      provider: session.config.provider,
+      model: session.config.model,
+      sandbox: session.config.sandbox.mode,
+      web: session.config.web.enabled,
+      branch,
+      dirty,
+      tokens: usage.totalTokens > 0 ? usage.totalTokens : undefined,
+      costUsd: cost?.pricingKnown ? cost.totalUsd : undefined,
+      busy,
+    };
+    const status = renderStatusBar(info, width, theme);
     const frame = renderFrame({
       statusLine: status, lines, viewportTop, height,
       width, inputLine: composer[0], inputLines: composer,
-      hasNewOutputBelow: !atBottom && viewportTop < maxTop,
+      hasNewOutputBelow: !pendingApproval && !chat.atBottom && viewportTop < maxTop,
+      menuLines: menu.length ? menu : undefined,
     });
     // Repaint only the lines that changed since the last frame (anti-flicker).
     const ops = diffFrames(prevFrame, frame);
@@ -734,6 +787,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   // scratch at the new dimensions (flatten + wrapLines pick up the new width).
   function onResize(): void {
     if (restored) return;
+    chat = reduceChatUi(chat, { type: "resize", width: stdout.columns ?? 80, height: stdout.rows ?? 24 }, { maxTop: transcriptMaxTop() });
     stdout.write("\x1b[2J\x1b[H");
     prevFrame = [];
     redraw();
@@ -745,7 +799,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   };
   const approval = createTuiApproval({
     nextKey: () => new Promise<string>((res) => { approvalResolve = res; }),
-    onRender: (req) => { pendingApproval = { description: req.description, diff: req.diff }; approvalScroll = 0; atBottom = true; redraw(); },
+    onRender: (req) => { pendingApproval = { description: req.description, diff: req.diff }; approvalScroll = 0; stickBottom(); redraw(); },
   });
   const approve = async (inv: ToolInvocation, preview?: ToolPreview): Promise<boolean> => {
     const ok = await approval.approve({ description: inv.describe(), diff: preview?.diff });
@@ -761,7 +815,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   async function handleSubmit(raw: string): Promise<void> {
     const line = raw.trim();
     if (!line) { redraw(); return; }
-    pushUser(line); atBottom = true; redraw();
+    pushUser(line); stickBottom(); redraw();
     if (line === "/exit" || line === "/quit") { restore(); resolveDone(); return; }
     if (line.startsWith("/")) {
       restore(); restored = false; // suspend: run the command on the normal screen
@@ -778,7 +832,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     busy = true; redraw();
     try { await runTask(session, { sink, approve }); }
     catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` }); }
-    finally { busy = false; atBottom = true; redraw(); }
+    finally { busy = false; stickBottom(); redraw(); }
   }
 
   function onKey(str: string | undefined, key: { name?: string; sequence?: string; ctrl?: boolean } | undefined): void {
@@ -791,46 +845,73 @@ export async function runTuiRepl(session: Session): Promise<void> {
       r(key?.name === "escape" ? "escape" : (str ?? key?.sequence ?? key?.name ?? ""));
       return;
     }
-    // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
-    if (key?.name === "return" && (key as { meta?: boolean }).meta) {
-      if (!busy) { editor = reduceEditor(editor, { type: "newline" }).state; redraw(); }
+    // Mouse wheel (SGR mode) — scroll the transcript; swallow all other mouse events.
+    const rawSeq = key?.sequence ?? str ?? "";
+    if (rawSeq.startsWith("\x1b[<")) {
+      const m = parseSgrMouse(rawSeq);
+      if (m) dispatch({ type: m.kind === "wheel-up" ? "scroll-up" : "scroll-down", amount: 3 });
       return;
     }
-    // Tab / Shift+Tab step the focus cursor across collapsible blocks (expanding
-    // the focused one to show its full output). Follow to bottom so it's visible.
+    // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
+    if (key?.name === "return" && (key as { meta?: boolean }).meta) {
+      if (!busy) { editor = reduceEditor(editor, { type: "newline" }).state; syncMenu(); redraw(); }
+      return;
+    }
+    // Tab: complete the highlighted slash command when the menu is open; otherwise
+    // step the focus cursor across collapsible blocks (expanding the focused one).
     if (key?.name === "tab") {
-      if (!busy) {
-        transcript = moveSelection(transcript, (key as { shift?: boolean }).shift ? -1 : 1);
-        atBottom = true;
-        redraw();
+      if (busy) return;
+      if (chat.slashMenu.open) {
+        const completed = completeSelected(chat.slashMenu);
+        if (completed !== null) { editor = { ...editor, text: completed, cursor: completed.length }; syncMenu(); redraw(); }
+        return;
       }
+      transcript = moveSelection(transcript, (key as { shift?: boolean }).shift ? -1 : 1);
+      stickBottom();
+      redraw();
       return;
     }
     const named = key?.name ? keyToAction(key.name) : "none";
     const action = named !== "none" ? named : keyToAction(key?.sequence ?? str ?? "");
     const inputCount = composerLines().length;
-    const vh = viewportH(inputCount);
-    const lines = buildLines(stdout.columns ?? 80).length;
-    const maxTop = Math.max(0, lines - vh);
-    const half = Math.max(1, Math.floor(vh / 2));
+    const half = Math.max(1, Math.floor(viewportH(inputCount, menuRows(stdout.columns ?? 80).length) / 2));
     switch (action) {
       case "interrupt":
         if (busy) { try { process.kill(process.pid, "SIGINT"); } catch { /* */ } }
         else { restore(); resolveDone(); }
         return;
-      case "scroll-up": atBottom = false; viewportTop = Math.max(0, viewportTop - 1); redraw(); return;
-      case "scroll-down": viewportTop = Math.min(maxTop, viewportTop + 1); atBottom = viewportTop >= maxTop; redraw(); return;
-      case "half-up": atBottom = false; viewportTop = Math.max(0, viewportTop - half); redraw(); return;
-      case "half-down": viewportTop = Math.min(maxTop, viewportTop + half); atBottom = viewportTop >= maxTop; redraw(); return;
-      case "top": atBottom = false; viewportTop = 0; redraw(); return;
-      case "bottom": atBottom = true; redraw(); return;
-      case "history-up": if (!busy) { editor = reduceEditor(editor, { type: "history-prev" }).state; redraw(); } return;
-      case "history-down": if (!busy) { editor = reduceEditor(editor, { type: "history-next" }).state; redraw(); } return;
-      case "escape": transcript = clearSelection(transcript); atBottom = true; redraw(); return;
+      case "scroll-up": dispatch({ type: "scroll-up" }); return;
+      case "scroll-down": dispatch({ type: "scroll-down" }); return;
+      case "half-up": dispatch({ type: "scroll-up", amount: half }); return;
+      case "half-down": dispatch({ type: "scroll-down", amount: half }); return;
+      case "top": dispatch({ type: "scroll-top" }); return;
+      case "bottom": dispatch({ type: "scroll-bottom" }); return;
+      // ↑/↓ navigate the slash menu while it is open; otherwise step input history.
+      case "history-up":
+        if (busy) return;
+        if (chat.slashMenu.open) { chat = reduceChatUi(chat, { type: "menu-up" }, { maxTop: 0 }); redraw(); return; }
+        editor = reduceEditor(editor, { type: "history-prev" }).state; syncMenu(); redraw(); return;
+      case "history-down":
+        if (busy) return;
+        if (chat.slashMenu.open) { chat = reduceChatUi(chat, { type: "menu-down" }, { maxTop: 0 }); redraw(); return; }
+        editor = reduceEditor(editor, { type: "history-next" }).state; syncMenu(); redraw(); return;
+      case "escape":
+        // Esc closes the slash menu first; otherwise clears block selection.
+        if (chat.slashMenu.open) { chat = reduceChatUi(chat, { type: "menu-close" }, { maxTop: 0 }); redraw(); return; }
+        transcript = clearSelection(transcript); stickBottom(); redraw(); return;
       case "submit": {
         if (busy) return;
+        // First Enter with the menu open completes the highlighted command (a
+        // trailing space closes the menu); a second Enter then submits.
+        if (chat.slashMenu.open) {
+          const completed = completeSelected(chat.slashMenu);
+          if (completed !== null && completed.trim() !== editor.text.trim()) {
+            editor = { ...editor, text: completed, cursor: completed.length }; syncMenu(); redraw(); return;
+          }
+        }
         const { state, submitted } = reduceEditor(editor, { type: "submit" });
         editor = state;
+        chat = reduceChatUi(chat, { type: "submit" }, { maxTop: transcriptMaxTop() });
         if (submitted !== undefined) void handleSubmit(submitted);
         return;
       }
@@ -838,6 +919,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
         if (busy) return;
         if (key?.name === "backspace") editor = reduceEditor(editor, { type: "backspace" }).state;
         else if (str && str.length === 1 && str >= " " && !key?.ctrl) editor = reduceEditor(editor, { type: "insert", ch: str }).state;
+        syncMenu();
         redraw();
     }
   }
@@ -852,7 +934,21 @@ export async function runTuiRepl(session: Session): Promise<void> {
   process.on("exit", onProcExit);
   process.on("SIGTERM", onProcExit);
   stdout.on("resize", onResize);
-  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — PgUp/PgDn scroll · Tab inspect tool output · ↑/↓ history · Alt+Enter newline · Enter submit · Esc collapse · Ctrl+C exit · /exit quits" });
+  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — type / for commands · mouse-wheel/PgUp/PgDn scroll · Tab inspect tool output · ↑/↓ history · Alt+Enter newline · Enter submit · Esc collapse · Ctrl+C exit · /exit quits" });
+  // Resolve the git branch/dirty flag once for the status bar (best-effort, async).
+  void (async () => {
+    try {
+      const git = new Git(session.executionRoot ?? session.config.workspaceRoot);
+      if (await git.isRepo()) {
+        const sb = await git.status();
+        const head = sb.split("\n")[0] ?? "";
+        const m = /^##\s+(?:No commits yet on\s+)?([^.\s]+)/.exec(head);
+        if (m) branch = m[1];
+        dirty = sb.split("\n").slice(1).some((l) => l.trim().length > 0);
+        redraw();
+      }
+    } catch { /* status bar simply omits the branch */ }
+  })();
   redraw();
   try {
     await done;

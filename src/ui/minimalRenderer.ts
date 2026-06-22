@@ -25,6 +25,8 @@ export interface FrameInput {
   inputLines?: string[];
   /** Whether there is new output below the viewport (show indicator). */
   hasNewOutputBelow: boolean;
+  /** Slash-command dropdown rows, rendered just above the composer when open. */
+  menuLines?: string[];
 }
 
 // ── renderFrame ──────────────────────────────────────────────────────────────
@@ -64,7 +66,12 @@ export function renderFrame(input: FrameInput): string[] {
     result.push(truncate("↓ new output below", width));
   }
 
-  // 4. Input composer (one or more rows)
+  // 4. Slash-command dropdown (above the composer, when open)
+  if (input.menuLines) {
+    for (const row of input.menuLines) result.push(truncate(row, width));
+  }
+
+  // 5. Input composer (one or more rows)
   const composer = input.inputLines ?? [inputLine];
   for (const row of composer) result.push(truncate(row, width));
 
@@ -168,7 +175,7 @@ export function visibleWidth(s: string): number {
  * color codes and appending a reset if the string was cut while styled. Lines
  * that already fit (by visible width) are returned unchanged.
  */
-function truncate(s: string, maxLen: number): string {
+export function truncate(s: string, maxLen: number): string {
   if (visibleWidth(s) <= maxLen) return s;
   let out = "";
   let count = 0;
