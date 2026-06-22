@@ -41,10 +41,17 @@ fi
 
 git worktree add "$DIR" -b "$BRANCH" master # fresh branch off master
 
-# Dependencies: node_modules is gitignored, so a fresh worktree has none. Symlink
-# the existing one (instant — no reinstall). It is SHARED: do NOT `npm install`
-# from inside the worktree, or you mutate the main checkout's deps.
-[ -e "$DIR/node_modules" ] || ln -s "$REPO/node_modules" "$DIR/node_modules"
+# Dependencies: node_modules is gitignored, so a fresh worktree has none. COPY
+# the existing one INTO the worktree (rather than symlinking to the main repo's,
+# which lives outside it). A copy lives inside the workspace, so when workspace
+# containment is on the bubblewrap sandbox binds it — the agent's sandboxed
+# commands (npm test, node, …) can load deps without escaping the box. The copy
+# is the worktree's OWN, so `npm install` here is safe (it won't touch the main
+# checkout). `cp -a` preserves the internal .bin symlinks and permissions.
+if [ ! -e "$DIR/node_modules" ] && [ -d "$REPO/node_modules" ]; then
+  echo "copying node_modules into the worktree (so containment can stay on)…"
+  cp -a "$REPO/node_modules" "$DIR/node_modules"
+fi
 
 # .deepcoder/ (checks + MCP config) is gitignored too — copy it so /solve --check
 # and configured checks work in the worktree. Harmless if you only chat.
@@ -54,7 +61,7 @@ fi
 
 echo "launching deepcoder TUI in $DIR (branch $BRANCH) — writes stay isolated here"
 cd "$DIR"
-# --no-contain: containment is ON by default, but the worktree symlinks node_modules
-# OUTSIDE itself (gitignored), which bubblewrap wouldn't bind — so dogfooding needs it off.
-# --no-contain is quarantined, so re-enable it via DEEPCODER_ALLOW_UNCONTAINED=1.
-exec env DEEPCODER_ALLOW_UNCONTAINED=1 npm run dev -- --tui --mode auto --no-contain
+# Containment stays ON (the default): node_modules is now copied INTO the worktree
+# above, so bubblewrap binds it and the agent's sandboxed commands work without
+# escaping the workspace. No --no-contain / DEEPCODER_ALLOW_UNCONTAINED needed.
+exec npm run dev -- --tui --mode auto
