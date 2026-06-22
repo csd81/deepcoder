@@ -38,9 +38,11 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
 test("malformed numeric env vars fall back to defaults (no NaN)", () => {
   withEnv({ DEEPSEEK_API_KEY: "sk-x", DEEPCODER_COMPACT_AT: "abc", DEEPCODER_MAX_TURNS: "", DEEPCODER_CONTEXT_BUDGET_TOKENS: "oops" }, () => {
     const cfg = loadConfig({ workspaceRoot: "/tmp" });
-    assert.equal(cfg.compactAt, 0.8);
+    // Malformed values fall back to the (provider-aware) defaults — never NaN.
+    // Provider here is the default deepseek → full 1M window, compact at 0.95.
+    assert.equal(cfg.compactAt, 0.95);
     assert.equal(cfg.maxTurns, 40);
-    assert.equal(cfg.contextBudgetTokens, 120000); // default sized to modern 128K windows (DeepSeek/OpenAI/Anthropic)
+    assert.equal(cfg.contextBudgetTokens, 1_000_000);
   });
 });
 

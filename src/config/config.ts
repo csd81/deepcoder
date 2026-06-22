@@ -697,8 +697,16 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     subagentModel: process.env.DEEPCODER_SUBAGENT_MODEL,
     maxTurns: numEnv(process.env.DEEPCODER_MAX_TURNS, 40),
     approvalMode: approval,
-    contextBudgetTokens: numEnv(process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS, 120000),
-    compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, 0.8),
+    // Provider-aware default: DeepSeek ships a 1M context window, so use it by
+    // default (deepcoder's default provider). Other providers keep a conservative
+    // 120K (their windows are smaller — e.g. GPT-mini 400K, Claude 200K — and a
+    // smaller stable context caches better). DEEPCODER_CONTEXT_BUDGET_TOKENS /
+    // DEEPCODER_COMPACT_AT still override either default.
+    contextBudgetTokens: numEnv(
+      process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS,
+      provider === "deepseek" ? 1_000_000 : 120_000,
+    ),
+    compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, provider === "deepseek" ? 0.95 : 0.8),
     checkpoints: (["off", "manual", "auto"].includes(process.env.DEEPCODER_CHECKPOINTS ?? "")
       ? (process.env.DEEPCODER_CHECKPOINTS as CheckpointMode)
       : "off"),
