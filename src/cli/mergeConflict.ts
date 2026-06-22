@@ -50,6 +50,32 @@ export async function readConflict(git: Git, root: string, relPath: string): Pro
   }
 }
 
+/**
+ * True if `text` still contains git conflict markers. Checked AFTER the agent
+ * edits, because a conflicted file stays "unmerged" in the index (so
+ * `git diff --diff-filter=U` keeps listing it) until it is staged — the working
+ * tree losing its markers is the real "resolved" signal.
+ */
+export function hasConflictMarkers(text: string): boolean {
+  return /^(<{7}|>{7})/m.test(text);
+}
+
+/** Of `relPaths`, the ones whose working-tree content still has conflict markers. */
+export async function filesStillConflicted(root: string, relPaths: string[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const rel of relPaths) {
+    let text: string;
+    try {
+      text = await readFile(path.join(root, rel), "utf8");
+    } catch {
+      out.push(rel); // unreadable/deleted → treat as unresolved
+      continue;
+    }
+    if (hasConflictMarkers(text)) out.push(rel);
+  }
+  return out;
+}
+
 const BASE_CAP = 2000;
 
 /**

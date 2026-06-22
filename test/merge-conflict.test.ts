@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Git } from "../src/workspace/git.js";
-import { detectConflicts, readConflict, buildResolvePrompt, type ConflictFile } from "../src/cli/mergeConflict.js";
+import { detectConflicts, readConflict, buildResolvePrompt, hasConflictMarkers, filesStillConflicted, type ConflictFile } from "../src/cli/mergeConflict.js";
 
 const exec = promisify(execFile);
 
@@ -80,6 +80,26 @@ test("readConflict reads ours/theirs/base stages + the marker'd working tree", a
     assert.match(cf!.current, /<<<<<<</); // working tree carries conflict markers
   } finally {
     await cleanup();
+  }
+});
+
+test("hasConflictMarkers detects leftover markers, ignores resolved content", () => {
+  assert.equal(hasConflictMarkers("line1\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\nline3"), true);
+  assert.equal(hasConflictMarkers("line1\nmerged\nline3\n"), false);
+  // Resolved-but-unstaged is the case that broke the first cut: markers gone → false,
+  // even though `git diff --diff-filter=U` would still list the file until staged.
+  assert.equal(hasConflictMarkers("line1\nHELLO FROM OURS\nline3\n"), false);
+});
+
+test("filesStillConflicted returns only files whose working tree still has markers", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "still-conflicted-"));
+  try {
+    await writeFile(path.join(root, "resolved.txt"), "all good\n");
+    await writeFile(path.join(root, "bad.txt"), "x\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> y\n");
+    const out = await filesStillConflicted(root, ["resolved.txt", "bad.txt"]);
+    assert.deepEqual(out, ["bad.txt"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

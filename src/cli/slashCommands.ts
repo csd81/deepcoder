@@ -5,7 +5,7 @@ import { estimateCost } from "../providers/pricing.js";
 import { enterPlanMode, exitPlanMode, initPlanMode } from "./planMode.js";
 import { Git } from "../workspace/git.js";
 import { fetchPr, getPrDiff } from "./prFetch.js";
-import { detectConflicts, readConflict, buildResolvePrompt, type ConflictFile } from "./mergeConflict.js";
+import { detectConflicts, readConflict, buildResolvePrompt, filesStillConflicted, type ConflictFile } from "./mergeConflict.js";
 import { resolveReadPathInWorkspace, displayPath, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
@@ -1292,13 +1292,18 @@ export async function handleSlashCommand(
       session.messages.push({ role: "user", content: buildResolvePrompt(conflictData) });
       await runAgent();
 
-      const remaining = await detectConflicts(git);
-      if (remaining.length === 0) {
-        for (const f of conflicts) await git.run(["add", f]);
+      // A conflicted file stays unmerged in the index (so detectConflicts keeps
+      // listing it) until staged — the real "resolved" signal is the working tree
+      // no longer containing conflict markers. Stage those; report the rest.
+      const stillMarked = await filesStillConflicted(config.workspaceRoot, conflicts);
+      const resolved = conflicts.filter((f) => !stillMarked.includes(f));
+      for (const f of resolved) await git.run(["add", f]);
+      if (stillMarked.length === 0) {
         console.log(chalk.green("\nAll conflicts resolved and staged."));
         console.log(chalk.dim("Run `git merge --continue` (or rebase/cherry-pick --continue) to finish."));
       } else {
-        console.log(chalk.yellow(`\n${remaining.length} conflict(s) remain: ${remaining.join(", ")}`));
+        if (resolved.length) console.log(chalk.green(`\nStaged ${resolved.length} resolved file(s): ${resolved.join(", ")}`));
+        console.log(chalk.yellow(`${stillMarked.length} file(s) still have conflict markers: ${stillMarked.join(", ")}`));
         console.log(chalk.dim("Run /resolve again, or fix them manually."));
       }
       return { consumed: true };
