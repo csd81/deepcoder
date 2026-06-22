@@ -20,6 +20,7 @@ program
   .option("--resume [id]", "resume a saved session (most recent if id omitted)")
   .option("--fork", "fork the session when resuming (copies to a new id)")
   .option("--list-sessions", "list saved sessions and exit")
+  .option("--archived", "include archived sessions in --list-sessions")
   .option("--planning-model <model>", "model used by /plan (default: deepseek-reasoner)")
   .option("--plan-first", "for a one-shot run: plan with the reasoner model first, then edit")
   .option("--solve", "closed-loop solve: edit, run --check, retry on failure (needs --check)")
@@ -47,6 +48,7 @@ program
         resume?: string | boolean;
         fork?: boolean;
         listSessions?: boolean;
+        archived?: boolean;
         planningModel?: string;
         planFirst?: boolean;
         preflight?: boolean;
@@ -123,7 +125,7 @@ program
     if (opts.preflight) baseConfig.context.preflight = true;
 
     if (opts.listSessions) {
-      const all = await listSessions(baseConfig.workspaceRoot);
+      const all = await listSessions(baseConfig.workspaceRoot, { includeArchived: !!opts.archived });
       if (all.length === 0) console.log(chalk.dim("No saved sessions."));
       else for (const s of all) {
         const label = s.title ? `${s.title} ${chalk.dim(`(${s.id})`)}` : s.id;

@@ -34,7 +34,7 @@ import {
   renderGoal,
   type SessionGoal,
 } from "../session/goal.js";
-import { loadSession, forkSession, SessionStore, newSessionId, type PersistedSession } from "../session/sessionStore.js";
+import { loadSession, forkSession, SessionStore, newSessionId, deleteSession, archiveSession, listSessions, type PersistedSession } from "../session/sessionStore.js";
 import { serializeSession, validateImport } from "../session/sessionExport.js";
 import { renderTable } from "../ui/table.js";
 import { initState, undo, redo } from "./undoRedo.js";
@@ -312,6 +312,62 @@ export async function handleSlashCommand(
       await save();
       console.log(chalk.dim(`Saved session ${session.store.id}`));
       return { consumed: true };
+
+    case "new": {
+      // Save the current session first, then start a fresh one.
+      await save();
+      const oldId = session.store.id;
+      session.store = new SessionStore(config.workspaceRoot, newSessionId());
+      session.messages = [];
+      session.todos = [];
+      session.readTracker = new Set();
+      session.writeTracker = new Set();
+      console.log(chalk.green(`Saved session ${oldId}. Started fresh session ${session.store.id}.`));
+      return { consumed: true };
+    }
+
+    case "archive": {
+      const id = arg.trim() || session.store.id;
+      await archiveSession(config.workspaceRoot, id);
+      if (id === session.store.id) {
+        console.log(chalk.dim(`Session ${id} archived. Exiting.`));
+        process.exit(0);
+      }
+      console.log(chalk.dim(`Session ${id} archived.`));
+      return { consumed: true };
+    }
+
+    case "delete": {
+      const id = arg.trim() || session.store.id;
+      const name = id === session.store.id ? "the current session" : `session ${id}`;
+      console.log(chalk.yellow(`Are you sure you want to permanently delete ${name}?`));
+      const confirmed = await confirm("Type 'yes' to confirm: ");
+      if (!confirmed) {
+        console.log(chalk.dim("Cancelled."));
+        return { consumed: true };
+      }
+      await deleteSession(config.workspaceRoot, id);
+      if (id === session.store.id) {
+        console.log(chalk.dim(`Session ${id} deleted. Exiting.`));
+        process.exit(0);
+      }
+      console.log(chalk.dim(`Session ${id} deleted.`));
+      return { consumed: true };
+    }
+
+    case "sessions": {
+      const all = await listSessions(config.workspaceRoot);
+      if (all.length === 0) {
+        console.log(chalk.dim("No saved sessions."));
+      } else {
+        for (const s of all) {
+          const label = s.title ? `${s.title} ${chalk.dim(`(${s.id})`)}` : s.id;
+          const marker = s.id === session.store.id ? chalk.green("* ") : "  ";
+          console.log(`${marker}${label}  ${chalk.dim(`${s.messageCount} msgs · ${s.updatedAt}`)}`);
+        }
+      }
+      return { consumed: true };
+    }
 
     case "usage": {
       const u = session.tokenUsage;
