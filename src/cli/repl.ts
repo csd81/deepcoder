@@ -1084,7 +1084,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       costUsd: cost?.pricingKnown ? cost.totalUsd : undefined,
       busy,
     };
-    const status = renderStatusBar(info, width, theme);
+    const status = renderStatusBar(info, width, theme, session.config.statusline?.fields);
     const frame = renderFrame({
       statusLine: status, lines, viewportTop, height,
       width, inputLine: composer[0], inputLines: composer,

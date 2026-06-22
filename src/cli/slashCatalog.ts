@@ -76,6 +76,9 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "model", args: "[<role> [<provider>/<model>]] | reset <role|all>", description: "Inspect or set a session-local model override", category: "config" },
   { name: "effort", args: "[[<role>] <low|medium|high>] | reset <role|all>", description: "Inspect or set reasoning effort", category: "config" },
 
+  // config
+  { name: "statusline", args: "[list]", description: "Show or configure statusline fields", category: "config" },
+
   // debug
   { name: "usage", description: "Show session token usage", category: "debug" },
   { name: "cost", description: "Show estimated session cost", category: "debug" },

@@ -2382,6 +2382,22 @@ export async function handleSlashCommand(
       await runEffortSlash(session, arg);
       return { consumed: true };
 
+    case "statusline": {
+      const trimmed = arg.trim();
+      if (trimmed === "list") {
+        const fields = session.config.statusline?.fields ?? ["title","mode","model","sandbox","web","branch","tokens","cost","workers","busy"];
+        console.log(chalk.bold("Statusline fields (in order):"));
+        fields.forEach((f, i) => console.log(`  ${i + 1}. ${f}`));
+        return { consumed: true };
+      }
+      // Show available fields and config instruction.
+      console.log(chalk.bold("Available fields:"));
+      console.log(`  mode, model, sandbox, web, branch, tokens, cost, workers, busy, session, title`);
+      console.log(chalk.dim("Set in .deepcoder/config.json:"));
+      console.log(chalk.dim('  "statusline": { "fields": ["mode", "model", "branch", "busy"] }'));
+      return { consumed: true };
+    }
+
     case "help":
       console.log(
         [
