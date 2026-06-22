@@ -147,3 +147,24 @@ Everything else is recovered silently or with a visible notice.
 - Retries have bounded attempts (2) and exponential backoff (max 10s).
 - Stream fallback is a synchronous `chat()` call — no new timeout surface.
 - Empty response on exhaustion gives the model nothing to work with, but the session survives.
+
+## Review & Feedback (June 22, 2026)
+
+The plan has been reviewed with the following critical findings and recommendations:
+
+### 1. Exponential Backoff & Sleep Safety
+* **Issue:** Call to `sleep` in Node.js/TypeScript requires helper implementation or importing.
+* **Risk:** A standard `sleep` promise keeps the event loop blocked even if the user aborts (`Ctrl+C`), ignoring the abort signal.
+* **Recommendation:** Implement a signal-aware sleep helper inside the loop.
+
+### 2. Empty Response Fallback (High Risk)
+* **Issue:** Returning `{ text: "", toolCalls: [], usage: undefined }` on retry exhaustion triggers the termination condition in `runAgentLoop` (zero tool calls).
+* **Risk:** The CLI will treat this as a successful turn with an empty assistant message, exiting silently and leaving the user with a misleading successful exit when the API was actually unreachable.
+* **Recommendation:** Do not return an empty response. Re-throw the original `ProviderError` (or a structured variant) so the CLI can catch and report it properly.
+
+### 3. Case-Insensitive Message Matching
+* **Issue:** Message-based classification should be case-insensitive to ensure robust detection across different API versions and SDK changes (e.g. `rate limit` vs `Rate Limit`).
+
+### 4. Stream Fallback Notice
+* **Recommendation:** Ensure that the TUI/REPL shows a clear notice when a stream connection reset triggers the fallback to non-streaming, to explain the duplicate output that might print.
+
