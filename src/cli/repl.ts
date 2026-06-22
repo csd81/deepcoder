@@ -49,6 +49,7 @@ import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
 import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
+import { createSearchState, updateSearch, moveSearchSelection, selectedMatch, type TranscriptSearchState } from "../ui/transcriptSearch.js";
 import { MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
 import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
@@ -647,6 +648,8 @@ export async function runTuiRepl(session: Session): Promise<void> {
   const theme: Theme = createTheme(colorEnabled);
   // ── 10A.13: contextual help overlay (toggled with `?`) ──
   let helpVisible = false;
+  // ── 10A.9: scrollback search (Ctrl+F) ──
+  let search: TranscriptSearchState = createSearchState();
   const currentHelpMode = (): HelpMode =>
     pendingApproval ? "approval"
     : busy ? "busy"
@@ -783,6 +786,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   /** The input composer rendered as display rows (continuation lines indented). */
   function composerLines(): string[] {
+    // In search mode the composer becomes the search query line (10A.9).
+    if (search.active) {
+      const count = search.matches.length;
+      const pos = count ? `${search.selected + 1}/${count}` : "no matches";
+      return [`search: ${search.query}  (${pos})  ·  Enter next · ↑/↓ prev/next · Esc exit`];
+    }
     const buf = editor.text.length ? editor.text.split("\n") : [""];
     return buf.map((l, i) => (i === 0 ? "> " : "  ") + l);
   }
@@ -860,8 +869,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const maxTop = Math.max(0, lines.length - height);
     // Derive the display offset from chat state without mutating it: an approval
     // pins to top, a bottom-stuck view snaps to maxTop, else clamp the saved top.
-    const viewportTop = overlayActive ? 0 : chat.atBottom ? maxTop : Math.min(Math.max(0, chat.viewportTop), maxTop);
-    const hasNewOutputBelow = !overlayActive && !chat.atBottom && viewportTop < maxTop;
+    // Search mode (10A.9) centers the viewport on the selected match.
+    const sm = search.active ? selectedMatch(search) : null;
+    const viewportTop = overlayActive ? 0
+      : sm ? Math.min(Math.max(0, sm.line - Math.floor(height / 2)), maxTop)
+      : chat.atBottom ? maxTop : Math.min(Math.max(0, chat.viewportTop), maxTop);
+    const hasNewOutputBelow = !overlayActive && !search.active && !chat.atBottom && viewportTop < maxTop;
     // Capture geometry for mouse hit-testing (only meaningful for the transcript).
     lastRowMeta = built ? built.meta : [];
     lastViewportTop = viewportTop;
@@ -999,6 +1012,22 @@ export async function runTuiRepl(session: Session): Promise<void> {
     if (helpVisible) { helpVisible = false; redraw(); return; }
     if (str === "?" && !busy && editor.text.length === 0 && !chat.slashMenu.open) {
       helpVisible = true; redraw(); return;
+    }
+    // 10A.9 scrollback search: Ctrl+F toggles; while active, the composer is the
+    // query line and these keys drive it (everything else is swallowed).
+    if (key?.ctrl && key?.name === "f" && !busy && !pendingApproval) {
+      search = { ...createSearchState(), active: !search.active };
+      redraw(); return;
+    }
+    if (search.active) {
+      const w = stdout.columns ?? 80;
+      if (key?.name === "escape") { search = createSearchState(); redraw(); return; }
+      if (key?.name === "return") { search = moveSearchSelection(search, 1); redraw(); return; }
+      if (key?.name === "up") { search = moveSearchSelection(search, -1); redraw(); return; }
+      if (key?.name === "down") { search = moveSearchSelection(search, 1); redraw(); return; }
+      if (key?.name === "backspace") { search = updateSearch(search, buildLines(w), search.query.slice(0, -1)); redraw(); return; }
+      if (str && str.length === 1 && str >= " " && !key?.ctrl) { search = updateSearch(search, buildLines(w), search.query + str); redraw(); return; }
+      return; // swallow anything else while searching
     }
     // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
     if (key?.name === "return" && (key as { meta?: boolean }).meta) {
