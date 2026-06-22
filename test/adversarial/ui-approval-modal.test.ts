@@ -30,8 +30,10 @@ test("diff add/remove lines are colored when color is enabled", () => {
     width: 40, height: 12, scroll: 0, theme: color,
   });
   const joined = rows.join("\n");
-  assert.ok(joined.includes("\x1b[32m"), "an added line is green");
-  assert.ok(joined.includes("\x1b[31m"), "a removed line is red");
+  // The default palette is now darker + bolder truecolor (legible on a pale bg):
+  // added lines use the bold green token, removed lines the bold red token.
+  assert.ok(joined.includes("\x1b[1;38;2;21;128;61m"), "an added line is green");
+  assert.ok(joined.includes("\x1b[1;38;2;200;30;30m"), "a removed line is red");
 });
 
 test("scroll offsets the diff body (earlier lines drop off the top)", () => {

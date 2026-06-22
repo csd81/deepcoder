@@ -61,7 +61,7 @@ import { createSearchState, updateSearch, moveSearchSelection, selectedMatch, ty
 import { formatTranscriptBlockMarkdown, selectedBlock } from "../ui/transcriptExport.js";
 import { safeExportFilename } from "../ui/exportWriter.js";
 import { copyToClipboard } from "../clipboard/clipboard.js";
-import { MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
+import { MOUSE_ENABLE, MOUSE_DISABLE, mouseStatusNotice, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
 import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
 import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from "../ui/chatUiState.js";
@@ -686,7 +686,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   // Enter the alternate screen, hide the cursor, clear it, and invalidate the diff
   // baseline so the first redraw is a full paint.
-  const enterAlt = () => { stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H" + MOUSE_ENABLE); prevFrame = []; };
+  // Mouse capture: ON gives the app wheel-scroll (and click-to-toggle) but, per
+  // the terminal mouse protocol, suppresses native click-drag text selection.
+  // Ctrl+G toggles it off so the user can select/copy text (then back on). The
+  // alt-screen (re-)entry honours the current choice rather than forcing it on.
+  let mouseCapture = true;
+  const enterAlt = () => { stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H" + (mouseCapture ? MOUSE_ENABLE : MOUSE_DISABLE)); prevFrame = []; };
   const leaveAlt = () => stdout.write("\x1b[?25h\x1b[?1049l");
 
   // Attach the input listeners in the one order that keeps the mouse working:
@@ -1201,6 +1206,14 @@ export async function runTuiRepl(session: Session): Promise<void> {
       search = { ...createSearchState(), active: !search.active };
       redraw(); return;
     }
+    // Ctrl+G releases/re-grabs the mouse so the user can select text natively
+    // (capturing the wheel suppresses the terminal's own click-drag selection).
+    if (key?.ctrl && key?.name === "g" && !pendingApproval) {
+      mouseCapture = !mouseCapture;
+      try { stdout.write(mouseCapture ? MOUSE_ENABLE : MOUSE_DISABLE); } catch { /* */ }
+      transcript = applyEvent(transcript, { type: "notice", message: mouseStatusNotice(mouseCapture) });
+      stickBottom(); redraw(); return;
+    }
     if (search.active) {
       const w = stdout.columns ?? 80;
       if (key?.name === "escape") { search = createSearchState(); redraw(); return; }
@@ -1331,7 +1344,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   process.on("exit", onProcExit);
   process.on("SIGTERM", onProcExit);
   stdout.on("resize", onResize);
-  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — type / for commands · !cmd for shell · mouse-wheel/PgUp/PgDn scroll · Tab inspect tool output · ↑/↓ history · Alt+Enter newline · Enter submit · Esc collapse · Ctrl+C exit · /exit quits" });
+  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — type / for commands · !cmd for shell · mouse-wheel/PgUp/PgDn scroll · Ctrl+G release mouse to select text · Tab inspect tool output · ↑/↓ history · Alt+Enter newline · Enter submit · Esc collapse · Ctrl+C exit · /exit quits" });
   // Resolve the git branch/dirty flag once for the status bar (best-effort, async).
   void (async () => {
     try {

@@ -18,6 +18,22 @@ export const MOUSE_ENABLE = "\x1b[?1000h\x1b[?1006h";
 /** Disable basic (1000) + button-event (1002) + SGR (1006) mouse reporting. */
 export const MOUSE_DISABLE = "\x1b[?1000l\x1b[?1002l\x1b[?1006l";
 
+/**
+ * Notice shown when the user toggles mouse capture (Ctrl+G).
+ *
+ * The terminal mouse protocol can't give the app wheel events AND allow
+ * modifier-free native text selection at once — capturing the wheel is exactly
+ * what suppresses the terminal's own click-drag selection. So the toggle picks
+ * one, and this message tells the user how to do the other:
+ *  - capture ON  → wheel scrolls; hold Shift (Option on macOS) to select.
+ *  - capture OFF → click-drag selects natively; scroll with PgUp/PgDn.
+ */
+export function mouseStatusNotice(enabled: boolean): string {
+  return enabled
+    ? "Mouse capture ON — wheel scrolls. Hold Shift (Option on macOS) and drag to select text, or press Ctrl+G to release the mouse for click-drag selection."
+    : "Mouse capture OFF — click and drag to select text. Scroll with PgUp/PgDn (or Ctrl+G to re-enable wheel scrolling).";
+}
+
 export type MouseWheelEvent = {
   kind: "wheel-up" | "wheel-down";
   x: number;

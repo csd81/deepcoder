@@ -246,12 +246,18 @@ test("monochrome uses only style codes, no hue codes", () => {
   }
 });
 
-test("default theme uses standard color codes", () => {
+test("default theme is darker + bolder (legible on a pale background)", () => {
   const t = createNamedTheme("default", true);
-  assert.ok(t.error("x").includes("31"), "default error uses red (31)");
-  assert.ok(t.success("x").includes("32"), "default success uses green (32)");
-  assert.ok(t.warning("x").includes("33"), "default warning uses yellow (33)");
-  assert.ok(t.dim("x").includes("2"), "default dim uses faint (2)");
+  // dim must NOT be faint (SGR 2) — faint is unreadable on a light background;
+  // it is a real mid-grey truecolor instead.
+  assert.ok(!t.dim("x").includes("\x1b[2m"), "default dim is not faint");
+  assert.ok(t.dim("x").includes("38;2;"), "default dim uses a grey truecolor");
+  // semantic colors are bold + darker truecolor (not the washed-out base ANSI).
+  assert.ok(t.success("x").includes("\x1b[1;38;2;"), "default success is bold truecolor");
+  assert.ok(t.error("x").includes("\x1b[1;38;2;"), "default error is bold truecolor");
+  // warning is dark amber, NOT bare yellow (33) which vanishes on white.
+  assert.ok(!t.warning("x").includes("\x1b[33m"), "default warning is not bare yellow");
+  assert.ok(t.warning("x").includes("\x1b[1;38;2;"), "default warning is bold amber truecolor");
 });
 
 test("muted theme uses standard (non-bright) color codes", () => {

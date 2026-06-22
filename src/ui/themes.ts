@@ -29,15 +29,22 @@ export interface Theme {
 export type ColorMode = "auto" | "on" | "off";
 export type ThemeName = "default" | "high-contrast" | "muted" | "monochrome";
 
-/** Per-style SGR code pair: [on, off]. Both values are ANSI parameter numbers. */
+/**
+ * Per-style SGR code pair: [on, off].
+ *
+ * Each value is an ANSI parameter string (a number is accepted and stringified),
+ * so a style can be a single code (`33`) or a compound sequence
+ * (`"1;38;2;176;104;10"` = bold + amber truecolor). The I/O layer wraps content
+ * as `\x1b[<on>m…\x1b[<off>m`.
+ */
 export interface ThemePalette {
   name: ThemeName;
-  dim: [on: number, off: number];
-  success: [on: number, off: number];
-  error: [on: number, off: number];
-  warning: [on: number, off: number];
-  title: [on: number, off: number];
-  selected: [on: number, off: number];
+  dim: [on: number | string, off: number | string];
+  success: [on: number | string, off: number | string];
+  error: [on: number | string, off: number | string];
+  warning: [on: number | string, off: number | string];
+  title: [on: number | string, off: number | string];
+  selected: [on: number | string, off: number | string];
 }
 
 export interface ThemeResolveInput {
@@ -81,13 +88,28 @@ const BRIGHT_RED: [number, number] = [91, 39];
 /** SGR 93 / 39 – bright yellow foreground */
 const BRIGHT_YELLOW: [number, number] = [93, 39];
 
+// ── Darker + bolder default palette ──────────────────────────────────────────
+// Tuned for legibility on a PALE (light) terminal background, where faint (SGR 2)
+// and base yellow (33) wash out and become unreadable. These use bold + darker
+// truecolor mid-tones that keep strong contrast on light backgrounds while
+// staying clearly visible on dark ones, so the default works either way.
+// `off` resets the matching attributes (22 = bold/faint off, 39 = default fg).
+/** Readable mid-grey (not faint) — de-emphasised text that still reads on white. */
+const DIM_GREY: [string, string] = ["38;2;110;110;110", "39"];
+/** Bold dark green (#15803d). */
+const STRONG_GREEN: [string, string] = ["1;38;2;21;128;61", "22;39"];
+/** Bold dark red (#c81e1e). */
+const STRONG_RED: [string, string] = ["1;38;2;200;30;30", "22;39"];
+/** Bold dark amber (#b0680a) — replaces washed-out yellow on light backgrounds. */
+const STRONG_AMBER: [string, string] = ["1;38;2;176;104;10", "22;39"];
+
 export const BUILTIN_PALETTES: Record<ThemeName, ThemePalette> = {
   default: {
     name: "default",
-    dim: FAINT,
-    success: GREEN,
-    error: RED,
-    warning: YELLOW,
+    dim: DIM_GREY,
+    success: STRONG_GREEN,
+    error: STRONG_RED,
+    warning: STRONG_AMBER,
     title: BOLD,
     selected: REVERSE,
   },
@@ -141,7 +163,7 @@ export function isValidThemeName(name: string): name is ThemeName {
  * SGR wrapper – same shape as the private helper in theme.ts but local
  * so this module stays independent.
  */
-function sgr(code: number, off: number): (s: string) => string {
+function sgr(code: number | string, off: number | string): (s: string) => string {
   return (s: string) => `\x1b[${code}m${s}\x1b[${off}m`;
 }
 

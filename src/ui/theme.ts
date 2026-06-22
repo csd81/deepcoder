@@ -7,6 +7,8 @@
  * function so no escape codes ever reach a non-color terminal.
  */
 
+import { createNamedTheme } from "./themes.js";
+
 export interface ColorResolveInput {
   env: Record<string, string | undefined>;
   isTTY: boolean;
@@ -25,11 +27,6 @@ export function resolveColorEnabled(input: ColorResolveInput): boolean {
   return input.isTTY;
 }
 
-/** SGR wrapper: `code` turns the style on, `off` turns it back to default. */
-function sgr(code: number, off: number) {
-  return (s: string) => `\x1b[${code}m${s}\x1b[${off}m`;
-}
-
 export interface Theme {
   dim: (s: string) => string;
   success: (s: string) => string;
@@ -39,24 +36,12 @@ export interface Theme {
   selected: (s: string) => string;
 }
 
-const IDENTITY: Theme = {
-  dim: (s) => s,
-  success: (s) => s,
-  error: (s) => s,
-  warning: (s) => s,
-  title: (s) => s,
-  selected: (s) => s,
-};
-
-/** Build a theme. When `color` is false, every style is the identity function. */
+/**
+ * Build the default theme. Delegates to the named `"default"` palette in
+ * themes.ts so there is a single source of truth for the default colors (the
+ * darker + bolder, pale-background-legible palette). When `color` is false,
+ * every style is the identity function.
+ */
 export function createTheme(color: boolean): Theme {
-  if (!color) return IDENTITY;
-  return {
-    dim: sgr(2, 22),
-    success: sgr(32, 39),
-    error: sgr(31, 39),
-    warning: sgr(33, 39),
-    title: sgr(1, 22),
-    selected: sgr(7, 27),
-  };
+  return createNamedTheme("default", color);
 }

@@ -107,11 +107,11 @@ test("[styleTokens-role-styles] role functions apply correct theme styles (color
   assert.ok(t.role.user("You").startsWith("\x1b[1m"), "user header is bold");
   assert.ok(t.role.assistant("Deepcoder").startsWith("\x1b[1m"), "assistant header is bold");
 
-  // system/tool/check/worker → dim (SGR 2)
-  assert.ok(t.role.system("System").startsWith("\x1b[2m"), "system header is dim");
-  assert.ok(t.role.tool("tool x").startsWith("\x1b[2m"), "tool header is dim");
-  assert.ok(t.role.check("check y").startsWith("\x1b[2m"), "check header is dim");
-  assert.ok(t.role.worker("worker z").startsWith("\x1b[2m"), "worker header is dim");
+  // system/tool/check/worker → dim, now a readable grey truecolor (not faint SGR 2)
+  assert.ok(t.role.system("System").startsWith("\x1b[38;2;"), "system header is grey (not faint)");
+  assert.ok(t.role.tool("tool x").startsWith("\x1b[38;2;"), "tool header is grey (not faint)");
+  assert.ok(t.role.check("check y").startsWith("\x1b[38;2;"), "check header is grey (not faint)");
+  assert.ok(t.role.worker("worker z").startsWith("\x1b[38;2;"), "worker header is grey (not faint)");
 
   // Content preserved inside the escape codes
   assert.ok(t.role.user("You").includes("You"), "content preserved in role styling");
@@ -120,16 +120,14 @@ test("[styleTokens-role-styles] role functions apply correct theme styles (color
 test("[styleTokens-state-styles] state functions apply correct theme styles (color enabled)", () => {
   const t = createStyleTokens(colorTheme);
 
-  // success → SGR 32 (green)
-  assert.ok(t.state.success("ok").includes("\x1b[32m"), "success uses green");
-  // error → SGR 31 (red)
-  assert.ok(t.state.error("fail").includes("\x1b[31m"), "error uses red");
-  // warning → SGR 33 (yellow)
-  assert.ok(t.state.warning("warn").includes("\x1b[33m"), "warning uses yellow");
+  // success/error/warning → bold + darker truecolor (legible on a pale background)
+  assert.ok(t.state.success("ok").includes("\x1b[1;38;2;"), "success is bold truecolor green");
+  assert.ok(t.state.error("fail").includes("\x1b[1;38;2;"), "error is bold truecolor red");
+  assert.ok(t.state.warning("warn").includes("\x1b[1;38;2;"), "warning is bold truecolor amber");
   // running → SGR 1 (bold, via theme.title)
   assert.ok(t.state.running("run").includes("\x1b[1m"), "running uses bold");
-  // muted → SGR 2 (dim)
-  assert.ok(t.state.muted("mute").includes("\x1b[2m"), "muted uses dim");
+  // muted → dim, now a readable grey truecolor (not faint SGR 2)
+  assert.ok(t.state.muted("mute").includes("\x1b[38;2;"), "muted is grey (not faint)");
   // selected → SGR 7 (invert)
   assert.ok(t.state.selected("sel").includes("\x1b[7m"), "selected uses invert");
 });
