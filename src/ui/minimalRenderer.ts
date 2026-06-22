@@ -1,3 +1,5 @@
+import { renderRaw } from "./rawMode.js";
+
 /**
  * Phase 10A — minimal TUI renderer (pure frame builder + key mapping).
  *
@@ -5,6 +7,11 @@
  * dependencies.  It builds the frame lines that a downstream I/O layer would
  * write to the terminal.
  */
+
+/** Strip ANSI from a string when `raw` is true. */
+function stripIfRaw(raw: boolean | undefined, s: string): string {
+  return raw ? renderRaw(s) : s;
+}
 
 // ── FrameInput ───────────────────────────────────────────────────────────────
 
@@ -31,6 +38,8 @@ export interface FrameInput {
   completerLines?: string[];
   /** Footer hint line, rendered as the very last row when present. */
   footerLine?: string;
+  /** When true, strip ANSI escape codes from all lines before rendering. */
+  raw?: boolean;
 }
 
 // ── renderFrame ──────────────────────────────────────────────────────────────
@@ -47,16 +56,16 @@ export interface FrameInput {
  * Every returned line is truncated to `width` columns.
  */
 export function renderFrame(input: FrameInput): string[] {
-  const { statusLine, lines, viewportTop, height, width, inputLine, hasNewOutputBelow } = input;
+  const { statusLine, lines, viewportTop, height, width, inputLine, hasNewOutputBelow, raw } = input;
   const result: string[] = [];
 
   // 1. Status bar
-  result.push(truncate(statusLine, width));
+  result.push(truncate(stripIfRaw(raw, statusLine), width));
 
   // 2. Visible window
   const visible = lines.slice(viewportTop, viewportTop + height);
   for (const line of visible) {
-    result.push(truncate(line, width));
+    result.push(truncate(stripIfRaw(raw, line), width));
   }
 
   // Pad remaining rows in the visible window if we have fewer lines than height
@@ -67,12 +76,12 @@ export function renderFrame(input: FrameInput): string[] {
 
   // 3. "New output below" indicator
   if (hasNewOutputBelow) {
-    result.push(truncate("↓ new output below", width));
+    result.push(truncate(stripIfRaw(raw, "↓ new output below"), width));
   }
 
   // 4. Slash-command dropdown or file-completion dropdown (above the composer, when open)
   if (input.menuLines) {
-    for (const row of input.menuLines) result.push(truncate(row, width));
+    for (const row of input.menuLines) result.push(truncate(stripIfRaw(raw, row), width));
   }
   if (input.completerLines) {
     for (const row of input.completerLines) result.push(truncate(row, width));
@@ -80,10 +89,10 @@ export function renderFrame(input: FrameInput): string[] {
 
   // 5. Input composer (one or more rows)
   const composer = input.inputLines ?? [inputLine];
-  for (const row of composer) result.push(truncate(row, width));
+  for (const row of composer) result.push(truncate(stripIfRaw(raw, row), width));
 
   // 6. Footer hint line (very last row)
-  if (input.footerLine !== undefined) result.push(truncate(input.footerLine, width));
+  if (input.footerLine !== undefined) result.push(truncate(stripIfRaw(raw, input.footerLine), width));
 
   return result;
 }

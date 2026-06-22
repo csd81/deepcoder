@@ -151,6 +151,8 @@ export interface Session {
   planState?: PlanModeState;
   /** Human-readable session label, set via /title or --title. */
   title?: string;
+  /** When true, renderers strip ANSI escape codes from all output. */
+  rawMode?: boolean;
 }
 
 /**
@@ -375,6 +377,7 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     createPlainRenderer({
       write: (s) => stdout.write(s),
       renderAssistant: (text) => renderMarkdown(text, { width: stdout.columns ?? 80, theme: plainTheme }),
+      raw: session.rawMode,
     });
   // Phase 10F: route the main agent turn through the model router's "edit" role.
   // With no role override this resolves to the current model on the current
@@ -575,7 +578,8 @@ async function printStatusline(session: Session): Promise<void> {
       activeSkills: session.activatedSkills?.length ?? 0,
       warnings: [],
     });
-    stdout.write(chalk.dim(renderStatusline(snap)) + "\n");
+    const rawIndicator = session.rawMode ? " [raw]" : "";
+    stdout.write(chalk.dim(renderStatusline(snap)) + rawIndicator + "\n");
   } catch {
     /* statusline must never break the repl */
   }
@@ -603,7 +607,7 @@ export async function runRepl(session: Session): Promise<void> {
   stdout.write(
     chalk.bold("deepcoder") +
       chalk.dim(
-        ` — ${session.config.model} | mode: ${session.mode} | session: ${session.store.id}\n${session.config.workspaceRoot}\n`,
+        ` — ${session.config.model} | mode: ${session.mode}${session.rawMode ? " | raw" : ""} | session: ${session.store.id}\n${session.config.workspaceRoot}\n`,
       ) +
       chalk.dim("Type a task, /help for commands, or !<cmd> to run a shell command.\n"),
   );
@@ -1166,6 +1170,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       costUsd: cost?.pricingKnown ? cost.totalUsd : undefined,
       busy,
       title: session.title,
+      raw: session.rawMode,
     };
     const status = renderStatusBar(info, width, theme, session.config.statusline?.fields);
     const frame = renderFrame({
@@ -1175,6 +1180,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       menuLines: menu.length ? menu : undefined,
       completerLines: completerLines.length ? completerLines : undefined,
       footerLine: renderFooterHints({ mode: currentFooterMode(), width, theme }),
+      raw: session.rawMode,
     });
     // Repaint only the lines that changed since the last frame (anti-flicker).
     const ops = diffFrames(prevFrame, frame);
