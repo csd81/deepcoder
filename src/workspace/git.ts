@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-/** Read-only git helpers. No commits in MVP. */
+/** Git helpers: read-only inspection plus structured workflow commands. */
 export class Git {
   constructor(private cwd: string) {}
 
@@ -15,6 +15,30 @@ export class Git {
       const e = err as { stderr?: string; code?: number };
       throw new Error(e.stderr?.trim() || `git ${args.join(" ")} failed (code ${e.code ?? "?"})`);
     }
+  }
+
+  /**
+   * Like {@link run} but returns the combined stdout+stderr and exit code
+   * instead of throwing on a non-zero exit. Used by merge/rebase which exit
+   * non-zero on conflicts — a non-error condition we want to inspect, not throw.
+   */
+  private async runStatus(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+    try {
+      const { stdout, stderr } = await execFileAsync("git", args, { cwd: this.cwd, maxBuffer: 8 * 1024 * 1024 });
+      return { code: 0, stdout, stderr };
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string; code?: number };
+      return { code: e.code ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+    }
+  }
+
+  /** Workspace-relative paths with unmerged (conflicting) entries, if any. */
+  private async unmergedPaths(): Promise<string[]> {
+    const out = await this.run(["diff", "--name-only", "--diff-filter=U"]);
+    return out
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
   }
 
   async isRepo(): Promise<boolean> {
@@ -66,5 +90,163 @@ export class Git {
     if (!out) return "clean working tree";
     const files = out.split("\n").length;
     return `${files} file${files === 1 ? "" : "s"} changed`;
+  }
+
+  // ── Read-only workflow ──
+
+  /** Last `count` commits, one line each (decorated, colored). */
+  async log(count = 10): Promise<string> {
+    return this.run(["log", `--max-count=${count}`, "--oneline", "--decorate"]);
+  }
+
+  /** Current branch plus all local and remote branch names. */
+  async branches(): Promise<{ current: string; local: string[]; remote: string[] }> {
+    const current = (await this.run(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+    const parse = (out: string): string[] =>
+      out
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+    const local = parse(await this.run(["branch", "--format=%(refname:short)"]));
+    // Skip the symbolic "origin/HEAD -> origin/main" pointer line.
+    const remote = parse(await this.run(["branch", "-r", "--format=%(refname:short)"])).filter(
+      (r) => !r.includes("->"),
+    );
+    return { current, local, remote };
+  }
+
+  /** Blame annotation for a file. */
+  async blame(file: string): Promise<string> {
+    return this.run(["blame", "--", file]);
+  }
+
+  /** Raw `git stash list` output. */
+  async stashList(): Promise<string> {
+    return (await this.run(["stash", "list"])).trim();
+  }
+
+  /** Diff of staged (cached) changes only. */
+  async diffStaged(): Promise<string> {
+    return (await this.run(["diff", "--cached"])).trim();
+  }
+
+  // ── Mutating workflow ──
+
+  /**
+   * Commit changes. With `paths`, commits only those paths; otherwise stages
+   * all tracked modifications (`-a`) and commits. Returns the new commit hash
+   * and raw stdout.
+   */
+  async commit(message: string, paths?: string[]): Promise<{ hash: string; stdout: string }> {
+    const args = paths?.length
+      ? ["commit", "-m", message, "--", ...paths]
+      : ["commit", "-a", "-m", message]; // stage all tracked modifications
+    const stdout = await this.run(args);
+    return { hash: this.commitHash(stdout), stdout };
+  }
+
+  /** Create a revert commit for `commit` (uses --no-edit for a default message). */
+  async revert(commit: string): Promise<string> {
+    return this.run(["revert", "--no-edit", commit]);
+  }
+
+  /** Reset HEAD to `commit` with the given mode. */
+  async reset(commit: string, mode: "soft" | "mixed" | "hard"): Promise<string> {
+    return this.run(["reset", `--${mode}`, commit]);
+  }
+
+  /** Amend the last commit with a new message. Returns the rewritten hash. */
+  async amend(message: string): Promise<{ hash: string; stdout: string }> {
+    const stdout = await this.run(["commit", "--amend", "-m", message]);
+    return { hash: this.commitHash(stdout), stdout };
+  }
+
+  /** Cherry-pick a commit onto the current branch. */
+  async cherryPick(commit: string): Promise<string> {
+    return this.run(["cherry-pick", commit]);
+  }
+
+  /** Push `branch` to `remote`. `force` uses --force-with-lease for safety. */
+  async push(remote: string, branch: string, force?: boolean): Promise<string> {
+    const args = ["push"];
+    if (force) args.push("--force-with-lease");
+    args.push(remote, branch);
+    return this.run(args);
+  }
+
+  /** Pull `branch` from `remote`, optionally with --rebase. */
+  async pull(remote: string, branch: string, rebase?: boolean): Promise<string> {
+    const args = ["pull"];
+    if (rebase) args.push("--rebase");
+    args.push(remote, branch);
+    return this.run(args);
+  }
+
+  /**
+   * Merge `branch` into the current branch. On conflict, returns
+   * `{ ok: false, conflicts }` rather than throwing.
+   */
+  async merge(branch: string): Promise<{ ok: boolean; conflicts?: string[] }> {
+    const res = await this.runStatus(["merge", "--no-edit", branch]);
+    if (res.code === 0) return { ok: true };
+    const conflicts = await this.unmergedPaths();
+    if (conflicts.length) return { ok: false, conflicts };
+    // Non-conflict failure (e.g. dirty tree): surface as an error.
+    throw new Error(res.stderr.trim() || res.stdout.trim() || `git merge ${branch} failed`);
+  }
+
+  /**
+   * Rebase the current branch onto `target`. On conflict, returns
+   * `{ ok: false, conflicts }` rather than throwing.
+   */
+  async rebase(target: string): Promise<{ ok: boolean; conflicts?: string[] }> {
+    const res = await this.runStatus(["rebase", target]);
+    if (res.code === 0) return { ok: true };
+    const conflicts = await this.unmergedPaths();
+    if (conflicts.length) return { ok: false, conflicts };
+    throw new Error(res.stderr.trim() || res.stdout.trim() || `git rebase ${target} failed`);
+  }
+
+  /** Check out an existing branch. */
+  async checkout(branch: string): Promise<string> {
+    return this.run(["checkout", branch]);
+  }
+
+  /** Create and switch to a new branch (`git checkout -b`). */
+  async createBranch(name: string): Promise<string> {
+    return this.run(["checkout", "-b", name]);
+  }
+
+  /** Delete a branch (`-d`, or `-D` to force-delete an unmerged branch). */
+  async deleteBranch(name: string, force = false): Promise<string> {
+    return this.run(["branch", force ? "-D" : "-d", name]);
+  }
+
+  // ── Stash ──
+
+  /** Stash working-tree changes, optionally with a message. */
+  async stashSave(message?: string): Promise<string> {
+    const args = ["stash", "push"];
+    if (message) args.push("-m", message);
+    return this.run(args);
+  }
+
+  /** Pop a stash entry (default: most recent) back onto the working tree. */
+  async stashPop(index?: number): Promise<string> {
+    const args = ["stash", "pop"];
+    if (index != null) args.push(`stash@{${index}}`);
+    return this.run(args);
+  }
+
+  /** Drop a stash entry (default: most recent) without applying it. */
+  async stashDrop(index?: number): Promise<string> {
+    const args = ["stash", "drop"];
+    if (index != null) args.push(`stash@{${index}}`);
+    return this.run(args);
+  }
+
+  /** Extract the short hash from a `git commit` summary line "[branch <hash>] ...". */
+  private commitHash(stdout: string): string {
+    return stdout.match(/\[[^\]]*?\s([0-9a-f]+)\]/)?.[1] ?? "unknown";
   }
 }

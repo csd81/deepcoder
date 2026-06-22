@@ -30,6 +30,10 @@ const TUI_SUSPEND_SLASH = new Set<string>([
   "check",        // runs a configured check, streams output via onData
   "index",        // semantic index build: long embedding pass with progress
   "semantic",     // alias surface for the semantic index build
+  // Git workflow commands: mutating ones prompt for confirmation via readline,
+  // which needs the normal screen (suspend the alt-screen).
+  "commit", "branch", "stash", "revert", "reset", "amend",
+  "push", "pull", "rebase", "merge", "cherry-pick",
 ]);
 
 /**
