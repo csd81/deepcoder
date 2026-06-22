@@ -39,6 +39,7 @@ import { serializeSession, validateImport } from "../session/sessionExport.js";
 import { renderTable } from "../ui/table.js";
 import { initState, undo, redo } from "./undoRedo.js";
 import { applyUndoEntry } from "../session/undoApply.js";
+import { handleGit, isGitCommand } from "./gitSlashCommands.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
@@ -2561,6 +2562,8 @@ export async function handleSlashCommand(
     }
 
     default: {
+      // Git workflow commands (/log, /commit, /branch, …) dispatch here.
+      if (isGitCommand(cmd)) { await handleGit(cmd, session, arg); return { consumed: true }; }
       // Last-resort: check user-defined commands before reporting unknown.
       const cmdMap = session.config.commands ?? {};
       const match = cmdMap[cmd];

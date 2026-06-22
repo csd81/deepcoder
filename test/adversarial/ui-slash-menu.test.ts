@@ -25,7 +25,7 @@ const SGR = /\x1b\[[0-9;]*m/;
 
 test("catalog only describes real commands and is well-formed", () => {
   const cats = new Set([
-    "session", "context", "checks", "delegate", "web", "config", "debug",
+    "session", "context", "checks", "delegate", "web", "config", "debug", "git",
   ]);
   assert.ok(SLASH_CATALOG.length > 0);
   for (const c of SLASH_CATALOG) {

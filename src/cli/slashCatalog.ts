@@ -13,7 +13,7 @@ export interface SlashCommandInfo {
   name: string;
   args?: string;
   description: string;
-  category: "session" | "context" | "checks" | "delegate" | "web" | "config" | "debug";
+  category: "session" | "context" | "checks" | "delegate" | "web" | "config" | "debug" | "git";
   aliases?: string[];
 }
 
@@ -23,6 +23,20 @@ export interface SlashCommandInfo {
  * the dropdown; they are descriptive, not behavioral.
  */
 export const SLASH_CATALOG: SlashCommandInfo[] = [
+  // git
+  { name: "log", args: "[n]", description: "Show the last N commits", category: "git" },
+  { name: "branch", args: "[-c|-d <name>|<name>]", description: "List/create/delete/switch branches", category: "git" },
+  { name: "commit", args: "[-m <msg>]", description: "Stage + commit (confirmed)", category: "git" },
+  { name: "amend", args: "[-m <msg>]", description: "Amend the last commit (confirmed)", category: "git" },
+  { name: "stash", args: "[save|pop|list|drop]", description: "Stash/unstash changes", category: "git" },
+  { name: "revert", args: "<commit>", description: "Revert a commit (confirmed)", category: "git" },
+  { name: "reset", args: "[--soft|--mixed|--hard] [<ref>]", description: "Reset working tree (confirmed)", category: "git" },
+  { name: "cherry-pick", args: "<commit>", description: "Cherry-pick a commit (confirmed)", category: "git" },
+  { name: "blame", args: "<file>", description: "Annotate a file with commit info", category: "git" },
+  { name: "push", args: "[--force]", description: "Push to origin (confirmed; --force double-confirmed)", category: "git" },
+  { name: "pull", args: "[--rebase]", description: "Pull from origin (confirmed)", category: "git" },
+  { name: "merge", args: "<branch>", description: "Merge a branch (confirmed)", category: "git" },
+  { name: "rebase", args: "<branch>", description: "Rebase onto a branch (confirmed)", category: "git" },
   // session
   { name: "help", description: "Show command help", category: "session" },
   { name: "exit", description: "Quit the session", category: "session", aliases: ["quit"] },
