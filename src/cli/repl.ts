@@ -36,7 +36,7 @@ import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
-import { buildDelegateRuntime } from "../runtime/sessionFactory.js";
+import { buildDelegateRuntime, attachFileWatcher } from "../runtime/sessionFactory.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
 import type { UiEvent } from "../ui/events.js";
@@ -612,6 +612,7 @@ async function executeBang(session: Session, command: string, signal: AbortSigna
 
 export async function runRepl(session: Session): Promise<void> {
   session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
+  attachFileWatcher(session); // interactive only — stopped on exit below
   stdout.write(
     chalk.bold("deepcoder") +
       chalk.dim(
@@ -823,6 +824,7 @@ async function injectSessionStartContext(session: Session): Promise<void> {
  */
 export async function runTuiRepl(session: Session): Promise<void> {
   session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
+  attachFileWatcher(session); // interactive only — stopped on exit below
   const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
   let transcript: TranscriptState = createTranscript();
   let editor = createEditor();

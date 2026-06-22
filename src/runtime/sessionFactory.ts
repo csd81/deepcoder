@@ -344,12 +344,6 @@ export async function buildSession(
       planState: initPlanMode(),
       title: saved.title,
     };
-    // Start the file watcher for external-change detection
-    const w = startFileWatcher(resumedSession.config.workspaceRoot, (rel) => {
-      resumedSession.readTracker.delete(rel);
-      stdout.write(chalk.dim(`file changed externally: ${rel}\n`));
-    });
-    resumedSession.fileWatcher = w;
     return resumedSession;
   }
 
@@ -378,11 +372,20 @@ export async function buildSession(
     providerPool,
     planState: initPlanMode(),
   };
-  // Start the file watcher for external-change detection
-  const w = startFileWatcher(freshSession.config.workspaceRoot, (rel) => {
-    freshSession.readTracker.delete(rel);
+  return freshSession;
+}
+
+/**
+ * Start the external-file-change watcher for an interactive session and store
+ * it on `session.fileWatcher`. Called ONLY by the REPL/TUI entry points (which
+ * stop it on exit) — never by buildSession, so one-shot runs and tests don't
+ * leak a recursive fs.watch handle that would keep the process alive at exit
+ * (recursive watch ignores unref on Linux). Idempotent: no-op if already set.
+ */
+export function attachFileWatcher(session: Session): void {
+  if (session.fileWatcher) return;
+  session.fileWatcher = startFileWatcher(session.config.workspaceRoot, (rel) => {
+    session.readTracker.delete(rel);
     stdout.write(chalk.dim(`file changed externally: ${rel}\n`));
   });
-  freshSession.fileWatcher = w;
-  return freshSession;
 }
