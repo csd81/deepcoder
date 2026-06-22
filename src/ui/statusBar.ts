@@ -34,6 +34,8 @@ export interface StatusBarInfo {
   title?: string;
   /** Raw mode — when true, output is stripped of ANSI codes. */
   raw?: boolean;
+  /** Side conversation active indicator. */
+  side?: boolean;
 }
 
 export type StatuslineField =
@@ -48,7 +50,8 @@ export type StatuslineField =
   | "busy"
   | "session"
   | "title"
-  | "raw";
+  | "raw"
+  | "side";
 
 export const DEFAULT_STATUSBAR_FIELDS: StatuslineField[] = [
   "title", "mode", "model", "sandbox", "web",
@@ -78,6 +81,7 @@ export function renderField(field: StatuslineField, info: StatusBarInfo, theme: 
     case "busy":    return info.busy ? theme.warning("running") : theme.dim("idle");
     case "session": return null; // sessionId not yet on StatusBarInfo
     case "raw":     return info.raw ? theme.warning("raw") : null;
+    case "side":    return info.side ? theme.warning("side") : null;
     default:        return null;
   }
 }
