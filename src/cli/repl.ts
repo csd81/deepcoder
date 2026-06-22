@@ -585,6 +585,18 @@ async function injectSessionStartContext(session: Session): Promise<void> {
  * on every exit path — normal exit, error, signal, or process exit. Slash
  * commands (which print to stdout) SUSPEND the TUI and run on the normal screen.
  */
+/**
+ * Read-only / display slash commands that should render INTO the transcript
+ * rather than suspending the alt-screen to print on the normal screen (which
+ * looked like help/output being "dumped to stdout"). These only print; they
+ * never read input or launch a sub-UI, so capturing their stdout is safe.
+ */
+const TUI_INLINE_SLASH = new Set([
+  "help", "status", "models", "model", "effort", "mode", "usage", "cost",
+  "telemetry", "checks", "todos", "context", "web", "doctor", "ps", "goal",
+  "memory", "instructions", "skills", "plugins", "mcp", "isolation", "sandbox", "diff",
+]);
+
 export async function runTuiRepl(session: Session): Promise<void> {
   session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
   const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
@@ -905,6 +917,36 @@ export async function runTuiRepl(session: Session): Promise<void> {
     pushUser(line); stickBottom(); redraw();
     if (line === "/exit" || line === "/quit") { restore(); resolveDone(); return; }
     if (line.startsWith("/")) {
+      const cmd = (line.slice(1).split(/\s+/)[0] ?? "").toLowerCase();
+      if (TUI_INLINE_SLASH.has(cmd)) {
+        // Capture the command's stdout and show it as a transcript block — no
+        // alt-screen suspend, so the output stays in the scrollable UI.
+        const buf: string[] = [];
+        const cap = (...a: unknown[]) => { buf.push(a.map((x) => (typeof x === "string" ? x : String(x))).join(" ")); };
+        const origLog = console.log;
+        const origErr = console.error;
+        const origWrite = stdout.write.bind(stdout);
+        console.log = cap as typeof console.log;
+        console.error = cap as typeof console.error;
+        (stdout as unknown as { write: (s: unknown) => boolean }).write = (s: unknown) => {
+          buf.push(typeof s === "string" ? s.replace(/\n+$/, "") : String(s));
+          return true;
+        };
+        try {
+          await handleSlashCommand(line, session, () => session.store.save(snapshot(session)), () => runTask(session));
+        } catch (e) {
+          buf.push(`Error: ${(e as Error).message ?? e}`);
+        } finally {
+          console.log = origLog;
+          console.error = origErr;
+          (stdout as unknown as { write: typeof origWrite }).write = origWrite;
+        }
+        const text = buf.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd();
+        transcript = applyEvent(transcript, { type: "notice", message: text || `(/${cmd}: no output)` });
+        stickBottom();
+        redraw();
+        return;
+      }
       restore(); restored = false; // suspend: run the command on the normal screen
       try {
         await handleSlashCommand(line, session, () => session.store.save(snapshot(session)), () => runTask(session));
