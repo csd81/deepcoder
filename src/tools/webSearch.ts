@@ -10,6 +10,12 @@ import type { Tool, ToolInvocation, ToolResult, ToolContext } from "./types.js";
 import { parseArgs } from "./types.js";
 import { runWebSearch } from "../web/searchProvider.js";
 import type { WebSearchProvider } from "../web/searchProvider.js";
+import { boundText } from "./outputBound.js";
+
+// Hard cap on the rendered result block so a provider returning many long
+// snippets can't flood the model context. Each result is title/url/snippet
+// joined by blank lines; this bounds the joined text by line count.
+const MAX_RESULT_LINES = 200;
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -81,7 +87,7 @@ export function createWebSearchTool(options: CreateWebSearchOptions): Tool {
             (r) => `[${r.id}] ${r.title}\n${r.url}\n${r.snippet}`
           );
 
-          return { output: parts.join("\n\n") };
+          return { output: boundText(parts.join("\n\n"), MAX_RESULT_LINES) };
         },
       };
     },

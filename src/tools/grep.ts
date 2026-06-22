@@ -7,6 +7,7 @@ import type { Tool, ToolInvocation, ToolResult } from "./types.js";
 import { parseArgs } from "./types.js";
 import { resolveReadPathInWorkspace, displayPath } from "../workspace/paths.js";
 import { isSensitivePath, SENSITIVE_GLOB_EXCLUDES } from "../workspace/sensitive.js";
+import { boundLines } from "./outputBound.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,7 +26,8 @@ export const grepTool: Tool = {
   kind: "read-only",
   description:
     "Search file contents for a regex. Uses ripgrep (rg) when available, otherwise a built-in scan. " +
-    "Returns matching lines with file:line prefixes.",
+    "Returns matching lines with file:line prefixes. " +
+    "Use when you know the literal/regex to match; for a conceptual query use semantic_search.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("grep", schema, raw);
@@ -65,7 +67,10 @@ export const grepTool: Tool = {
             maxBuffer: 8 * 1024 * 1024,
           });
           const trimmed = stdout.trim();
-          return { output: trimmed || "(no matches)" };
+          if (!trimmed) return { output: "(no matches)" };
+          // Cap to match the fallback's bound so a hot pattern can't flood the
+          // model context; mark truncation explicitly.
+          return { output: boundLines(trimmed.split("\n"), MAX_MATCH_LINES, "matches").join("\n") };
         } catch (err: unknown) {
           const e = err as { code?: number | string; stderr?: string };
           // rg exits 1 with no output when there are no matches.
@@ -74,7 +79,14 @@ export const grepTool: Tool = {
           if (e.code === "ENOENT") {
             return grepFallback(ctx.workspaceRoot, abs, args.pattern, args.glob, ctx.signal);
           }
-          return { output: `grep failed: ${e.stderr || String(err)}`, isError: true };
+          // ripgrep exits 2 on a usage error (most commonly an invalid regex).
+          // Distinguish that from a system failure so the model can fix the
+          // pattern rather than retrying blindly.
+          const stderr = e.stderr ?? "";
+          if (/regex parse error|error parsing regex|unclosed|repetition/i.test(stderr)) {
+            return { output: `invalid regex: ${stderr.trim()} — fix the pattern`, isError: true };
+          }
+          return { output: `grep failed: ${stderr || String(err)}`, isError: true };
         }
       },
     };
@@ -98,7 +110,7 @@ export async function grepFallback(
   try {
     re = new RegExp(pattern);
   } catch (err) {
-    return { output: `invalid regex: ${(err as Error).message}`, isError: true };
+    return { output: `invalid regex: ${(err as Error).message} — fix the pattern`, isError: true };
   }
   const globRe = glob ? globToRegExp(glob) : null;
 

@@ -89,7 +89,13 @@ export const runBashTool: Tool = {
             if (timedOut) {
               resolve({ output: `Command timed out after ${args.timeout_ms}ms.\n${out}`, isError: true });
             } else if (spawnErr) {
-              resolve({ output: `Failed to run command: ${spawnErr.message}\n${out}`, isError: true });
+              // ENOENT here means the shell binary itself couldn't be spawned;
+              // surface it as a "not found, check PATH" hint the model can act on.
+              const enoent = (spawnErr as NodeJS.ErrnoException).code === "ENOENT";
+              const msg = enoent
+                ? `command not found: ${args.command} — check it is installed / on PATH.`
+                : `Failed to run command: ${spawnErr.message}`;
+              resolve({ output: `${msg}\n${out}`, isError: true });
             } else if (code && code !== 0) {
               resolve({ output: `Exit code ${code}\n${out}`, isError: true });
             } else {

@@ -15,7 +15,7 @@ export const deleteFileTool: Tool = {
   kind: "mutate",
   description:
     "Delete a workspace file. The file must exist and must not be a directory. " +
-    "Destructive operation — use with care. This is NOT recursive; directories cannot be deleted.",
+    "Captured by checkpoints — /rollback can restore it. This is NOT recursive; directories cannot be deleted.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("delete_file", schema, raw);

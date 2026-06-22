@@ -97,6 +97,28 @@ test("semantic_search ranks by similarity, cites path:line, and is topK-bounded"
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("a misconfigured/huge topK is clamped by the hard result bound (can't flood)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "sem-"));
+  try {
+    // 60 records, each on a distinct path; request 1000 results.
+    const many: VectorRecord[] = Array.from({ length: 60 }, (_, i) => ({
+      chunk: chunk(`r${i}`, `src/f${i}.ts`),
+      vector: [1, 0, 0],
+    }));
+    const d = deps({
+      config: { ...deps().config, topK: 1000 },
+      loadStore: async () => ({
+        manifest: { providerLabel: "ollama", model: "nomic-embed-text", dimensions: 3, createdAt: "", chunkCount: many.length },
+        records: many,
+      }),
+    });
+    const r = await tool("semantic_search", d).build({ query: "x", topK: 1000 }).execute(ctx(root));
+    assert.equal(r.isError ?? false, false);
+    const shown = (r.output.match(/src\/f\d+\.ts/g) || []).length;
+    assert.ok(shown <= 25, `hard upper bound caps results at 25, got ${shown}`);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("semantic_search with no index returns a clear rebuild message", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "sem-"));
   try {

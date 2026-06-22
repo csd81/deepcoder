@@ -19,7 +19,8 @@ export const editFileTool: Tool = {
   kind: "mutate",
   description:
     "Replace an exact string in a file. The match must be unique unless replace_all is true. " +
-    "old_string must match the file byte-for-byte (including whitespace). The file must have been read first.",
+    "old_string must match the file byte-for-byte (including whitespace). The file must have been read first." +
+    " For changes spanning multiple files, use apply_patch.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("edit_file", schema, raw);

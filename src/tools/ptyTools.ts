@@ -17,6 +17,14 @@ import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
 import { createPtySession, type PtyChild, type PtySession } from "../pty/session.js";
+import { boundText } from "./outputBound.js";
+
+/**
+ * Cap on snapshot lines surfaced to the model. The session buffer is byte-bounded
+ * (64KB) but that is still far more lines than a model should ingest per call, so
+ * line-cap with an explicit marker. Head-bounded to match run_bash.
+ */
+const MAX_SHELL_LINES = 400;
 
 export interface PtyToolsOptions {
   /** Default-off: when false, no shell tool is exposed at all. */
@@ -88,7 +96,7 @@ export function createPtyTools(opts: PtyToolsOptions): Tool[] {
           const s = ensure();
           if (!args.read_only) s.write(args.input);
           await delay(settleMs);
-          return { output: s.snapshot() };
+          return { output: boundText(s.snapshot(), MAX_SHELL_LINES) };
         },
       };
     },

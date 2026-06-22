@@ -3,7 +3,20 @@ import { z } from "zod";
 import type { Tool, ToolInvocation, ToolContext } from "./types.js";
 import { parseArgs } from "./types.js";
 import { resolveReadPathInWorkspace } from "../workspace/paths.js";
+import { boundLines } from "./outputBound.js";
 import type { LspRuntime, LspDiagnostic, LspLocation } from "../lsp/types.js";
+
+/** Cap on diagnostics/references lines surfaced to the model (explicit marker beyond). */
+const MAX_LSP_RESULTS = 200;
+
+/** Frame a thrown runtime error as graceful degradation so the model proceeds without blind retries. */
+function degraded(file: string, err: unknown): { output: string; isError: true } {
+  const reason = err instanceof Error ? err.message : String(err);
+  return {
+    output: `LSP unavailable for ${file} (${reason}) — proceed without it.`,
+    isError: true,
+  };
+}
 
 /**
  * Subtask 4 — three read-only, model-callable LSP tools over an injected
@@ -65,9 +78,11 @@ export function createLspTools(runtime: LspRuntime): Tool[] {
             if (diags.length === 0) {
               return { output: `No diagnostics for ${args.file}.` };
             }
-            return { output: diags.map(formatDiagnostic).join("\n") };
+            return {
+              output: boundLines(diags.map(formatDiagnostic), MAX_LSP_RESULTS, "diagnostics").join("\n"),
+            };
           } catch (err) {
-            return { output: (err as Error).message, isError: true };
+            return degraded(args.file, err);
           }
         },
       };
@@ -96,7 +111,7 @@ export function createLspTools(runtime: LspRuntime): Tool[] {
             if (!loc) return { output: "no definition found" };
             return { output: formatLocation(loc) };
           } catch (err) {
-            return { output: (err as Error).message, isError: true };
+            return degraded(args.file, err);
           }
         },
       };
@@ -107,7 +122,8 @@ export function createLspTools(runtime: LspRuntime): Tool[] {
     name: "lsp_references",
     kind: "read-only",
     description:
-      "Find all references to the symbol at a position (0-based line/character). Read-only.",
+      "Find all references to the symbol at a position (0-based line/character). Read-only. " +
+      "Type-aware resolution from the language server (needs LSP); more precise than the lexical find_references.",
     schema: posSchema,
     build(raw): ToolInvocation {
       const args = parseArgs("lsp_references", posSchema, raw);
@@ -122,9 +138,11 @@ export function createLspTools(runtime: LspRuntime): Tool[] {
             const uri = pathToFileURL(abs).href;
             const locs = await client.references(uri, { line: args.line, character: args.character });
             if (locs.length === 0) return { output: "no references found" };
-            return { output: locs.map(formatLocation).join("\n") };
+            return {
+              output: boundLines(locs.map(formatLocation), MAX_LSP_RESULTS, "references").join("\n"),
+            };
           } catch (err) {
-            return { output: (err as Error).message, isError: true };
+            return degraded(args.file, err);
           }
         },
       };

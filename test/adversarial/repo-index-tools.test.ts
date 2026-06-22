@@ -47,6 +47,28 @@ test("find_references tool reports definitions and references", async () => {
   }
 });
 
+test("find_references caps the rendered reference list with an explicit marker", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "idx-tools-refs-"));
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    // Define the symbol once and reference it on many distinct lines (>> the
+    // 100-line render cap) so the tool's bound (not just the scan bound) binds.
+    const def = "export function widget() { return 1; }\n";
+    const uses = Array.from({ length: 250 }, (_, i) => `const u${i} = widget();`).join("\n") + "\n";
+    await writeFile(path.join(root, "src", "util.ts"), def + uses, "utf8");
+
+    const tool = defaultRegistry().get("find_references")!;
+    const out = await tool.build({ symbol: "widget" }).execute(ctxFor(root));
+    assert.match(out.output, /widget/);
+    // Explicit truncation marker present (from boundLines).
+    assert.match(out.output, /truncated/, "rendered references are capped with a marker");
+    const refLines = out.output.split("\n").filter((l) => /src\/util\.ts:\d+:/.test(l));
+    assert.ok(refLines.length <= 100, `reference lines capped at 100, got ${refLines.length}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("impact_graph tool returns importers, transitive impact, and relevant tests", async () => {
   const root = await fixture();
   try {

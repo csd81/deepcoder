@@ -16,7 +16,8 @@ export const repoMapTool: Tool = {
   kind: "read-only",
   description:
     "Return a compact, token-bounded map of the repo's TypeScript/JavaScript files and their top-level symbols " +
-    "(functions, classes, interfaces, types). Use it to orient on an unfamiliar codebase before reading files.",
+    "(functions, classes, interfaces, types). Use it to orient on an unfamiliar codebase before reading files. " +
+    "A symbol overview — for a file inventory by kind use repo_index.",
   schema: repoMapSchema,
   build(raw): ToolInvocation {
     const args = parseArgs("repo_map", repoMapSchema, raw);

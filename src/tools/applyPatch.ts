@@ -117,7 +117,8 @@ export const applyPatchTool: Tool = {
   kind: "mutate",
   description:
     "Apply a multi-file patch atomically (create, update, delete). All ops are validated " +
-    "before any write begins. On validation failure, nothing is written.",
+    "before any write begins. On validation failure, nothing is written." +
+    " Each op is {op:'create'|'update'|'delete', path, …}.",
   schema: applyPatchSchema,
   build(raw): ToolInvocation {
     const args = parseArgs("apply_patch", applyPatchSchema, raw);

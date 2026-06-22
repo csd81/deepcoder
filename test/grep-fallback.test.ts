@@ -45,11 +45,24 @@ test("respects an optional glob filter", async () => {
   assert.ok(!res.output.includes("b.js"), "glob *.ts excludes b.js");
 });
 
-test("invalid regex returns a readable error, not a crash", async () => {
+test("invalid regex returns a readable error with a fix hint, not a crash", async () => {
   const root = await fixture();
   const res = await grepFallback(root, root, "(unclosed", undefined, signal);
   assert.equal(res.isError, true);
   assert.match(res.output, /invalid regex/);
+  assert.match(res.output, /fix the pattern/, "error tells the model the recoverable next action");
+});
+
+test("output is capped with an explicit truncation marker when matches exceed the bound", async () => {
+  const root = await fixture();
+  // MAX_MATCH_LINES is 4000; write well past it so the cap binds.
+  const big = Array.from({ length: 5000 }, () => "NEEDLE\n").join("");
+  await writeFile(path.join(root, "src", "huge.ts"), big, "utf8");
+  const res = await grepFallback(root, path.join(root, "src", "huge.ts"), "NEEDLE", undefined, signal);
+  assert.notEqual(res.isError, true);
+  assert.match(res.output, /truncated/, "explicit truncation marker present");
+  const bodyLines = res.output.split("\n").filter((l) => /huge\.ts:/.test(l));
+  assert.ok(bodyLines.length <= 4000, `match lines capped at 4000, got ${bodyLines.length}`);
 });
 
 test("no matches returns the standard sentinel", async () => {
