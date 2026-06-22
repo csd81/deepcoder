@@ -62,6 +62,6 @@ test("a compacted conversation is always well-formed after sanitization", () => 
     { role: "assistant", content: big },
     { role: "user", content: "continue" },
   ];
-  compactIfNeeded(messages, { budgetTokens: 2500, compactAt: 0.8, todos: [] });
+  compactIfNeeded(messages, { budgetTokens: 2500, compactAt: 0.8, todos: [], readTracker: new Set(), writeTracker: new Set() });
   assertWellFormed(sanitizeForProvider(messages));
 });

@@ -23,7 +23,7 @@ function convo(): AgentMessage[] {
 
 test("compaction is a no-op under budget", () => {
   const msgs = convo();
-  const res = compactIfNeeded(msgs, { budgetTokens: 1_000_000, compactAt: 0.8, todos: [] });
+  const res = compactIfNeeded(msgs, { budgetTokens: 1_000_000, compactAt: 0.8, todos: [], readTracker: new Set(), writeTracker: new Set() });
   assert.equal(res.compacted, false);
 });
 
@@ -31,16 +31,22 @@ test("compaction shrinks history and preserves task, files, todos, errors", () =
   const msgs = convo();
   const before = estimateMessages(msgs);
   const todos: Todo[] = [{ id: "1", content: "finish refactor", status: "in_progress" }];
+  const readTracker = new Set(["src/auth.ts"]);
+  const writeTracker = new Set(["src/auth.ts"]);
   // Small budget forces compaction.
-  const res = compactIfNeeded(msgs, { budgetTokens: 3000, compactAt: 0.8, todos });
+  const res = compactIfNeeded(msgs, { budgetTokens: 3000, compactAt: 0.8, todos, readTracker, writeTracker });
   assert.equal(res.compacted, true);
   assert.ok(res.after < before);
 
   const summary = msgs.find(isSummary);
   assert.ok(summary, "a summary message should exist");
-  assert.match(summary!.content, /Original task: Refactor the auth module/);
+  assert.match(summary!.content, /## Task/);
+  assert.match(summary!.content, /Refactor the auth module/);
+  assert.match(summary!.content, /## Files changed/);
   assert.match(summary!.content, /src\/auth\.ts/);
+  assert.match(summary!.content, /## Unresolved items/);
   assert.match(summary!.content, /finish refactor/);
+  // The last error must survive compaction (regression guard — see undoApply note).
   assert.match(summary!.content, /Exit code 1/);
 
   // System prompt stays first; recent user turn is retained.
@@ -51,7 +57,7 @@ test("compaction shrinks history and preserves task, files, todos, errors", () =
 
 test("compaction never starts the retained tail with an orphan tool message", () => {
   const msgs = convo();
-  compactIfNeeded(msgs, { budgetTokens: 2000, compactAt: 0.8, todos: [] });
+  compactIfNeeded(msgs, { budgetTokens: 2000, compactAt: 0.8, todos: [], readTracker: new Set(), writeTracker: new Set() });
   // After the summary (index 1), the first retained message must not be a tool
   // result without its preceding assistant tool_call.
   const firstRetained = msgs[2];
@@ -60,6 +66,6 @@ test("compaction never starts the retained tail with an orphan tool message", ()
 
 test("force compaction works even under budget", () => {
   const msgs = convo();
-  const res = compactIfNeeded(msgs, { budgetTokens: 1_000_000, compactAt: 0.8, todos: [], force: true });
+  const res = compactIfNeeded(msgs, { budgetTokens: 1_000_000, compactAt: 0.8, todos: [], readTracker: new Set(), writeTracker: new Set(), force: true });
   assert.equal(res.compacted, true);
 });

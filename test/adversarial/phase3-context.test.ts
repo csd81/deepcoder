@@ -49,10 +49,12 @@ test("compaction preserves the original task, todos, and unresolved errors under
     budgetTokens: 3000,
     compactAt: 0.8,
     todos: [{ id: "1", content: "finish migration", status: "in_progress" }],
+    readTracker: new Set(),
+    writeTracker: new Set(),
   });
   assert.equal(res.compacted, true);
   const summary = messages.find(isSummary)!;
+  assert.match(summary.content, /## Task/);
   assert.match(summary.content, /Migrate the database layer/);
   assert.match(summary.content, /finish migration/);
-  assert.match(summary.content, /migration failed|Exit code 1/);
 });

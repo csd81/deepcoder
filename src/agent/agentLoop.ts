@@ -98,6 +98,8 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       budgetTokens: deps.contextBudgetTokens,
       compactAt: deps.compactAt,
       todos: ctx.todos,
+      readTracker: ctx.readTracker,
+      writeTracker: ctx.writeTracker ?? new Set(),
     });
     if (compaction.compacted) {
       deps.onNotice?.(`Compacted context (~${compaction.before} → ~${compaction.after} tokens).`);
