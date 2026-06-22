@@ -35,6 +35,13 @@ import type { ModelPricing } from "../providers/pricing.js";
 import type { KeybindsConfig } from "../ui/keybinds.js";
 import { hasFallbackCycle } from "../models/router.js";
 
+export interface FormatConfig {
+  command: string;
+  /** Glob patterns to match files against. Defaults to ["**\/*"] (everything). */
+  match?: string[];
+  timeoutMs?: number;
+}
+
 export interface StatuslineConfig {
   fields?: StatuslineField[];
 }
@@ -66,6 +73,7 @@ export interface FileConfig {
   statusline?: StatuslineConfig;
   telemetry?: TelemetryConfig;
   keybinds?: KeybindsConfig;
+  format?: FormatConfig;
 }
 
 const mcpServerSchema = z.object({
@@ -212,6 +220,12 @@ const diagnosticRuleSchema = z.object({
   timeoutMs: z.number().int().positive().max(600_000).optional(),
   debounceMs: z.number().int().positive().optional(),
   maxOutputBytes: z.number().int().positive().optional(),
+});
+
+const formatSchema = z.object({
+  command: z.string().min(1),
+  match: z.array(z.string().min(1)).optional(),
+  timeoutMs: z.number().int().positive().max(60_000).optional(),
 });
 
 const diagnosticsSchema = z.object({
@@ -489,6 +503,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     }
   }
 
+  // Format-on-edit config (opt-in). Validated with zod.
+  const rawFormat = (parsed as { format?: unknown }).format;
+  let format: FormatConfig | undefined;
+  if (rawFormat !== undefined) {
+    const result = formatSchema.safeParse(rawFormat);
+    if (result.success) format = result.data;
+    else warn(`ignoring "format": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
   // LSP block (opt-in). Lightly validated: an object with optional enabled +
   // per-language server commands. loadConfig applies defaults + the env gate.
   const rawLsp = (parsed as { lsp?: unknown }).lsp;
@@ -497,7 +520,7 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     lsp = rawLsp as Partial<LspConfig>;
   }
 
-  return { mcpServers, checks, commands, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline, lsp };
+  return { mcpServers, checks, commands, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline, format, lsp };
 }
 
 function warn(msg: string): void {

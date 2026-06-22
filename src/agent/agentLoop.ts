@@ -15,6 +15,8 @@ import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import { checkPermission } from "../permissions/policy.js";
 import { compactIfNeeded } from "../context/compaction.js";
 import { runPostWriteDiagnostics } from "../diagnostics/runner.js";
+import { formatFile, shouldFormat } from "../tools/formatOnEdit.js";
+import type { FormatConfig } from "../config/fileConfig.js";
 
 export interface AgentDeps {
   provider: ModelProvider;
@@ -78,6 +80,11 @@ export interface AgentDeps {
    * today — no spawn, no I/O.
    */
   diagnostics?: DiagnosticsConfig;
+  /**
+   * Format-on-edit config. null means not configured (no formatting).
+   * After a successful mutating tool, matching files are auto-formatted.
+   */
+  format?: FormatConfig | null;
 }
 
 /**
@@ -243,6 +250,27 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
           }
         } catch {
           // A diagnostic failure must never break the agent loop.
+        }
+      }
+
+      // Format-on-edit. Only on SUCCESSFUL mutate tools, only when configured.
+      if (!result.isError && invocation.kind === "mutate" && invocation.affectedPaths?.length && deps.format) {
+        try {
+          for (const file of invocation.affectedPaths) {
+            if (!shouldFormat(file, deps.format)) continue;
+            const outcome = await formatFile(file, deps.format, {
+              workspaceRoot: ctx.workspaceRoot,
+              sandbox: ctx.sandbox,
+              signal: ctx.signal,
+            });
+            if (outcome.formatted) {
+              deps.onNotice?.(`formatted ${file}`);
+            } else if (outcome.error) {
+              deps.onNotice?.(`format ${file}: ${outcome.error}`);
+            }
+          }
+        } catch {
+          // A format failure must never break the agent loop.
         }
       }
     }

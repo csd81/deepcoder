@@ -34,11 +34,14 @@ function matchesAny(path: string, globs: string[]): boolean {
 // Conservative glob matching.
 // Supports: **/*.ext -> suffix .ext, prefix/** -> prefix prefix/,
 // **/name -> suffix /name or exact name, *.ext -> suffix .ext,
-// Literal strings -> exact match
-function globMatch(path: string, glob: string): boolean {
+// **/* or * -> match everything, Literal strings -> exact match
+export function globMatch(path: string, glob: string): boolean {
   // Normalise separators
   const p = path.replace(/\\/g, "/");
   const g = glob.replace(/\\/g, "/");
+
+  // **/* or * (bare star, no extension) — catch-all
+  if (g === "**/*" || g === "*") return true;
 
   // **/*.ext or *.ext -> suffix match
   const extRe = /^(?:\*\*\/)?\*(\.[a-zA-Z0-9_]+)$/;
