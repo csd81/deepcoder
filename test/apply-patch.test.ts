@@ -172,6 +172,22 @@ test("[SECURITY] planPatch rejects a delete op on a sensitive path", () => {
   );
 });
 
+// ── [SECURITY] update on sensitive path → throws ──
+// Regression: the update case previously lacked the guard that create/delete (and
+// edit_file/write_file) enforce, so apply_patch could silently edit .env / .git /
+// .deepcoder — bypassing the secret-file guard everywhere else. Found via dogfood.
+
+test("[SECURITY] planPatch rejects an update op on a sensitive path", () => {
+  const files = new Map<string, string>([["/ws/.env", "SECRET=old"]]);
+  const sensitive = new Set<string>([".env"]);
+  const deps = fakeDeps(files, sensitive);
+
+  assert.throws(
+    () => planPatch([{ op: "update", path: ".env", old_string: "SECRET=old", new_string: "SECRET=hacked" }], deps),
+    /protected\/secret path/,
+  );
+});
+
 // ── [TOOL] build with valid JSON → correct ToolInvocation ──
 
 test("[TOOL] applyPatchTool.build with valid ops returns ToolInvocation with describe, affectedPaths, preview", () => {

@@ -75,6 +75,12 @@ export function planPatch(ops: PatchOp[], deps: PlanDeps): { planned: PlannedOp[
         if (!exists) {
           throw new Error(`Cannot update ${op.path}: file does not exist.`);
         }
+        // Guard secret/protected paths BEFORE reading — matches create/delete and
+        // edit_file/write_file. Without this, apply_patch update could edit (and
+        // surface in the diff) .env / .git / .deepcoder, bypassing every other gate.
+        if (deps.isSensitiveRel(op.path)) {
+          throw new Error(`${op.path} is a protected/secret path and cannot be edited.`);
+        }
         const original = deps.readFile(abs);
         const count = countOccurrences(original, op.old_string);
         if (count === 0) {
