@@ -57,7 +57,13 @@ export async function readConflict(git: Git, root: string, relPath: string): Pro
  * tree losing its markers is the real "resolved" signal.
  */
 export function hasConflictMarkers(text: string): boolean {
-  return /^(<{7}|>{7})/m.test(text);
+  // All four git conflict markers, anchored at line start: the `<<<<<<<` /
+  // `>>>>>>>` boundaries, the `=======` separator, and the `|||||||` diff3 base.
+  // Catching the separator/base too means a partial edit that removed only the
+  // boundaries is still reported as unresolved (conservative: a 7-char setext
+  // `=======` underline in a once-conflicted file is flagged, but refusing to
+  // auto-stage is far safer than committing a stray marker).
+  return /^(<{7}|\|{7}|={7}|>{7})/m.test(text);
 }
 
 /** Of `relPaths`, the ones whose working-tree content still has conflict markers. */

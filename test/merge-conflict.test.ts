@@ -86,6 +86,10 @@ test("readConflict reads ours/theirs/base stages + the marker'd working tree", a
 test("hasConflictMarkers detects leftover markers, ignores resolved content", () => {
   assert.equal(hasConflictMarkers("line1\n<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\nline3"), true);
   assert.equal(hasConflictMarkers("line1\nmerged\nline3\n"), false);
+  // Leftover separator-only or diff3 base markers must also count as unresolved —
+  // otherwise a file with a stray ======= / ||||||| gets staged as "resolved".
+  assert.equal(hasConflictMarkers("a\n=======\nb\n"), true);
+  assert.equal(hasConflictMarkers("a\n||||||| base\nb\n"), true);
   // Resolved-but-unstaged is the case that broke the first cut: markers gone → false,
   // even though `git diff --diff-filter=U` would still list the file until staged.
   assert.equal(hasConflictMarkers("line1\nHELLO FROM OURS\nline3\n"), false);
