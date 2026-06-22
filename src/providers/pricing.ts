@@ -14,6 +14,12 @@ export interface ModelPricing {
   modelPattern: string;
   inputPerMillionUsd: number;
   outputPerMillionUsd: number;
+  /**
+   * Per-million rate for prompt-cache-hit input tokens. DeepSeek bills these at
+   * ~10% of `inputPerMillionUsd`. When absent, `estimateCost` defaults to
+   * `inputPerMillionUsd * 0.1`.
+   */
+  cachedInputPerMillionUsd?: number;
   effectiveDate: string;
   source?: string;
 }
@@ -22,6 +28,8 @@ export interface CostEstimate {
   inputUsd: number;
   outputUsd: number;
   totalUsd: number;
+  /** Portion of `inputUsd` attributable to cache-hit (discounted) tokens. */
+  cachedInputUsd: number;
   pricingKnown: boolean;
   rateLabel: string;
 }
@@ -31,15 +39,15 @@ export interface CostEstimate {
  * effectiveDate is the date the rate was last reviewed/updated.
  */
 export const DEFAULT_PRICING: ModelPricing[] = [
-  // DeepSeek — the one supported family.
-  { provider: "deepseek", modelPattern: "deepseek-v4-flash", inputPerMillionUsd: 0.27, outputPerMillionUsd: 1.10, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
-  { provider: "deepseek", modelPattern: "deepseek-v4-pro", inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
+  // DeepSeek — the one supported family. Cache-hit input billed at ~10% of input rate.
+  { provider: "deepseek", modelPattern: "deepseek-v4-flash", inputPerMillionUsd: 0.27, cachedInputPerMillionUsd: 0.027, outputPerMillionUsd: 1.10, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
+  { provider: "deepseek", modelPattern: "deepseek-v4-pro", inputPerMillionUsd: 0.55, cachedInputPerMillionUsd: 0.055, outputPerMillionUsd: 2.19, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
   // Legacy aliases (still route to the same engine; kept for back-compat).
-  { provider: "deepseek", modelPattern: "deepseek-chat", inputPerMillionUsd: 0.27, outputPerMillionUsd: 1.10, effectiveDate: "2025-06-01", source: "deepseek.com/pricing" },
-  { provider: "deepseek", modelPattern: "deepseek-reasoner", inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19, effectiveDate: "2025-06-01", source: "deepseek.com/pricing" },
+  { provider: "deepseek", modelPattern: "deepseek-chat", inputPerMillionUsd: 0.27, cachedInputPerMillionUsd: 0.027, outputPerMillionUsd: 1.10, effectiveDate: "2025-06-01", source: "deepseek.com/pricing" },
+  { provider: "deepseek", modelPattern: "deepseek-reasoner", inputPerMillionUsd: 0.55, cachedInputPerMillionUsd: 0.055, outputPerMillionUsd: 2.19, effectiveDate: "2025-06-01", source: "deepseek.com/pricing" },
   // openai-compatible escape hatch defaults to a DeepSeek endpoint.
-  { provider: "openai-compatible", modelPattern: "deepseek-v4-flash", inputPerMillionUsd: 0.27, outputPerMillionUsd: 1.10, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
-  { provider: "openai-compatible", modelPattern: "deepseek-v4-pro", inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
+  { provider: "openai-compatible", modelPattern: "deepseek-v4-flash", inputPerMillionUsd: 0.27, cachedInputPerMillionUsd: 0.027, outputPerMillionUsd: 1.10, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
+  { provider: "openai-compatible", modelPattern: "deepseek-v4-pro", inputPerMillionUsd: 0.55, cachedInputPerMillionUsd: 0.055, outputPerMillionUsd: 2.19, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
 ];
 
 /**
@@ -116,12 +124,18 @@ export function estimateCost(
         inputUsd: 0,
         outputUsd: 0,
         totalUsd: 0,
+        cachedInputUsd: 0,
         pricingKnown: false,
         rateLabel: "unknown",
       };
     }
 
-    const inputUsd = (usage.promptTokens / 1_000_000) * pricing.inputPerMillionUsd;
+    // Split prompt tokens into cache-hit (discounted) and fresh (full-rate).
+    const cached = Math.min(usage.cachedPromptTokens ?? 0, usage.promptTokens);
+    const fresh = usage.promptTokens - cached;
+    const cachedRate = pricing.cachedInputPerMillionUsd ?? pricing.inputPerMillionUsd * 0.1;
+    const cachedInputUsd = (cached / 1_000_000) * cachedRate;
+    const inputUsd = (fresh / 1_000_000) * pricing.inputPerMillionUsd + cachedInputUsd;
     const outputUsd = (usage.completionTokens / 1_000_000) * pricing.outputPerMillionUsd;
     const totalUsd = inputUsd + outputUsd;
 
@@ -129,6 +143,7 @@ export function estimateCost(
       inputUsd,
       outputUsd,
       totalUsd,
+      cachedInputUsd,
       pricingKnown: true,
       rateLabel: `${pricing.provider}/${pricing.modelPattern}`,
     };
@@ -138,6 +153,7 @@ export function estimateCost(
       inputUsd: 0,
       outputUsd: 0,
       totalUsd: 0,
+      cachedInputUsd: 0,
       pricingKnown: false,
       rateLabel: "error",
     };

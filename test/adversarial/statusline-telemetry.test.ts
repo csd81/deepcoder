@@ -46,7 +46,7 @@ test("6. renderStatusline output is a single line under the byte cap", async () 
 });
 
 test("7. renderStatusline omits cost when pricing is unknown (tokens only)", async () => {
-  const unknownCost: CostEstimate = { inputUsd: 0, outputUsd: 0, totalUsd: 0, pricingKnown: false, rateLabel: "unknown" };
+  const unknownCost: CostEstimate = { inputUsd: 0, outputUsd: 0, totalUsd: 0, cachedInputUsd: 0, pricingKnown: false, rateLabel: "unknown" };
   const snap = await buildStatusSnapshot(input({ cost: unknownCost }));
   assert.doesNotMatch(renderStatusline(snap, { maxBytes: 200 }), /\$/, "no dollar cost shown when pricing unknown");
 });

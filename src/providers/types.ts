@@ -50,6 +50,13 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /**
+   * The subset of `promptTokens` that were served from the provider's prompt
+   * cache (cache hits). DeepSeek bills these at ~10% of the cache-miss input
+   * rate. `promptTokens` remains the TOTAL (hit + miss); this is informational
+   * for cost calculation. Absent/0 when the provider does not report cache hits.
+   */
+  cachedPromptTokens?: number;
 }
 
 export interface ChatResponse {
