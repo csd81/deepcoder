@@ -8,7 +8,43 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseSgrMouse, MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent } from "../../src/ui/mouse.js";
+import { parseSgrMouse, MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent, splitMouseFromChunk } from "../../src/ui/mouse.js";
+
+// ── Phase 10A.10: raw-chunk splitting (fixes garbage-in-input on scroll/click) ──
+test("[splitMouseFromChunk-single] one wheel sequence, no leftover", () => {
+  const r = splitMouseFromChunk("\x1b[<64;36;29M");
+  assert.deepEqual(r.mouse, ["\x1b[<64;36;29M"]);
+  assert.equal(r.rest, "");
+});
+
+test("[splitMouseFromChunk-rapid] many concatenated wheel events all extracted (the reported bug)", () => {
+  // exactly the kind of burst that leaked '64;36;29M64;36;29M...' into the composer
+  const chunk = "\x1b[<64;36;29M\x1b[<64;36;29M\x1b[<65;36;29M\x1b[<65;35;29M";
+  const r = splitMouseFromChunk(chunk);
+  assert.equal(r.mouse.length, 4);
+  assert.equal(r.rest, ""); // nothing leaks to the editor
+  assert.equal(parseMouseEvent(r.mouse[0])?.kind, "wheel-up");
+  assert.equal(parseMouseEvent(r.mouse[2])?.kind, "wheel-down");
+});
+
+test("[splitMouseFromChunk-mixed] a real keystroke alongside a mouse event is preserved as rest", () => {
+  const r = splitMouseFromChunk("a\x1b[<0;5;5Mb");
+  assert.deepEqual(r.mouse, ["\x1b[<0;5;5M"]);
+  assert.equal(r.rest, "ab");
+});
+
+test("[splitMouseFromChunk-none] no mouse data returns the chunk untouched", () => {
+  const r = splitMouseFromChunk("hello");
+  assert.deepEqual(r.mouse, []);
+  assert.equal(r.rest, "hello");
+});
+
+test("[splitMouseFromChunk-clicks] click + release both extracted", () => {
+  const r = splitMouseFromChunk("\x1b[<0;7;3M\x1b[<0;7;3m");
+  assert.equal(r.mouse.length, 2);
+  assert.equal(parseMouseEvent(r.mouse[0])?.kind, "left-click");
+  assert.equal(parseMouseEvent(r.mouse[1])?.kind, "left-release");
+});
 
 // ── Phase 10A.10: richer parseMouseEvent (wheel + left click/release) ──
 test("[parseMouseEvent-wheel] wheel up/down carry 1-based row/col and raw", () => {

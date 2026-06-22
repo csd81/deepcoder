@@ -111,3 +111,27 @@ export function parseMouseEvent(seq: string): TuiMouseEvent | null {
   }
   return { kind: "unknown", row, col, raw: seq };
 }
+
+const SGR_MOUSE_GLOBAL = /\x1b\[<\d+;\d+;\d+[Mm]/g;
+
+/**
+ * Split a raw stdin chunk into the complete SGR mouse sequences it contains and
+ * the remaining (non-mouse) bytes. A single chunk can hold many concatenated
+ * mouse events during a rapid scroll; the readline keypress parser fragments
+ * those and leaks their digits as keystrokes, so the I/O layer extracts mouse
+ * here from the intact raw chunk and feeds only `rest` onward.
+ */
+export function splitMouseFromChunk(chunk: string): { mouse: string[]; rest: string } {
+  const mouse: string[] = [];
+  let rest = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  SGR_MOUSE_GLOBAL.lastIndex = 0;
+  while ((m = SGR_MOUSE_GLOBAL.exec(chunk)) !== null) {
+    mouse.push(m[0]);
+    rest += chunk.slice(last, m.index);
+    last = SGR_MOUSE_GLOBAL.lastIndex;
+  }
+  rest += chunk.slice(last);
+  return { mouse, rest };
+}

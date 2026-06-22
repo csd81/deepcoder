@@ -48,7 +48,7 @@ import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
-import { MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent } from "../ui/mouse.js";
+import { MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
 import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
 import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from "../ui/chatUiState.js";
@@ -610,6 +610,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     restored = true;
     try { if (tty.isTTY) tty.setRawMode?.(false); } catch { /* best effort */ }
     try { stdin.removeListener("keypress", onKey); } catch { /* */ }
+    try { stdin.removeListener("data", onStdinData); } catch { /* */ }
     try { stdout.write(MOUSE_DISABLE); } catch { /* */ }
     try { leaveAlt(); } catch { /* */ }
     try { stdin.pause(); } catch { /* */ }
@@ -703,6 +704,53 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let lastRegions = computeFrameRegions({ height: 1, composerRows: 1 });
   // Rows scrolled per mouse-wheel notch — snappy, a touch faster than the usual 3.
   const MOUSE_WHEEL_ROWS = 4;
+  // Set while the fragmented keypresses spawned by a pure-mouse data chunk are
+  // draining, so they never land in the composer. Cleared on the next tick.
+  let suppressKeys = false;
+
+  /** Apply one fully-formed SGR mouse sequence (wheel scroll / click-to-toggle). */
+  function handleMouseSeq(seq: string): void {
+    if (restored) return;
+    const ev = parseMouseEvent(seq);
+    if (!ev) return;
+    if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
+      const up = ev.kind === "wheel-up";
+      if (pendingApproval) {
+        // While the approval modal owns the screen, the wheel scrolls the diff.
+        approvalScroll = up ? Math.max(0, approvalScroll - MOUSE_WHEEL_ROWS) : approvalScroll + MOUSE_WHEEL_ROWS;
+        redraw();
+      } else {
+        dispatch({ type: up ? "scroll-up" : "scroll-down", amount: MOUSE_WHEEL_ROWS });
+      }
+      return;
+    }
+    // Left-click on a collapsible block header focuses + toggles it (keyboard parity).
+    if (ev.kind === "left-click" && !pendingApproval && !busy) {
+      const frameIdx = ev.row - 1; // mouse rows are 1-based; frame indices 0-based
+      if (frameIdx >= lastRegions.transcriptStartRow && frameIdx <= lastRegions.transcriptEndRow) {
+        const id = hitTestBlock(lastRowMeta, lastViewportTop, frameIdx - lastRegions.transcriptStartRow);
+        if (id) { transcript = toggleExpand(selectBlockById(transcript, id)); redraw(); }
+      }
+    }
+  }
+
+  // Raw stdin reader: SGR mouse sequences arrive intact in a single data chunk
+  // (the readline keypress parser, in contrast, fragments them and leaks the
+  // digits as keystrokes). Extract+handle every mouse sequence here; if the
+  // chunk was *only* mouse data, suppress the keypress fragments it will spawn.
+  function onStdinData(buf: Buffer | string): void {
+    const s = typeof buf === "string" ? buf : buf.toString("utf8");
+    if (!s.includes("\x1b[<")) return; // fast path: no mouse data in this chunk
+    const { mouse, rest } = splitMouseFromChunk(s);
+    if (mouse.length === 0) return;
+    for (const seq of mouse) handleMouseSeq(seq);
+    // If only mouse bytes (plus incomplete-sequence noise) remained, drop the
+    // keypress fragments readline will emit for this same chunk this tick.
+    if (rest.replace(/[\x1b[<;\dMm]/g, "").length === 0) {
+      suppressKeys = true;
+      setImmediate(() => { suppressKeys = false; });
+    }
+  }
 
   /** The input composer rendered as display rows (continuation lines indented). */
   function composerLines(): string[] {
@@ -854,6 +902,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       } catch (e) { stdout.write(chalk.red(`\nError: ${(e as Error).message ?? e}\n`)); }
       enterAlt();
       if (tty.isTTY) tty.setRawMode?.(true);
+      stdin.on("data", onStdinData);
       stdin.on("keypress", onKey); stdin.resume();
       redraw();
       return;
@@ -866,32 +915,14 @@ export async function runTuiRepl(session: Session): Promise<void> {
   }
 
   function onKey(str: string | undefined, key: { name?: string; sequence?: string; ctrl?: boolean } | undefined): void {
-    // ── Mouse (SGR) — handled FIRST so a wheel/click never resolves an approval ──
+    // Mouse is parsed from the raw stdin stream (see onStdinData) because the
+    // readline keypress parser fragments SGR mouse sequences and leaks the
+    // digits as keystrokes. Drop anything left over from a mouse chunk: the
+    // suppress window covers the fragmented keypresses, and a stray "\x1b[<"
+    // prefix is swallowed defensively.
+    if (suppressKeys) return;
     const rawSeq = key?.sequence ?? str ?? "";
-    if (rawSeq.startsWith("\x1b[<")) {
-      const ev = parseMouseEvent(rawSeq);
-      if (!ev) return;
-      if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
-        const up = ev.kind === "wheel-up";
-        if (pendingApproval) {
-          // While the approval modal owns the screen, the wheel scrolls the diff.
-          approvalScroll = up ? Math.max(0, approvalScroll - MOUSE_WHEEL_ROWS) : approvalScroll + MOUSE_WHEEL_ROWS;
-          redraw();
-        } else {
-          dispatch({ type: up ? "scroll-up" : "scroll-down", amount: MOUSE_WHEEL_ROWS });
-        }
-        return;
-      }
-      // Left-click on a collapsible block header focuses + toggles it (keyboard parity).
-      if (ev.kind === "left-click" && !pendingApproval && !busy) {
-        const frameIdx = ev.row - 1; // mouse rows are 1-based; frame indices 0-based
-        if (frameIdx >= lastRegions.transcriptStartRow && frameIdx <= lastRegions.transcriptEndRow) {
-          const id = hitTestBlock(lastRowMeta, lastViewportTop, frameIdx - lastRegions.transcriptStartRow);
-          if (id) { transcript = toggleExpand(selectBlockById(transcript, id)); redraw(); }
-        }
-      }
-      return; // swallow every mouse event (release/unknown included)
-    }
+    if (rawSeq.startsWith("\x1b[<")) return;
     if (approvalResolve) {
       // ↑/↓ (and PgUp/PgDn) scroll the diff without resolving; y/n/Esc resolve.
       const a = key?.name ? keyToAction(key.name) : keyToAction(key?.sequence ?? str ?? "");
@@ -975,6 +1006,9 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   // ── setup (raw mode + alternate screen), with guaranteed restore ──
   enterAlt();
+  // Raw mouse reader runs BEFORE emitKeypressEvents so it sees each data chunk
+  // first and can suppress the keypress fragments a mouse sequence would spawn.
+  stdin.on("data", onStdinData);
   emitKeypressEvents(stdin);
   if (tty.isTTY) tty.setRawMode?.(true);
   stdin.resume();
