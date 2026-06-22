@@ -12,7 +12,9 @@ import { summarizeRepo } from "../context/understand.js";
 import { computeRepoKey, readUnderstandCache, writeUnderstandCache } from "../context/understandCache.js";
 import os from "node:os";
 import { discoverPlugins } from "../plugins/discovery.js";
-import { summarizeWebTrace } from "../web/trace.js";
+import { webStatus, webSearch, webFetch, webTrace, webClear } from "../web/webCommands.js";
+import { createWebSearchProviderFromConfig } from "../web/providerFactory.js";
+import { renderSlashResultPlain } from "./slashResult.js";
 import { buildSemanticIndex } from "../semantic/indexer.js";
 import { createEmbeddingProvider } from "../semantic/provider.js";
 import { pluginTrustKey, resolvePluginTrust, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
@@ -213,11 +215,32 @@ export async function handleSlashCommand(
       return { consumed: true };
 
     case "web": {
-      const w = config.web;
-      console.log(chalk.bold("\nWeb access ") + (w.enabled ? chalk.green("enabled") : chalk.dim("disabled")));
-      console.log(chalk.dim(`  provider: ${w.searchProvider} · allowed: ${w.allowedDomains.join(", ") || "(any non-blocked)"} · blocked: ${w.blockedDomains.length}`));
-      console.log(chalk.dim("  trace:"));
-      console.log(summarizeWebTrace(session.webTrace ?? []).split("\n").map((l) => "    " + l).join("\n"));
+      // Phase 10E8: /web status | search <q> | fetch <url> | trace | clear
+      const [sub, ...rest] = arg.trim().split(/\s+/);
+      const subArg = rest.join(" ").trim();
+      const ctx = {
+        config: config.web,
+        searchProvider: createWebSearchProviderFromConfig({ config: config.web, env: process.env }),
+        fetchImpl: fetch,
+      };
+      const meta = { recordId: `web-${Date.now().toString(36)}`, fetchedAt: new Date().toISOString() };
+      if (sub === "search") {
+        const { result, trace } = await webSearch(subArg, ctx, meta, session.webTrace ?? []);
+        session.webTrace = trace;
+        console.log(renderSlashResultPlain(result));
+      } else if (sub === "fetch") {
+        const { result, trace } = await webFetch(subArg, ctx, meta, session.webTrace ?? []);
+        session.webTrace = trace;
+        console.log(renderSlashResultPlain(result));
+      } else if (sub === "trace") {
+        console.log(renderSlashResultPlain(webTrace(session.webTrace ?? [])));
+      } else if (sub === "clear") {
+        const { trace, result } = webClear();
+        session.webTrace = trace;
+        console.log(renderSlashResultPlain(result));
+      } else {
+        console.log(renderSlashResultPlain(webStatus(config.web)));
+      }
       return { consumed: true };
     }
 
