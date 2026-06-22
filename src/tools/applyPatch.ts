@@ -5,6 +5,7 @@ import type { Tool, ToolInvocation, ToolContext } from "./types.js";
 import { parseArgs, InvalidArgumentsError } from "./types.js";
 import { resolveRealPathInWorkspace } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
+import { checkSymlinkTargetSensitivity } from "./pathGuards.js";
 import { unifiedDiff } from "./diff.js";
 
 // ── Public types ──
@@ -24,6 +25,14 @@ export interface PlanDeps {
   resolve(p: string): string; // resolveRealPathInWorkspace(root, p) — throws on escape
   absExists(abs: string): boolean;
   isSensitiveRel(rel: string): boolean;
+  /**
+   * Throw if `rel` is (or symlinks to) a sensitive path. The lexical
+   * `isSensitiveRel` only catches a sensitive *name*; this catches a benign-named
+   * symlink that points at .env/.git/etc — the bypass every other mutating tool
+   * already guards via checkSymlinkTargetSensitivity. `action` is the verb for
+   * the error ("created"/"edited"/"deleted").
+   */
+  checkSymlinkSensitivity(rel: string, action: string): void;
   readFile(abs: string): string; // throws on missing
 }
 
@@ -67,6 +76,7 @@ export function planPatch(ops: PatchOp[], deps: PlanDeps): { planned: PlannedOp[
         if (deps.isSensitiveRel(op.path)) {
           throw new Error(`${op.path} is a protected/secret path and cannot be created.`);
         }
+        deps.checkSymlinkSensitivity(op.path, "created");
         planned.push({ op: "create", path: op.path, nextContents: op.contents });
         diffSegments.push(diffSegment(op.path, "", op.contents));
         break;
@@ -81,6 +91,7 @@ export function planPatch(ops: PatchOp[], deps: PlanDeps): { planned: PlannedOp[
         if (deps.isSensitiveRel(op.path)) {
           throw new Error(`${op.path} is a protected/secret path and cannot be edited.`);
         }
+        deps.checkSymlinkSensitivity(op.path, "edited");
         const original = deps.readFile(abs);
         const count = countOccurrences(original, op.old_string);
         if (count === 0) {
@@ -105,6 +116,7 @@ export function planPatch(ops: PatchOp[], deps: PlanDeps): { planned: PlannedOp[
         if (deps.isSensitiveRel(op.path)) {
           throw new Error(`${op.path} is a protected/secret path and cannot be deleted.`);
         }
+        deps.checkSymlinkSensitivity(op.path, "deleted");
         const original = deps.readFile(abs);
         planned.push({ op: "delete", path: op.path, nextContents: null });
         diffSegments.push(diffSegment(op.path, original, ""));
@@ -203,6 +215,8 @@ function depsFromCtx(ctx: ToolContext): PlanDeps {
       }
     },
     isSensitiveRel: (rel: string) => isSensitivePath(rel),
+    checkSymlinkSensitivity: (rel: string, action: string) =>
+      checkSymlinkTargetSensitivity(ctx.workspaceRoot, rel, "apply_patch", action),
     readFile: (abs: string) => readFileSync(abs, "utf8"),
   };
 }

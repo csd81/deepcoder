@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, mkdir, symlink } from "node:fs/promises";
 import { accessSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -14,7 +14,11 @@ import { InvalidArgumentsError, type ToolContext } from "../src/tools/types.js";
 
 // ── Fake deps for planPatch unit tests ──
 
-function fakeDeps(files: Map<string, string>, sensitive: Set<string> = new Set()): PlanDeps {
+function fakeDeps(
+  files: Map<string, string>,
+  sensitive: Set<string> = new Set(),
+  symlinkSensitive: Set<string> = new Set(),
+): PlanDeps {
   return {
     resolve: (p: string) => {
       if (p.includes("..") || p.startsWith("/")) throw new Error(`Path "${p}" resolves outside the workspace root.`);
@@ -22,6 +26,11 @@ function fakeDeps(files: Map<string, string>, sensitive: Set<string> = new Set()
     },
     absExists: (abs: string) => files.has(abs),
     isSensitiveRel: (rel: string) => sensitive.has(rel),
+    checkSymlinkSensitivity: (rel: string, action: string) => {
+      if (symlinkSensitive.has(rel)) {
+        throw new Error(`${rel} is a symlink to a protected/secret path and cannot be ${action}.`);
+      }
+    },
     readFile: (abs: string) => {
       const content = files.get(abs);
       if (content === undefined) throw new Error(`File not found: ${abs}`);
@@ -144,6 +153,43 @@ test("[SECURITY] planPatch throws on ops with out-of-workspace paths", () => {
     () => planPatch([{ op: "create", path: "../escape", contents: "x" }], escapeDeps),
     /outside the workspace/,
   );
+});
+
+// ── [SECURITY] symlink-to-sensitive target is rejected for every op ──
+
+test("[SECURITY] planPatch rejects ops whose path is a symlink to a sensitive target", () => {
+  const symlinks = new Set(["decoy"]);
+  // update + delete: the symlink/file exists in the workspace
+  const dExisting = fakeDeps(new Map([["/ws/decoy", "SECRET"]]), new Set(), symlinks);
+  assert.throws(
+    () => planPatch([{ op: "update", path: "decoy", old_string: "SECRET", new_string: "x" }], dExisting),
+    /protected\/secret/,
+  );
+  assert.throws(() => planPatch([{ op: "delete", path: "decoy" }], dExisting), /protected\/secret/);
+  // create via a broken symlink (target not present yet) must also be guarded
+  const dMissing = fakeDeps(new Map(), new Set(), symlinks);
+  assert.throws(
+    () => planPatch([{ op: "create", path: "decoy", contents: "x" }], dMissing),
+    /protected\/secret/,
+  );
+});
+
+test("[SECURITY] apply_patch cannot edit a sensitive file through a symlink (real fs)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "deepcoder-sym-"));
+  const ctx: ToolContext = { workspaceRoot: root, signal: new AbortController().signal, readTracker: new Set(), todos: [] };
+  await writeFile(path.join(root, ".env"), "SECRET=1\n", "utf8");
+  await symlink(path.join(root, ".env"), path.join(root, "decoy")); // decoy -> .env
+  ctx.readTracker.add(path.join(root, "decoy"));
+  ctx.readTracker.add(path.join(root, ".env"));
+
+  const invocation = applyPatchTool.build({
+    ops: [{ op: "update", path: "decoy", old_string: "SECRET", new_string: "PWNED" }],
+  });
+  const res = await invocation.execute(ctx);
+
+  assert.equal(res.isError, true);
+  assert.match(res.output, /protected|secret/i);
+  assert.equal(await readFile(path.join(root, ".env"), "utf8"), "SECRET=1\n", ".env must be untouched");
 });
 
 // ── [SECURITY] create on sensitive path → throws ──
