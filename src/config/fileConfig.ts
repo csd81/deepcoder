@@ -489,7 +489,15 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     }
   }
 
-  return { mcpServers, checks, commands, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline };
+  // LSP block (opt-in). Lightly validated: an object with optional enabled +
+  // per-language server commands. loadConfig applies defaults + the env gate.
+  const rawLsp = (parsed as { lsp?: unknown }).lsp;
+  let lsp: Partial<LspConfig> | undefined;
+  if (rawLsp && typeof rawLsp === "object") {
+    lsp = rawLsp as Partial<LspConfig>;
+  }
+
+  return { mcpServers, checks, commands, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline, lsp };
 }
 
 function warn(msg: string): void {

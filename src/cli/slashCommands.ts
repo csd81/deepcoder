@@ -34,7 +34,11 @@ import {
   renderGoal,
   type SessionGoal,
 } from "../session/goal.js";
-import { loadSession, forkSession, type PersistedSession } from "../session/sessionStore.js";
+import { loadSession, forkSession, SessionStore, newSessionId, type PersistedSession } from "../session/sessionStore.js";
+import { serializeSession, validateImport } from "../session/sessionExport.js";
+import { renderTable } from "../ui/table.js";
+import { initState, undo, redo } from "./undoRedo.js";
+import { applyUndoEntry } from "../session/undoApply.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
@@ -410,8 +414,13 @@ export async function handleSlashCommand(
 
     case "checkpoints": {
       const list = await listCheckpoints(config.workspaceRoot);
-      if (list.length === 0) console.log(chalk.dim("No checkpoints."));
-      else for (const c of list) console.log(`${c.id}  ${chalk.dim(`${c.files.length} file(s) · ${c.createdAt}${c.label ? ` · ${c.label}` : ""}`)}`);
+      if (list.length === 0) { console.log(chalk.dim("No checkpoints.")); return { consumed: true }; }
+      const rows = list.map((c) => [c.id, String(c.files.length), c.createdAt, c.label ?? ""]);
+      const table = renderTable(
+        [{ header: "ID" }, { header: "Files", align: "right" }, { header: "When" }, { header: "Label" }],
+        rows,
+      );
+      for (const line of table) console.log(line);
       return { consumed: true };
     }
 
@@ -441,6 +450,70 @@ export async function handleSlashCommand(
       } catch (err) {
         console.log(chalk.red(`rollback failed: ${(err as Error).message}`));
       }
+      return { consumed: true };
+    }
+
+    case "export": {
+      const parts = arg.split(/\s+/).filter(Boolean);
+      const sanitize = parts.includes("--sanitize");
+      const toStdout = parts.includes("--stdout");
+      await save(); // flush current session state to its store first
+      const persisted = await loadSession(config.workspaceRoot, session.store.id);
+      const json = JSON.stringify(serializeSession(persisted, sanitize), null, 2);
+      if (toStdout) {
+        console.log(json);
+      } else {
+        const dir = path.join(config.workspaceRoot, ".deepcoder", "exports");
+        await fs.mkdir(dir, { recursive: true });
+        const file = path.join(dir, `session-${session.store.id}.json`);
+        await fs.writeFile(file, json, "utf8");
+        console.log(chalk.dim(`Exported session to ${path.relative(config.workspaceRoot, file)}${sanitize ? " (sanitized)" : ""}.`));
+      }
+      return { consumed: true };
+    }
+
+    case "import": {
+      if (!arg) { console.log(chalk.dim("usage: /import <path-to-session.json>")); return { consumed: true }; }
+      let parsed: unknown;
+      try { parsed = JSON.parse(await fs.readFile(arg, "utf8")); }
+      catch (e) { console.log(chalk.red(`import: cannot read/parse ${arg}: ${(e as Error).message}`)); return { consumed: true }; }
+      const v = validateImport(parsed);
+      if (!v.ok || !v.session) { console.log(chalk.red(`import: invalid session blob — ${v.error}`)); return { consumed: true }; }
+      const newId = newSessionId();
+      const s = v.session;
+      await new SessionStore(config.workspaceRoot, newId).save({
+        provider: s.provider ?? "", baseUrl: s.baseUrl ?? "", model: s.model, mode: s.mode,
+        messages: s.messages, todos: s.todos ?? [], readTracker: new Set(s.readTracker ?? []),
+        writeTracker: new Set(s.writeTracker ?? []), pendingCheckpoint: [], reviews: [], briefs: [],
+        activatedSkills: [], telemetry: s.telemetry, webTrace: s.webTrace, goal: s.goal, title: s.title,
+      });
+      console.log(chalk.dim(`Imported as ${newId}. Use --resume ${newId} to open it.`));
+      return { consumed: true };
+    }
+
+    case "undo": {
+      const us = session.undoState ?? initState();
+      const { state, entry } = undo(us);
+      if (!entry) { console.log(chalk.dim("Nothing to undo.")); return { consumed: true }; }
+      const res = await applyUndoEntry(config.workspaceRoot, entry);
+      // Swap the just-pushed redo entry for the reverse (current/post-image
+      // snapshot) so /redo re-applies this change rather than the pre-image.
+      const redoStack = [...state.redoStack];
+      redoStack[redoStack.length - 1] = res.reverse;
+      session.undoState = { ...state, redoStack };
+      console.log(chalk.green(`Undid "${entry.label}" — restored ${res.restored.length}, deleted ${res.deleted.length}${res.skipped.length ? `, skipped ${res.skipped.length}` : ""}.`));
+      return { consumed: true };
+    }
+
+    case "redo": {
+      const us = session.undoState ?? initState();
+      const { state, entry } = redo(us);
+      if (!entry) { console.log(chalk.dim("Nothing to redo.")); return { consumed: true }; }
+      const res = await applyUndoEntry(config.workspaceRoot, entry);
+      const undoStack = [...state.undoStack];
+      undoStack[undoStack.length - 1] = res.reverse;
+      session.undoState = { ...state, undoStack };
+      console.log(chalk.green(`Redid "${entry.label}" — restored ${res.restored.length}, deleted ${res.deleted.length}.`));
       return { consumed: true };
     }
 

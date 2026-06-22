@@ -13,6 +13,7 @@ import type { ModelsFileConfig } from "../models/types.js";
 import { DEFAULT_DIAGNOSTICS, type DiagnosticsConfig } from "../diagnostics/types.js";
 import { webConfigFromEnv, type WebConfig } from "./webConfig.js";
 import type { LspConfig } from "../lsp/types.js";
+import { resolveKeybinds, type KeybindsConfig } from "../ui/keybinds.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
@@ -149,6 +150,8 @@ export interface Config {
   dependencyHealing: DependencyHealingConfig;
   delegate: DelegateConfig;
   testTargeting: TestTargetingConfig;
+  /** Resolved key bindings (DEFAULTS merged with .deepcoder/config.json `keybinds`). */
+  keybinds: KeybindsConfig;
   /** Phase 10F — model/task router config (optional). */
   models?: ModelsFileConfig;
   /** Configurable statusline fields (default: all fields, in default order). */
@@ -744,6 +747,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     dependencyHealing: { ...dependencyHealing, ...(overrides.dependencyHealing ?? {}) },
     delegate,
     testTargeting,
+    keybinds: resolveKeybinds(file.keybinds),
     models: file.models,
     statusline: file.statusline,
     telemetry: {
