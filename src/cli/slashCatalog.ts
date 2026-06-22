@@ -30,6 +30,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "save", description: "Save the session now", category: "session" },
   { name: "status", description: "Show git status", category: "session" },
   { name: "diff", description: "Show git diff", category: "session" },
+  { name: "copy", args: "[last|code|diff|goal|plan|check <id>|worker <plan> <worker> [patch|log|review]]", description: "Copy useful session output to clipboard", category: "session" },
   { name: "todos", description: "Show the current todo list", category: "session" },
   { name: "checkpoint", args: "[label]", description: "Snapshot agent edits as an undo point", category: "session" },
   { name: "checkpoints", description: "List checkpoints", category: "session" },
