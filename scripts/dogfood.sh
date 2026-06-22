@@ -64,4 +64,13 @@ cd "$DIR"
 # Containment stays ON (the default): node_modules is now copied INTO the worktree
 # above, so bubblewrap binds it and the agent's sandboxed commands work without
 # escaping the workspace. No --no-contain / DEEPCODER_ALLOW_UNCONTAINED needed.
-exec npm run dev -- --tui --mode auto
+#
+# NOT `exec`: a script runs in a child process, so its `cd` can't change the
+# shell you launched it from — `exec`-ing the TUI would dump you back at your
+# original directory on exit. Instead, run the TUI, then drop into an interactive
+# shell IN the worktree so you "stay" here to inspect/commit. Exit that shell to
+# return to where you started.
+npm run dev -- --tui --mode auto
+echo "deepcoder TUI exited — you are now in the worktree: $DIR (branch $BRANCH)"
+echo "commit/inspect here; type 'exit' to return to where you launched dogfood."
+exec "${SHELL:-bash}"
