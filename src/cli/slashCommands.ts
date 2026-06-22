@@ -15,6 +15,7 @@ import { discoverPlugins } from "../plugins/discovery.js";
 import { webStatus, webSearch, webFetch, webTrace, webClear } from "../web/webCommands.js";
 import { createWebSearchProviderFromConfig } from "../web/providerFactory.js";
 import { renderSlashResultPlain } from "./slashResult.js";
+import { buildDebugConfig, formatDebugConfig } from "../config/debugConfig.js";
 import { buildSemanticIndex } from "../semantic/indexer.js";
 import { createEmbeddingProvider } from "../semantic/provider.js";
 import { pluginTrustKey, resolvePluginTrust, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
@@ -1050,6 +1051,14 @@ export async function handleSlashCommand(
       const git = new Git(config.workspaceRoot);
       if (await git.isRepo()) console.log((await git.diff()) || chalk.dim("No unstaged changes."));
       else console.log(chalk.dim("Not a git repository."));
+      return { consumed: true };
+    }
+
+    case "debug-config": {
+      // 10Q: bounded, secret-redacted view of the effective config + provenance.
+      const wantJson = arg.trim().split(/\s+/).includes("--json");
+      const report = buildDebugConfig({ config, workspaceRoot: config.workspaceRoot, env: process.env });
+      console.log(wantJson ? JSON.stringify(report, null, 2) : formatDebugConfig(report));
       return { consumed: true };
     }
 

@@ -80,6 +80,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "usage", description: "Show session token usage", category: "debug" },
   { name: "cost", description: "Show estimated session cost", category: "debug" },
   { name: "telemetry", description: "Show session telemetry", category: "debug" },
+  { name: "debug-config", args: "[--json]", description: "Show the effective config (redacted) + provenance", category: "debug" },
   { name: "doctor", args: "[--json] [--section <name>]", description: "Run a read-only runtime health check", category: "debug" },
   { name: "ps", description: "List active background activities", category: "debug" },
   { name: "stop", args: "[<id>|all]", description: "Cancel an active background activity", category: "debug" },
