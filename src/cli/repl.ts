@@ -1,7 +1,7 @@
 import readline from "node:readline/promises";
 import { emitKeypressEvents } from "node:readline";
 import { stdin, stdout } from "node:process";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import chalk from "chalk";
 import { effectiveMaxTurns, type ApprovalMode, type Config } from "../config/config.js";
@@ -50,6 +50,9 @@ import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
 import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
 import { createSearchState, updateSearch, moveSearchSelection, selectedMatch, type TranscriptSearchState } from "../ui/transcriptSearch.js";
+import { formatTranscriptBlockMarkdown, selectedBlock } from "../ui/transcriptExport.js";
+import { safeExportFilename } from "../ui/exportWriter.js";
+import { copyToClipboard } from "../clipboard/clipboard.js";
 import { MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
 import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
@@ -1028,6 +1031,34 @@ export async function runTuiRepl(session: Session): Promise<void> {
       if (key?.name === "backspace") { search = updateSearch(search, buildLines(w), search.query.slice(0, -1)); redraw(); return; }
       if (str && str.length === 1 && str >= " " && !key?.ctrl) { search = updateSearch(search, buildLines(w), search.query + str); redraw(); return; }
       return; // swallow anything else while searching
+    }
+    // 10A.12 copy/export the focused block: `y` copies to clipboard, `s` saves
+    // to .deepcoder/exports/. Only on an empty composer so normal typing is free.
+    if (!busy && editor.text.length === 0 && !chat.slashMenu.open && (str === "y" || str === "s")) {
+      const blk = selectedBlock(transcript);
+      if (!blk) {
+        transcript = applyEvent(transcript, { type: "notice", message: "No focused block. Press Tab to focus a tool/check/worker block." });
+        stickBottom(); redraw(); return;
+      }
+      const md = formatTranscriptBlockMarkdown(blk);
+      if (str === "y") {
+        void copyToClipboard(md).then((r) => {
+          transcript = applyEvent(transcript, { type: "notice", message: r.ok ? `Copied focused block to clipboard (${r.backend}).` : `Copy failed: ${r.error}` });
+          stickBottom(); redraw();
+        });
+      } else {
+        try {
+          const dir = path.join(session.executionRoot ?? session.config.workspaceRoot, ".deepcoder", "exports");
+          mkdirSync(dir, { recursive: true });
+          const file = path.join(dir, safeExportFilename(blk.kind, new Date(), blk.id));
+          writeFileSync(file, md, "utf8");
+          transcript = applyEvent(transcript, { type: "notice", message: `Saved focused block to ${file}` });
+        } catch (e) {
+          transcript = applyEvent(transcript, { type: "notice", message: `Save failed: ${(e as Error).message}` });
+        }
+        stickBottom(); redraw();
+      }
+      return;
     }
     // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
     if (key?.name === "return" && (key as { meta?: boolean }).meta) {
