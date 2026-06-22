@@ -403,6 +403,8 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     mode: effectivePlanModeApproval(session.planState ?? initPlanMode(), session.mode),
     // Phase 7I — post-write diagnostics (no-op unless config.diagnostics.enabled).
     diagnostics: session.config.diagnostics,
+    // Format-on-edit (null when not configured).
+    format: session.config.format,
     maxTurns: effectiveMaxTurns({
       configMaxTurns: session.config.maxTurns,
       interactive: session.interactive === true,

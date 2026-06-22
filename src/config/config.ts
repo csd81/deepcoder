@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { loadFileConfig, type McpServerConfig, type CheckConfig, type UserCommandConfig, type TelemetryConfig, type StatuslineConfig } from "./fileConfig.js";
+import { loadFileConfig, type McpServerConfig, type CheckConfig, type UserCommandConfig, type TelemetryConfig, type StatuslineConfig, type FormatConfig } from "./fileConfig.js";
 import { isWorkspaceTrusted } from "./trust.js";
 import { DEFAULT_SANDBOX, type SandboxConfig, type SandboxMode } from "../sandbox/types.js";
 import { DEFAULT_CONTAINMENT, applyContainment, type ContainmentConfig } from "../containment/types.js";
@@ -158,6 +158,8 @@ export interface Config {
   statusline?: StatuslineConfig;
   /** Phase 10C — telemetry configuration (statusline, costs, pricing overrides). */
   telemetry: TelemetryConfig;
+  /** Format-on-edit config (opt-in). null = not configured. */
+  format: FormatConfig | null;
 }
 
 export interface QualityGateOptions {
@@ -349,7 +351,7 @@ const PROVIDER_ENV_PREFIX: Record<string, string> = {
   "openai-compatible": "OPENAI",
 };
 
-export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "diagnostics" | "skills" | "dependencyHealing" | "delegate">> & {
+export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "diagnostics" | "skills" | "dependencyHealing" | "delegate" | "format">> & {
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
@@ -358,6 +360,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
   delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig> };
+  format?: FormatConfig | null;
 };
 
 /**
@@ -663,6 +666,8 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...(overrides.lsp ?? {}),
   };
 
+  const format: FormatConfig | null = file.format ?? null;
+
   return {
     provider,
     apiKey,
@@ -673,6 +678,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     semanticSearch,
     web,
     lsp,
+    format,
     // Planning/reasoning role defaults to DeepSeek's reasoning model (Pro);
     // other roles use `model` (Flash) via the model router.
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL") ?? "deepseek-v4-pro",
