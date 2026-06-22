@@ -28,6 +28,7 @@ import type { ActivateSkillRuntime } from "../skills/activation.js";
 import { handleSlashCommand } from "./slashCommands.js";
 import { slashNeedsSuspend } from "./tuiSlashRouting.js";
 import { runSolveCommand } from "./solveRunner.js";
+import { proposeMemory } from "../memory/store.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
 import type { LspRuntime } from "../lsp/types.js";
@@ -94,6 +95,11 @@ import {
   effectivePlanModeApproval,
   type PlanModeState,
 } from "./planMode.js";
+
+/** Debounce map for auto-memory: only stage a candidate if the last proposal
+ *  for a given source was more than 60s ago. Module-level so it persists
+ *  across turns in both REPL and one-shot modes. */
+const lastProposal = new Map<string, number>();
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -474,6 +480,35 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
         }
       } catch {
         /* never mask the original error with a checkpoint failure */
+      }
+    }
+  }
+
+  // Proactive auto-memory (Phase 8B follow-up): after a successful turn that
+  // changed files, stage a candidate learning for human review.
+  // Best-effort; never breaks the agent loop.
+  if (completed && session.writeTracker.size > 0) {
+    const now = Date.now();
+    if (!lastProposal.get("agent-turn") || now - lastProposal.get("agent-turn")! >= 60_000) {
+      lastProposal.set("agent-turn", now);
+      const changed = [...session.writeTracker].map((p) => path.basename(p));
+      const lastMsg = session.messages.at(-1);
+      const taskHint =
+        (typeof lastMsg?.content === "string" ? lastMsg.content : "")
+          .replace(/\s+/g, " ").trim().slice(0, 100) || "agent turn";
+      try {
+        const staged = await proposeMemory(
+          session.config.workspaceRoot,
+          `Edited ${changed.join(", ")} (task: ${taskHint}).`,
+          "agent-loop",
+        );
+        if (staged.ok) {
+          const msg = "memory: staged 1 candidate — review with /memory inbox";
+          if (ui) renderer.emit({ type: "notice", message: msg });
+          else stdout.write(chalk.dim(msg + "\n"));
+        }
+      } catch {
+        /* auto-memory is best-effort */
       }
     }
   }
