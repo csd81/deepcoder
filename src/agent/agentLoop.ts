@@ -88,12 +88,33 @@ export interface AgentDeps {
 }
 
 /**
+ * Cumulative-tool-output threshold (bytes) that triggers the one-shot
+ * read-budget focus nudge. ~100k tokens (bytes/4) — large enough not to bother
+ * a focused session, small enough to catch whole-repo reads well before the
+ * (e.g. 1M-token) context window fills.
+ */
+export const READ_BUDGET_NUDGE_BYTES = 400_000;
+
+/**
+ * Sum the byte length of all tool-role message content. Pure and testable.
+ * Ignores user/assistant/system messages — only tool results count toward the
+ * read budget.
+ */
+export function cumulativeToolBytes(messages: AgentMessage[]): number {
+  let total = 0;
+  for (const m of messages) if (m.role === "tool") total += m.content.length;
+  return total;
+}
+
+/**
  * The core loop. `messages` is the running conversation (mutated in place so a
  * REPL can keep history across turns). Returns the final assistant text.
  */
 export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): Promise<string> {
   const { ctx, mode, maxTurns } = deps;
   let lastInvalidSignature: string | null = null;
+  // The read-budget focus nudge is a one-shot: it fires at most once per run.
+  let nudged = false;
 
   for (let turn = 0; turn < maxTurns; turn++) {
     if (ctx.signal.aborted) {
@@ -223,6 +244,27 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       deps.onToolResult?.(call.name, result);
       pushToolResult(messages, call.id, call.name, result.output);
       await deps.onPersist?.();
+
+      // One-shot read-budget focus nudge. A soft nudge only — nothing is
+      // blocked, truncated, or removed. Fires at most once per run, when the
+      // cumulative tool-output bytes first cross the threshold (a model hoarding
+      // whole-file reads instead of converging on a hypothesis).
+      if (!nudged) {
+        const bytes = cumulativeToolBytes(messages);
+        if (bytes >= READ_BUDGET_NUDGE_BYTES) {
+          nudged = true;
+          const approxTokens = Math.round(bytes / 4 / 1000);
+          messages.push({
+            role: "system",
+            content:
+              `You have read a large amount of file content (~${approxTokens}k tokens) without converging. ` +
+              `Narrow your hypothesis: use grep/repo_map and read only the specific lines you need ` +
+              `(read_file offset/limit) instead of whole files. Do not re-read files already in context.`,
+          });
+          deps.onNotice?.(`Read-budget nudge: ~${approxTokens}k tokens of file content read — asked the model to narrow its focus.`);
+          await deps.onPersist?.();
+        }
+      }
 
       // Post-tool hooks are advisory: they observe the result but can't undo it.
       if (deps.onPostTool) {
