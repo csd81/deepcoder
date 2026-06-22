@@ -15,6 +15,7 @@ import { repoMapTool, findSymbolsTool, listRecentContextTool } from "./contextTo
 import { repoIndexTool, findReferencesTool, impactGraphTool, targetTestsTool } from "./repoIndexTools.js";
 import { activateSkillTool } from "./activateSkill.js";
 import { applyPatchTool } from "./applyPatch.js";
+import { delegateTool } from "./delegateTool.js";
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
@@ -73,6 +74,7 @@ const NATIVE_TOOLS: Tool[] = [
   // Phase 7C2: always registered; activation enforces enabled/trust/disabled.
   activateSkillTool,
   applyPatchTool,
+  delegateTool,
 ];
 
 /** The full native tool set. */

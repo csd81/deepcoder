@@ -37,6 +37,9 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../config/config.js";
 import { ModelRouter } from "../models/router.js";
 import { ProviderPool } from "../models/providerPool.js";
+import { runSubagent } from "../subagents/runner.js";
+import { PROFILES } from "../subagents/profiles.js";
+import type { DelegateRuntime } from "../tools/types.js";
 
 /** Connect configured MCP servers and register their tools. Returns undefined
  *  when none are configured; never throws (bad servers warn and are skipped). */
@@ -205,6 +208,35 @@ async function composePluginSkillsInto(
   } catch {
     return discovered;
   }
+}
+
+/**
+ * Build a DelegateRuntime for a running session. Closes over the session's
+ * provider, model config, and subagent profiles to let the delegate tool run
+ * read-only subagents. The runtime is deliberately NOT passed into subagent
+ * ToolContexts (see runner.ts), preventing recursive/ nested delegation.
+ */
+export function buildDelegateRuntime(session: Session): DelegateRuntime {
+  return {
+    async run(profileName, task, signal) {
+      const profileDef = PROFILES[profileName];
+      if (!profileDef) {
+        throw new Error(`Unknown subagent profile: ${profileName}`);
+      }
+      const { result } = await runSubagent(profileDef, task, {
+        workspaceRoot: session.config.workspaceRoot,
+        provider: session.provider,
+        parentModel: session.config.model,
+        subagentModel: session.config.subagentModel,
+        contextBudgetTokens: session.config.contextBudgetTokens,
+        compactAt: session.config.compactAt,
+        modelRouter: session.modelRouter,
+        providerPool: session.providerPool,
+        signal: signal ?? new AbortController().signal,
+      });
+      return { summary: result.summary, findings: result.findings };
+    },
+  };
 }
 
 export async function buildSession(

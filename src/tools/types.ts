@@ -67,6 +67,25 @@ export interface ToolContext {
    */
   history?: { role: string; content: string }[];
   skills?: import("../skills/activation.js").ActivateSkillRuntime;
+  /**
+   * Runtime for the model-callable `delegate` tool. When absent, the tool reports
+   * "delegation unavailable" instead of crashing. Present in full sessions (CLI)
+   * but explicitly omitted inside subagent contexts to prevent nesting.
+   */
+  delegate?: DelegateRuntime;
+}
+
+/**
+ * A read-only subagent runner injected into ToolContext for the model-callable
+ * delegate tool. Closes over the session's provider + subagent profiles. Always
+ * omitted inside subagent contexts to prevent recursive delegation.
+ */
+export interface DelegateRuntime {
+  run(
+    profile: string,
+    task: string,
+    signal?: AbortSignal,
+  ): Promise<{ summary: string; findings: unknown[] }>;
 }
 
 /** What a tool will do, computed before execution for approval prompts. */

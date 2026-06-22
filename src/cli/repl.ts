@@ -37,6 +37,7 @@ import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
+import { buildDelegateRuntime } from "../runtime/sessionFactory.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
 import type { UiEvent } from "../ui/events.js";
@@ -344,6 +345,7 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     todos: session.todos,
     history: session.messages,
     skills: skillsRuntime(session),
+    delegate: buildDelegateRuntime(session),
   };
 
   // Plain-CLI renderer: render finished assistant messages as markdown (with
