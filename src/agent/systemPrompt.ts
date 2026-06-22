@@ -1,4 +1,5 @@
 import type { ApprovalMode } from "../config/config.js";
+import { buildWebAwarePrompt } from "../web/searchCapableRouting.js";
 
 export function buildSystemPrompt(opts: {
   workspaceRoot: string;
@@ -10,6 +11,10 @@ export function buildSystemPrompt(opts: {
   memory?: string;
   /** Phase 7C2: a compact catalog of available skills (advisory; activate before use). */
   skillsCatalog?: string;
+  /** Phase 10E7: the active model route is web-aware (e.g. OpenRouter) — append a
+   *  note that provider-side web claims are UNVERIFIED until checked with local
+   *  web_fetch/web_search (the only sources that create an auditable trace). */
+  webAware?: boolean;
 }): string {
   const base = [
     "You are deepcoder, an agentic coding assistant operating in a developer's terminal.",
@@ -45,6 +50,12 @@ export function buildSystemPrompt(opts: {
   }
 
   let text = base.join("\n");
+
+  // 10E7: when the route may have provider-side web knowledge, remind the model
+  // that those claims are unverified until checked with the local web tools.
+  if (opts.webAware) {
+    text += "\n\n" + buildWebAwarePrompt();
+  }
 
   if (opts.instructions?.trim()) {
     text += "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
