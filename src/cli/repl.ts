@@ -613,6 +613,24 @@ export async function runTuiRepl(session: Session): Promise<void> {
   const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
   let transcript: TranscriptState = createTranscript();
   let editor = createEditor();
+  // Resume: replay the restored conversation into the transcript and seed the
+  // input history, so a resumed session shows its prior turns and ↑ recalls them.
+  {
+    const resumedBlocks = session.messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim().length > 0)
+      .map((m, i) => ({
+        id: `r${i}`,
+        kind: m.role as "user" | "assistant",
+        body: m.content,
+        startedAt: new Date(0).toISOString(),
+        ...(m.role === "assistant" ? { finishedAt: new Date(0).toISOString() } : {}),
+      }));
+    if (resumedBlocks.length > 0) transcript = { ...transcript, blocks: resumedBlocks };
+    const hist = session.messages
+      .filter((m) => m.role === "user" && typeof m.content === "string" && m.content.trim().length > 0)
+      .map((m) => m.content);
+    if (hist.length > 0) editor = { ...editor, history: hist, histPos: hist.length };
+  }
   // Viewport (scroll/atBottom), the slash-command menu, and focus all live in a
   // pure ChatUiState; the shell folds keystrokes/mouse into reduceChatUi actions.
   let chat: ChatUiState = initChatUi({ width: stdout.columns ?? 80, height: stdout.rows ?? 24 });
