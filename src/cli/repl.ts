@@ -660,12 +660,35 @@ export async function runTuiRepl(session: Session): Promise<void> {
   const enterAlt = () => { stdout.write("\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H" + MOUSE_ENABLE); prevFrame = []; };
   const leaveAlt = () => stdout.write("\x1b[?25h\x1b[?1049l");
 
+  // Attach the input listeners in the one order that keeps the mouse working:
+  // the raw mouse reader (`onStdinData`) MUST run before readline's internal
+  // `"data"` handler so it can intercept SGR mouse sequences and set the
+  // `suppressKeys` window before readline fragments them into keystrokes.
+  //
+  // readline (via `emitKeypressEvents`) attaches its own `"data"` listener the
+  // first time a `keypress` listener is added, and — critically — it does NOT
+  // remove that listener when the `keypress` listener is removed (it self-removes
+  // lazily, only the next time it fires with zero keypress listeners). So after a
+  // suspend/re-enter cycle readline's `onData` is still attached, and a plain
+  // `stdin.on("data", onStdinData)` would land AFTER it, inverting the order and
+  // leaking raw mouse digits. Using `prependListener` guarantees `onStdinData`
+  // runs first on every (re-)entry regardless of readline's stale handler.
+  function attachInput(): void {
+    stdin.prependListener("data", onStdinData);
+    stdin.on("keypress", onKey);
+    stdin.resume();
+  }
+
+  function detachInput(): void {
+    try { stdin.removeListener("keypress", onKey); } catch { /* */ }
+    try { stdin.removeListener("data", onStdinData); } catch { /* */ }
+  }
+
   function restore(): void {
     if (restored) return;
     restored = true;
     try { if (tty.isTTY) tty.setRawMode?.(false); } catch { /* best effort */ }
-    try { stdin.removeListener("keypress", onKey); } catch { /* */ }
-    try { stdin.removeListener("data", onStdinData); } catch { /* */ }
+    detachInput();
     try { stdout.write(MOUSE_DISABLE); } catch { /* */ }
     try { leaveAlt(); } catch { /* */ }
     try { stdin.pause(); } catch { /* */ }
@@ -1072,8 +1095,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       } catch (e) { stdout.write(chalk.red(`\nError: ${(e as Error).message ?? e}\n`)); }
       enterAlt();
       if (tty.isTTY) tty.setRawMode?.(true);
-      stdin.on("data", onStdinData);
-      stdin.on("keypress", onKey); stdin.resume();
+      attachInput();
       redraw();
       return;
     }
@@ -1234,13 +1256,14 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   // ── setup (raw mode + alternate screen), with guaranteed restore ──
   enterAlt();
-  // Raw mouse reader runs BEFORE emitKeypressEvents so it sees each data chunk
-  // first and can suppress the keypress fragments a mouse sequence would spawn.
-  stdin.on("data", onStdinData);
+  // Install readline's keypress machinery once. `attachInput` then prepends the
+  // raw mouse reader (`onStdinData`) ahead of readline's internal `"data"`
+  // handler so it sees each chunk first and can suppress the keypress fragments a
+  // mouse sequence would spawn. The same helper is reused on slash-suspend
+  // re-entry so the listener order can never drift between the two paths.
   emitKeypressEvents(stdin);
   if (tty.isTTY) tty.setRawMode?.(true);
-  stdin.resume();
-  stdin.on("keypress", onKey);
+  attachInput();
   const onProcExit = () => restore();
   process.on("exit", onProcExit);
   process.on("SIGTERM", onProcExit);

@@ -5,7 +5,16 @@ Status: `OPEN` / `FIXED <commit>` / `WONTFIX`.
 
 ---
 
-## OPEN — `/understand` in the TUI does nothing, and mouse starts printing garbage again
+## FIXED `fa3d21a` — `/understand` in the TUI does nothing, and mouse starts printing garbage again
+- **Fix:** `restore()` removed `onStdinData` but readline's internal `"data"`
+  handler (attached by `emitKeypressEvents`) self-removes only lazily, so on
+  slash-suspend re-entry a plain `stdin.on("data", onStdinData)` landed AFTER the
+  stale readline handler — inverting the required order and leaking SGR mouse
+  digits. Refactored attach/detach into shared `attachInput()`/`detachInput()`
+  helpers; `attachInput` uses `prependListener` so `onStdinData` always runs
+  before readline's handler on every (re-)entry. Mouse priority fixed; the
+  `/understand` "no output" is the inherent suspend-screen behavior (out of scope).
+
 - **Found:** 2026-06-22 (dogfood)
 - **Symptom:** Running `/understand` in the TUI produces no visible output, and
   afterwards the mouse wheel/click starts leaking raw ANSI (`64;36;29M…`) into the
