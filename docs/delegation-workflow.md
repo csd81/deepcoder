@@ -50,6 +50,16 @@ This is mandatory: DeepSeek **no-ops on a green check** ("delivery scope == seed
 anchor forces it to actually implement. The seed also pins scope so you can detect a worker
 that guts your test.
 
+**Anchor the WIRED behavior, not just the unit** (the #1 way to waste a delegation): a worker
+optimizes to green the cheapest way, so if your seed only tests the pure module it ships a
+green-but-inert module nothing calls. Make at least one anchor assert the user-observable wired
+path so green ⇒ wired:
+- a tool → assert `defaultRegistry()` (or the session registry) lists it by name — not just that the tool object exists.
+- a slash command → assert `handleSlashCommand("/foo", …)` returns `{consumed:true}` — forces the `case`.
+- a config field → assert `loadFileConfig(tmp)`/`loadConfig` surfaces it — forces the parser return + Config plumbing.
+- a CLI flag → assert the option is registered / parsed.
+- a pure render/util → assert its actual caller produces the new output (or don't delegate it standalone — bundle it with the feature that uses it).
+
 ```bash
 node --import tsx --test test/adversarial/<slice>.test.ts >/dev/null 2>&1 \
   && echo "UNEXPECTED PASS" || echo "red on baseline ✓"
@@ -61,9 +71,16 @@ git add test/adversarial/<slice>.test.ts && git commit -q -m "test(<area>): <sli
 `/tmp/task-XX.txt` is a strict contract. Include:
 - the exact public contract (types/signatures) the worker must implement,
 - one **tagged** deliverable per behavior, each "RED before impl, GREEN after",
+- **WIRING (REQUIRED — never "optional" or "secondary"):** the new code MUST be hooked into
+  its call site in the SAME slice — registered in the tool registry, dispatched from the slash
+  switch, parsed into `FileConfig`/`Config`, added as a CLI option, injected into `ToolContext`,
+  or called from the render path. List the exact call-site file(s) in the allowed-files set.
+  A module with no non-test caller is a FAILED delegation, not a partial win — do NOT write
+  "the pure core is the must, wiring is secondary" (that produces green-but-inert code).
 - **reuse** instructions (don't reinvent `redactSecrets`, `EventBuffer`, existing types),
-- hard constraints: *touch ONLY these files*; no new deps; never print/log/hardcode a key;
-  no vacuous tests; `npm run typecheck` (strict) + `npm run test:phase` green at the end.
+- hard constraints: *touch ONLY these files* (incl. the call-site files); no new deps; never
+  print/log/hardcode a key; no vacuous tests; `npm run typecheck` (strict) + `npm run test:phase`
+  green at the end.
 
 ## 4. Launch the worker
 
@@ -129,11 +146,19 @@ mv /tmp/impl.bak src/<area>/<impl>.ts
 
 # green-on-full
 npm run test:phase
+
+# WIRING GATE (mandatory, every slice — not just security ones): the new module
+# MUST have a real caller in src/ outside its own file + tests. Orphan == reject.
+for sym in <newSymbol> <newTool> ...; do
+  grep -rln "$sym" src/ | grep -v "<newfile>" | grep -v '\.test\.' >/dev/null \
+    && echo "$sym wired ✓" || echo "$sym ORPHAN ✗ — feature is inert, finish the wiring in-house"
+done
 ```
 
-For **security-sensitive** slices, add an adversarial spot-check (e.g. SSRF decimal/octal-IP
-bypasses denied; "no unsafe command auto-allowed"; secrets redacted). Confirm the worker
-actually USES the new module (`rg -l <newSymbol> src/ | grep -v <newfile>`) — not dead code.
+A green check with an orphan module is a **failed delegation**, not a partial win — finish the
+wiring in-house before merge (it's why the contract lists the call-site files). For
+**security-sensitive** slices, also add an adversarial spot-check (e.g. SSRF decimal/octal-IP
+bypasses denied; "no unsafe command auto-allowed"; secrets redacted).
 
 Only escalate (re-prompt / force / finish in-house) if verification finds a shortfall. For a
 small, well-defined gap where a failing test already pins it, **finish in-house** rather than
