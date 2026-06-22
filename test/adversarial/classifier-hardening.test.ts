@@ -24,6 +24,20 @@ test("1b. REDIRECT WITHOUT WHITESPACE (allow bypass — found via dogfood)", () 
   assert.notEqual(classifyCommand("ls > /tmp/evil"), "allow");
 });
 
+test("1c. POSITIONAL/SPECIAL PARAMETER EXPANSION (allow bypass)", () => {
+  // `$a` is correctly gated as a parameter expansion (→ ask); positional ($1)
+  // and special ($@ $* $# $$ $!) parameters expand to arbitrary content too, so
+  // they must NOT auto-allow. The detection regex previously matched only
+  // [a-zA-Z_], silently allowing `echo $1` / `echo $@`.
+  assert.equal(classifyCommand("echo $a"), "ask"); // baseline: named var is gated
+  for (const cmd of ["echo $1", "echo $@", "echo $*", "echo $#", "echo $$", "echo $!"]) {
+    assert.notEqual(classifyCommand(cmd), "allow", `${cmd} must not auto-allow`);
+  }
+  // Command substitution is handled separately and must stay classified (not
+  // misread as a benign parameter expansion).
+  assert.notEqual(classifyCommand("echo $(date)"), "allow");
+});
+
 test("2. PIPE-TO-SHELL VIA A PATH (deny bypass)", () => {
   assert.equal(classifyCommand("echo x | /bin/sh"), "deny");
   assert.equal(classifyCommand("echo x | /usr/bin/bash"), "deny");

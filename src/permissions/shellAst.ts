@@ -568,7 +568,11 @@ function buildProgram(tokens: Array<{ type: "word" | "operator" | "redirect"; va
         if (/\$\(\(/.test(rt.raw)) {
           hasArithmeticExpansion = true;
         }
-        if (/\$\{/.test(rt.raw) || (/\$[a-zA-Z_]/.test(rt.raw) && !/\$\(/.test(rt.raw))) {
+        // Named vars ($foo / ${foo}) AND positional/special parameters
+        // ($1, $@, $*, $#, $$, $!, $-, $?) all expand to arbitrary content, so
+        // every form must flag a parameter expansion. (Command substitution
+        // `$(...)` is handled above and excluded here.)
+        if (/\$\{/.test(rt.raw) || (/\$([a-zA-Z_][a-zA-Z0-9_]*|[0-9?*@$#!-])/.test(rt.raw) && !/\$\(/.test(rt.raw))) {
           hasParameterExpansion = true;
         }
       }
