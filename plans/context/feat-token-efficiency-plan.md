@@ -45,12 +45,20 @@ efficiency levers; fold those in rather than duplicating.
   session (not per turn) and ephemeral todos/JIT blocks are appended at the
   TAIL, so the cacheable prefix is stable. No prefix-busting fix needed; a
   cache-hit % indicator in the statusline is the only optional add.
-- **PENDING — W1 compactAt tuning.** Deliberately deferred: lowering
-  `compactAt` (0.95) trims context earlier but rewrites history and busts the
-  cache once. Whether it's net-positive depends on real cache-hit ratios —
-  measure with the honest meter first, then decide.
-- **PENDING — W3 tool steering** (cheap-first investigation prompt/description
-  tweaks). Low risk; do after measuring W1+W4's effect.
+- **W1 compactAt — DONE.** Lowered the DeepSeek default 0.95 → 0.8 (`config.ts`),
+  so compaction trims at ~800K of the 1M window — a cost backstop that caps how
+  large the re-sent context grows per turn, complementing the read-budget nudge.
+  Env-overridable via `DEEPCODER_COMPACT_AT`. (A measurement round can still
+  refine the exact value, but 0.8 is the safe, defensible default.)
+- **W3 tool steering — DONE.** `read_file`'s description already steered well
+  (offset/limit, "grep to find content in large files", "avoid tiny slices").
+  Added one economy rule to the investigation playbook (`systemPrompt.ts`):
+  locate with grep/repo_map/semantic_search, then read just the region — reading
+  whole files to search is the most expensive thing you can do.
+
+All workstreams complete. Optional follow-up: dogfood once and, with the honest
+cost meter + cache-hit visibility, refine `compactAt` / nudge thresholds from
+real numbers.
 
 ## Goal & success metric
 

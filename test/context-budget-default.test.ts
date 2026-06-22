@@ -16,7 +16,7 @@ test("DeepSeek (default provider) defaults to the full 1M context window", () =>
   withEnv({ DEEPCODER_PROVIDER: undefined, DEEPCODER_CONTEXT_BUDGET_TOKENS: undefined, DEEPCODER_COMPACT_AT: undefined }, () => {
     const c = loadConfig({ ...base });
     assert.equal(c.contextBudgetTokens, 1_000_000);
-    assert.equal(c.compactAt, 0.95);
+    assert.equal(c.compactAt, 0.8); // trims before saturating the 1M window (cost backstop)
   });
 });
 

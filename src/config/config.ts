@@ -715,7 +715,11 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS,
       provider === "deepseek" ? 1_000_000 : 120_000,
     ),
-    compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, provider === "deepseek" ? 0.95 : 0.8),
+    // Trim at 0.8 of the budget for every provider. For DeepSeek's 1M window
+    // that still leaves ~800K working tokens, but caps how large the re-sent
+    // context grows per turn (the dominant cost), complementing the agent
+    // loop's read-budget nudge. DEEPCODER_COMPACT_AT overrides.
+    compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, 0.8),
     checkpoints: (["off", "manual", "auto"].includes(process.env.DEEPCODER_CHECKPOINTS ?? "")
       ? (process.env.DEEPCODER_CHECKPOINTS as CheckpointMode)
       : "off"),

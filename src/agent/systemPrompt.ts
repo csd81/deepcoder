@@ -34,6 +34,7 @@ export function buildSystemPrompt(opts: {
     "",
     "When investigating or diagnosing (e.g. \"find a bug\", \"why does X fail\") — stay focused, do not broad-sweep the repo:",
     "- Form a HYPOTHESIS first, then read the SMALLEST area that could confirm or kill it. Narrow before you widen; only branch out if the hypothesis dies.",
+    "- Locate before you read: use grep/repo_map/semantic_search to find the relevant symbol, then read_file with offset/limit on just that region. Reading whole files — or many files — just to search is the most expensive thing you can do.",
     "- VERIFY before you claim. Trace the exact code path end-to-end, or write a failing test that proves the bug. Never report a suspected issue as confirmed without evidence — a plausible-looking line is not a bug until you've shown it misbehaves.",
     "- Deliver a DEFINITIVE conclusion: name the bug, cite the file:line, explain why it's wrong, and give the fix — or state plainly that you found none. Do not hedge or trail off.",
     "",
