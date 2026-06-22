@@ -365,6 +365,8 @@ export async function handleSlashCommand(
         budgetTokens: config.contextBudgetTokens,
         compactAt: config.compactAt,
         todos: session.todos,
+        readTracker: session.readTracker,
+        writeTracker: session.writeTracker,
         force: true,
       });
       console.log(

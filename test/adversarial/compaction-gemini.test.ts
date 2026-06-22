@@ -36,7 +36,7 @@ function conversation(): AgentMessage[] {
 
 test("compaction summary is a USER message (not a second inline system message)", () => {
   const msgs = conversation();
-  const res = compactIfNeeded(msgs, { budgetTokens: 4000, compactAt: 0.8, todos: [] });
+  const res = compactIfNeeded(msgs, { budgetTokens: 4000, compactAt: 0.8, todos: [], readTracker: new Set(), writeTracker: new Set() });
   assert.equal(res.compacted, true);
   const summary = msgs.find(isSummary);
   assert.ok(summary, "a summary was inserted");
@@ -47,7 +47,7 @@ test("compaction summary is a USER message (not a second inline system message)"
 
 test("compaction preserves thought_signature on kept tail tool calls", () => {
   const msgs = conversation();
-  compactIfNeeded(msgs, { budgetTokens: 4000, compactAt: 0.8, todos: [] });
+  compactIfNeeded(msgs, { budgetTokens: 4000, compactAt: 0.8, todos: [], readTracker: new Set(), writeTracker: new Set() });
   const withSig = msgs.filter((m) => m.role === "assistant" && m.toolCalls?.length);
   assert.ok(withSig.length > 0, "tail keeps assistant tool-call turns");
   for (const m of withSig) {
@@ -58,7 +58,7 @@ test("compaction preserves thought_signature on kept tail tool calls", () => {
 
 test("compaction does not leave the summary directly followed by an orphaned tool message", () => {
   const msgs = conversation();
-  compactIfNeeded(msgs, { budgetTokens: 4000, compactAt: 0.8, todos: [] });
+  compactIfNeeded(msgs, { budgetTokens: 4000, compactAt: 0.8, todos: [], readTracker: new Set(), writeTracker: new Set() });
   const sumIdx = msgs.findIndex(isSummary);
   assert.notEqual(msgs[sumIdx + 1]?.role, "tool", "first kept turn must not be an orphaned tool result");
 });
