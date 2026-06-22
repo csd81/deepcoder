@@ -7,7 +7,8 @@ const execFileAsync = promisify(execFile);
 export class Git {
   constructor(private cwd: string) {}
 
-  private async run(args: string[]): Promise<string> {
+  /** Run an arbitrary git command, returning stdout. Throws on non-zero exit. */
+  async run(args: string[]): Promise<string> {
     try {
       const { stdout } = await execFileAsync("git", args, { cwd: this.cwd, maxBuffer: 8 * 1024 * 1024 });
       return stdout;
@@ -248,5 +249,20 @@ export class Git {
   /** Extract the short hash from a `git commit` summary line "[branch <hash>] ...". */
   private commitHash(stdout: string): string {
     return stdout.match(/\[[^\]]*?\s([0-9a-f]+)\]/)?.[1] ?? "unknown";
+  }
+
+  // ── PR-fetch helpers ──
+
+  /**
+   * Fetch a refspec from a remote (read-only). Used by prFetch to pull
+   * `pull/<n>/head:pr/<n>` without touching any other remote refs.
+   */
+  async fetchRef(remote: string, refspec: string): Promise<string> {
+    return this.run(["fetch", remote, refspec]);
+  }
+
+  /** Resolve a git ref to its full SHA. */
+  async revParse(ref: string): Promise<string> {
+    return (await this.run(["rev-parse", ref])).trim();
   }
 }

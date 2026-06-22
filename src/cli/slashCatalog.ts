@@ -55,6 +55,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "clear-title", description: "Remove the session title", category: "session" },
   { name: "status", description: "Show git status", category: "session" },
   { name: "diff", description: "Show git diff", category: "session" },
+  { name: "pr", args: "<number> [--remote <name>]", description: "Fetch a GitHub PR branch and show its diff", category: "git" },
   { name: "copy", args: "[last|code|diff|goal|plan|check <id>|worker <plan> <worker> [patch|log|review]]", description: "Copy useful session output to clipboard", category: "session" },
   { name: "todos", description: "Show the current todo list", category: "session" },
   { name: "side", args: "[question]", description: "Start an ephemeral side conversation (fork without losing main context)", category: "session" },
