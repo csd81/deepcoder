@@ -91,6 +91,9 @@ import { loadWorkerArtifacts } from "../delegate/artifacts.js";
 import type { WorkerRun, DelegationPlan, WorkerTask } from "../delegate/types.js";
 import { proposeFeatures, renderProposals } from "../delegate/propose.js";
 import type { ProposalScope } from "../delegate/propose.js";
+import { parseCopyArgs, extractLatestAssistant, extractLatestCodeBlock, type CopyPayload } from "../clipboard/copyTargets.js";
+import { copyToClipboard } from "../clipboard/clipboard.js";
+import { redactSecrets } from "../workspace/redact.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1062,6 +1065,11 @@ export async function handleSlashCommand(
       } else {
         console.log(formatDoctorReport(report));
       }
+      return { consumed: true };
+    }
+
+    case "copy": {
+      await runCopySlash(session, arg);
       return { consumed: true };
     }
 
@@ -3048,6 +3056,187 @@ async function runIndex(session: Session): Promise<void> {
   } catch (err) {
     console.log(chalk.red(`/semantic: failed — ${(err as Error).message}`));
   }
+}
+
+/**
+ * Phase 10O — `/copy` implementation.
+ *
+ * Parses arguments, builds the copy payload from session data, redacts and
+ * bounds it, then copies to clipboard (or prints with --print).
+ */
+async function runCopySlash(session: Session, arg: string): Promise<void> {
+  const parsed = parseCopyArgs(arg);
+  if (!parsed.ok) {
+    console.log(chalk.dim(parsed.error));
+    return;
+  }
+
+  const { target, printOnly } = parsed;
+  let payload: CopyPayload | null = null;
+
+  try {
+    switch (target.kind) {
+      case "last": {
+        payload = extractLatestAssistant(session.messages);
+        if (!payload) {
+          console.log(chalk.dim("No assistant response to copy yet."));
+          return;
+        }
+        break;
+      }
+
+      case "code": {
+        payload = extractLatestCodeBlock(session.messages);
+        if (!payload) {
+          console.log(chalk.dim("No code block found in assistant responses."));
+          return;
+        }
+        break;
+      }
+
+      case "diff": {
+        const root = session.executionRoot ?? session.config.workspaceRoot;
+        const git = new Git(root);
+        if (!(await git.isRepo())) {
+          console.log(chalk.dim("Not a git repository — cannot copy diff."));
+          return;
+        }
+        const diffText = await git.diff();
+        if (!diffText) {
+          console.log(chalk.dim("No unstaged changes to copy."));
+          return;
+        }
+        const lineCount = diffText.split("\n").length;
+        payload = buildCopyPayload(`git diff (${lineCount} lines)`, diffText);
+        break;
+      }
+
+      case "goal": {
+        console.log(chalk.dim("goal copying requires Phase 10M /goal"));
+        return;
+      }
+
+      case "plan": {
+        // Find the latest `/plan` assistant response
+        for (let i = session.messages.length - 1; i >= 0; i--) {
+          const msg = session.messages[i];
+          if (msg && msg.role === "assistant") {
+            const prevMsg = session.messages[i - 1];
+            if (prevMsg && prevMsg.role === "user" && prevMsg.content.startsWith("/plan ")) {
+              payload = buildCopyPayload("plan", msg.content);
+              break;
+            }
+          }
+        }
+        if (!payload) {
+          console.log(chalk.dim("No plan found. Create one with /plan <task>."));
+          return;
+        }
+        break;
+      }
+
+      case "check": {
+        // Phase 10O — load a saved check run by id
+        try {
+          const root = session.config.workspaceRoot;
+          const loaded = await loadCheckRun(root, target.runId);
+          payload = buildCopyPayload(
+            `check run ${loaded.run.name} (exit ${loaded.run.exitCode ?? "?"})`,
+            `Command: ${loaded.run.command}\n\n${loaded.log}`,
+          );
+        } catch {
+          console.log(chalk.red(`Check run "${target.runId}" not found. See /triage --run`));
+          return;
+        }
+        break;
+      }
+
+      case "worker": {
+        // Phase 10O — load a worker artifact (patch, log, or review summary)
+        try {
+          const root = session.config.workspaceRoot;
+          const artifacts = await loadWorkerArtifacts(root, target.planId, target.workerId);
+          if (target.part === "patch") {
+            const text = artifacts.patchText || artifacts.patchPreview;
+            if (text) {
+              payload = buildCopyPayload(`worker ${target.workerId} patch`, text);
+            } else {
+              console.log(chalk.dim(`No patch found for worker "${target.workerId}".`));
+              return;
+            }
+          } else if (target.part === "log") {
+            const text = artifacts.runLogPreview;
+            if (text) {
+              payload = buildCopyPayload(`worker ${target.workerId} log`, text);
+            } else {
+              console.log(chalk.dim(`No run log found for worker "${target.workerId}".`));
+              return;
+            }
+          } else {
+            // review
+            const text = artifacts.qualityArtifact || artifacts.telemetryPreview;
+            if (text) {
+              payload = buildCopyPayload(`worker ${target.workerId} review`, text);
+            } else {
+              console.log(chalk.dim(`No review summary found for worker "${target.workerId}".`));
+              return;
+            }
+          }
+        } catch {
+          console.log(chalk.red(`Worker "${target.workerId}" in plan "${target.planId}" not found.`));
+          return;
+        }
+        break;
+      }
+    }
+  } catch (err) {
+    console.log(chalk.red(`Copy failed: ${(err as Error).message}`));
+    return;
+  }
+
+  if (!payload) {
+    console.log(chalk.dim("Nothing to copy."));
+    return;
+  }
+
+  if (printOnly) {
+    console.log(chalk.dim(`--- ${payload.label} (${payload.bytes} bytes${payload.truncated ? ", truncated" : ""}) ---`));
+    console.log(payload.text);
+    return;
+  }
+
+  // Try to copy to clipboard
+  const result = await copyToClipboard(payload.text);
+  if (result.ok) {
+    const backend = result.backend ? chalk.dim(` (via ${result.backend})`) : "";
+    console.log(chalk.dim(`copied ${payload.label} (${payload.bytes} chars)${payload.truncated ? ", truncated" : ""}${backend}`));
+  } else {
+    // Fallback: print with a clear warning
+    console.log(chalk.yellow(`clipboard unavailable: ${result.error}`));
+    console.log("");
+    console.log(chalk.dim(`--- ${payload.label} (${payload.bytes} bytes${payload.truncated ? ", truncated" : ""}) ---`));
+    const preview = payload.text.length > 2000 ? payload.text.slice(0, 2000) + "\n... (truncated preview)" : payload.text;
+    console.log(preview);
+  }
+}
+
+/**
+ * Build a bounded, redacted CopyPayload from raw text.
+ */
+function buildCopyPayload(label: string, text: string): CopyPayload {
+  const MAX_BYTES = 256 * 1024;
+  const redacted = redactSecrets(text);
+  const bytes = Buffer.byteLength(redacted, "utf8");
+  if (bytes <= MAX_BYTES) {
+    return { label, text: redacted, bytes, truncated: false };
+  }
+  const truncated = Buffer.from(redacted, "utf8").subarray(0, MAX_BYTES).toString("utf8");
+  return {
+    label,
+    text: truncated + "\n... (truncated)",
+    bytes: MAX_BYTES,
+    truncated: true,
+  };
 }
 
 async function activateSkillSlash(session: Session, name: string, args: string): Promise<void> {
