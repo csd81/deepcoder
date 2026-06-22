@@ -11,24 +11,35 @@
 #     branch  worktree branch name   (default: eat-your-own-dogfood)
 #     dir     worktree path          (default: <repo>/../dogfood)
 #
-# Re-runnable: if the worktree already exists it is reused. Commit on the branch
-# and merge to master when happy; tear down with: git worktree remove <dir>
+# Each run gets a FRESH worktree: if the dir or branch already exists, a numeric
+# slug (-2, -3, …) is appended to BOTH so parallel dogfood sessions never collide.
+# Commit on the branch and merge to master when happy; tear down with:
+#   git worktree remove <dir>
 #
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BRANCH="${1:-eat-your-own-dogfood}"
 DIR="${2:-$REPO/../dogfood}"
+# Normalize DIR to an absolute path (git worktree list reports absolute paths).
+DIR="$(cd "$(dirname "$DIR")" && pwd)/$(basename "$DIR")"
 
 cd "$REPO"
 
-if git -C "$DIR" rev-parse --git-dir >/dev/null 2>&1; then
-  echo "reusing existing worktree at $DIR (branch $(git -C "$DIR" rev-parse --abbrev-ref HEAD))"
-elif git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-  git worktree add "$DIR" "$BRANCH"          # branch already exists
-else
-  git worktree add "$DIR" -b "$BRANCH" master # fresh branch off master
+branch_exists() { git show-ref --verify --quiet "refs/heads/$1"; }
+dir_taken()    { [ -e "$1" ] || git worktree list --porcelain | grep -qxF "worktree $1"; }
+
+# If either the dir or the branch is taken, find the lowest free numeric slug and
+# append it to BOTH so the worktree dir and its branch stay paired and unique.
+if dir_taken "$DIR" || branch_exists "$BRANCH"; then
+  n=2
+  while dir_taken "${DIR}-${n}" || branch_exists "${BRANCH}-${n}"; do n=$((n + 1)); done
+  echo "‘$DIR’/‘$BRANCH’ taken — using slug -${n}"
+  DIR="${DIR}-${n}"
+  BRANCH="${BRANCH}-${n}"
 fi
+
+git worktree add "$DIR" -b "$BRANCH" master # fresh branch off master
 
 # Dependencies: node_modules is gitignored, so a fresh worktree has none. Symlink
 # the existing one (instant — no reinstall). It is SHARED: do NOT `npm install`
