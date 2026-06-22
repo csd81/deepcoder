@@ -363,6 +363,25 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig> };
 };
 
+/**
+ * Turn budget for an interactive session when DEEPCODER_MAX_TURNS is not set.
+ * The turn cap exists to stop a runaway loop burning tokens unattended; in an
+ * interactive session the human is that guard (and can Ctrl-C), so the floor is
+ * generous enough to implement a full plan without aborting mid-flight.
+ */
+export const INTERACTIVE_MAX_TURNS = 200;
+
+/**
+ * Resolve the effective per-task turn cap. An explicit DEEPCODER_MAX_TURNS
+ * (envExplicit) is always honored verbatim. Otherwise an interactive session is
+ * lifted to at least INTERACTIVE_MAX_TURNS; headless keeps the configured cap.
+ */
+export function effectiveMaxTurns(opts: { configMaxTurns: number; interactive: boolean; envExplicit: boolean }): number {
+  if (opts.envExplicit) return opts.configMaxTurns;
+  if (opts.interactive) return Math.max(opts.configMaxTurns, INTERACTIVE_MAX_TURNS);
+  return opts.configMaxTurns;
+}
+
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const { sandbox: sandboxOverride, workspaceIsolation: wsIsoOverride, delegate: delegateOverride, ...rest } = overrides;
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";

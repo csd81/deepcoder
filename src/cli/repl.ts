@@ -4,7 +4,7 @@ import { stdin, stdout } from "node:process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import chalk from "chalk";
-import type { ApprovalMode, Config } from "../config/config.js";
+import { effectiveMaxTurns, type ApprovalMode, type Config } from "../config/config.js";
 import type { ModelProvider, AgentMessage } from "../providers/types.js";
 import { addUsage } from "../providers/usage.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -58,6 +58,9 @@ import { Git } from "../workspace/git.js";
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
   config: Config;
+  /** True for an interactive REPL/TUI session (human present, can Ctrl-C) — lifts
+   *  the per-task turn cap so a plan implementation doesn't abort mid-flight. */
+  interactive?: boolean;
   provider: ModelProvider;
   registry: ToolRegistry;
   store: SessionStore;
@@ -345,7 +348,11 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     mode: session.mode,
     // Phase 7I — post-write diagnostics (no-op unless config.diagnostics.enabled).
     diagnostics: session.config.diagnostics,
-    maxTurns: session.config.maxTurns,
+    maxTurns: effectiveMaxTurns({
+      configMaxTurns: session.config.maxTurns,
+      interactive: session.interactive === true,
+      envExplicit: (process.env.DEEPCODER_MAX_TURNS ?? "") !== "",
+    }),
     contextBudgetTokens: session.config.contextBudgetTokens,
     compactAt: session.config.compactAt,
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
@@ -510,6 +517,7 @@ async function printStatusline(session: Session): Promise<void> {
 }
 
 export async function runRepl(session: Session): Promise<void> {
+  session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
   stdout.write(
     chalk.bold("deepcoder") +
       chalk.dim(
@@ -578,6 +586,7 @@ async function injectSessionStartContext(session: Session): Promise<void> {
  * commands (which print to stdout) SUSPEND the TUI and run on the normal screen.
  */
 export async function runTuiRepl(session: Session): Promise<void> {
+  session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
   const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
   let transcript: TranscriptState = createTranscript();
   let editor = createEditor();
