@@ -5,7 +5,7 @@ Status: `OPEN` / `FIXED <commit>` / `WONTFIX`.
 
 ---
 
-## FIXED `fa3d21a` — `/understand` in the TUI does nothing, and mouse starts printing garbage again
+## FIXED `ad0a206` — `/understand` in the TUI does nothing, and mouse starts printing garbage again
 - **Fix:** `restore()` removed `onStdinData` but readline's internal `"data"`
   handler (attached by `emitKeypressEvents`) self-removes only lazily, so on
   slash-suspend re-entry a plain `stdin.on("data", onStdinData)` landed AFTER the
