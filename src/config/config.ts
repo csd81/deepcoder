@@ -161,9 +161,29 @@ export interface AcceptanceFirstOptions {
   enabled: boolean;
 }
 
+export interface DelegateAutopilotConfig {
+  /** Master switch — default OFF. When false, /delegate autopilot refuses. */
+  enabled: boolean;
+  /** Maximum number of orchestration rounds (total, not retries). */
+  maxRounds: number;
+  /** Maximum number of workers in the plan. */
+  maxWorkers: number;
+  /** Maximum number of workers to run concurrently. */
+  maxConcurrency: number;
+  /** When true, enforce acceptance-first (TDD red→green) on every worker. */
+  acceptanceFirst: boolean;
+  /** When true, automatically apply passing workers (with confirmation). Default false. */
+  autoApply: boolean;
+  /** When true, stop on any detected conflict between workers. */
+  stopOnConflict: boolean;
+  /** When true, also stop on quality-gate warnings (not just failures). */
+  stopOnQualityWarning: boolean;
+}
+
 export interface DelegateConfig {
   qualityGate: QualityGateOptions;
   acceptanceFirst: AcceptanceFirstOptions;
+  autopilot: DelegateAutopilotConfig;
 }
 
 export type TestTargetingMode = "off" | "suggest" | "targeted-first" | "targeted-only";
@@ -192,6 +212,17 @@ export const DEFAULT_TEST_TARGETING: TestTargetingConfig = {
     python: "python -m pytest -q {files}",
   },
   pathRules: [{ changed: "src/**", tests: ["test/**/*.test.ts"] }],
+};
+
+export const DEFAULT_DELEGATE_AUTOPILOT: DelegateAutopilotConfig = {
+  enabled: false,
+  maxRounds: 3,
+  maxWorkers: 5,
+  maxConcurrency: 2,
+  acceptanceFirst: true,
+  autoApply: false,
+  stopOnConflict: true,
+  stopOnQualityWarning: false,
 };
 
 export const DEFAULT_ACCEPTANCE_FIRST: AcceptanceFirstOptions = { enabled: false };
@@ -329,7 +360,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
-  delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions> };
+  delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig> };
 };
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
@@ -476,9 +507,32 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
         : (fileAcceptanceFirst.enabled ?? DEFAULT_ACCEPTANCE_FIRST.enabled)),
   };
 
+  // Phase 9P — Delegation Autopilot config: default OFF (opt-in only).
+  const overrideAutopilot = delegateOverride?.autopilot ?? {};
+  const fileAutopilot = (fileDelegate.autopilot ?? {}) as Partial<DelegateAutopilotConfig>;
+  const apEnabledEnv = process.env.DEEPCODER_DELEGATE_AUTOPILOT;
+  const apMaxRoundsEnv = process.env.DEEPCODER_DELEGATE_AUTOPILOT_MAX_ROUNDS;
+  const apMaxWorkersEnv = process.env.DEEPCODER_DELEGATE_AUTOPILOT_MAX_WORKERS;
+  const apMaxConcurrencyEnv = process.env.DEEPCODER_DELEGATE_AUTOPILOT_MAX_CONCURRENCY;
+  const autopilot: DelegateAutopilotConfig = {
+    enabled: overrideAutopilot.enabled !== undefined
+      ? overrideAutopilot.enabled
+      : (apEnabledEnv !== undefined
+        ? ["1", "true", "yes"].includes(apEnabledEnv.toLowerCase())
+        : (fileAutopilot.enabled ?? DEFAULT_DELEGATE_AUTOPILOT.enabled)),
+    maxRounds: overrideAutopilot.maxRounds ?? (apMaxRoundsEnv ? numEnv(apMaxRoundsEnv, DEFAULT_DELEGATE_AUTOPILOT.maxRounds) : (fileAutopilot.maxRounds ?? DEFAULT_DELEGATE_AUTOPILOT.maxRounds)),
+    maxWorkers: overrideAutopilot.maxWorkers ?? (apMaxWorkersEnv ? numEnv(apMaxWorkersEnv, DEFAULT_DELEGATE_AUTOPILOT.maxWorkers) : (fileAutopilot.maxWorkers ?? DEFAULT_DELEGATE_AUTOPILOT.maxWorkers)),
+    maxConcurrency: overrideAutopilot.maxConcurrency ?? (apMaxConcurrencyEnv ? numEnv(apMaxConcurrencyEnv, DEFAULT_DELEGATE_AUTOPILOT.maxConcurrency) : (fileAutopilot.maxConcurrency ?? DEFAULT_DELEGATE_AUTOPILOT.maxConcurrency)),
+    acceptanceFirst: overrideAutopilot.acceptanceFirst ?? fileAutopilot.acceptanceFirst ?? DEFAULT_DELEGATE_AUTOPILOT.acceptanceFirst,
+    autoApply: overrideAutopilot.autoApply ?? fileAutopilot.autoApply ?? DEFAULT_DELEGATE_AUTOPILOT.autoApply,
+    stopOnConflict: overrideAutopilot.stopOnConflict ?? fileAutopilot.stopOnConflict ?? DEFAULT_DELEGATE_AUTOPILOT.stopOnConflict,
+    stopOnQualityWarning: overrideAutopilot.stopOnQualityWarning ?? fileAutopilot.stopOnQualityWarning ?? DEFAULT_DELEGATE_AUTOPILOT.stopOnQualityWarning,
+  };
+
   const delegate: DelegateConfig = {
     qualityGate,
     acceptanceFirst,
+    autopilot,
   };
 
   // Phase 10H — test targeting config: default < file < env.

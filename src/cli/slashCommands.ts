@@ -56,6 +56,7 @@ import { runWorkerTdd } from "../delegate/tdd.js";
 import { readTddRecord } from "../delegate/tddArtifacts.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
 import { autoApplyIfEligible } from "../delegate/autoApply.js";
+import { runAutopilot, readAutopilotArtifact } from "../delegate/autopilot.js";
 import { runRunnable, runRunnableConcurrent, detectFileConflicts } from "../delegate/orchestrator.js";
 import { getDelegationReviewOverview, getWorkerReviewDetail, previewApplyGates } from "../delegate/reviewBrowser.js";
 import { renderReviewOverview, renderWorkerReview, renderPatchStat, renderGatePreview } from "../delegate/reviewRender.js";
@@ -1819,7 +1820,175 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
-      console.log(chalk.dim("usage: /delegate plan [preflight] <task> | run <plan-id> [worker-id] | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id>"));
+      // ── Phase 9P — Delegation Autopilot ─────────────────────────────
+      if (sub === "autopilot") {
+        const isStatus = subArgs[0] === "status";
+        const isDryRun = subArgs.includes("--dry-run");
+        const acceptanceFirst = subArgs.includes("--acceptance-first");
+        const mcIdx = subArgs.indexOf("--max-concurrency");
+        const mwIdx = subArgs.indexOf("--max-workers");
+        const mrIdx = subArgs.indexOf("--max-rounds");
+        const rawMc = mcIdx !== -1 ? Number(subArgs[mcIdx + 1]) : NaN;
+        const rawMw = mwIdx !== -1 ? Number(subArgs[mwIdx + 1]) : NaN;
+        const rawMr = mrIdx !== -1 ? Number(subArgs[mrIdx + 1]) : NaN;
+
+        // ── Status subcommand ────────────────────────────────────────
+        if (isStatus) {
+          const planId = subArgs[1];
+          if (!planId) {
+            console.log(chalk.dim("usage: /delegate autopilot status <plan-id>"));
+            return { consumed: true };
+          }
+          const artifact = await readAutopilotArtifact(root, planId);
+          if (!artifact) {
+            console.log(chalk.red(`No autopilot artifact found for plan "${planId}".`));
+            return { consumed: true };
+          }
+          const statusColor = artifact.finalCheck?.passed === false ? chalk.red
+            : artifact.finalCheck?.passed === true ? chalk.green
+            : chalk.dim;
+          console.log(chalk.bold(`\nAutopilot Run: ${planId}`));
+          console.log(chalk.dim(`  task:     ${artifact.task.slice(0, 120)}`));
+          console.log(chalk.dim(`  started:  ${artifact.startedAt}`));
+          if (artifact.finishedAt) console.log(chalk.dim(`  finished: ${artifact.finishedAt}`));
+          console.log(chalk.dim(`  rounds:   ${artifact.rounds.length}`));
+          console.log(chalk.dim(`  status:   ${statusColor(artifact.finalCheck ? (artifact.finalCheck.passed ? "passed" : "failed") : "incomplete")}`));
+          console.log(chalk.dim(`  applied:  ${artifact.appliedWorkers.length} worker(s)`));
+          console.log(chalk.dim(`  blocked:  ${artifact.blockedWorkers.length} worker(s)`));
+          if (artifact.appliedWorkers.length > 0) {
+            console.log(chalk.green(`  applied workers: ${artifact.appliedWorkers.join(", ")}`));
+          }
+          if (artifact.blockedWorkers.length > 0) {
+            console.log(chalk.yellow(`  blocked workers: ${artifact.blockedWorkers.join(", ")}`));
+          }
+          if (artifact.finalCheck) {
+            const fcIcon = artifact.finalCheck.passed ? chalk.green("✓") : chalk.red("✗");
+            console.log(`${fcIcon} final check "${artifact.finalCheck.name}"${artifact.finalCheck.runId ? ` (run ${artifact.finalCheck.runId})` : ""}`);
+          }
+          for (const round of artifact.rounds) {
+            console.log(chalk.dim(`\n  round ${round.round}:`));
+            for (const r of round.ran) {
+              const icon = r.passed ? chalk.green("✓") : chalk.red("✗");
+              console.log(`    ${icon} ${r.workerId} (${r.changedFiles.length} files)`);
+            }
+            if (round.applied.length > 0) console.log(`    ${chalk.green("applied")}: ${round.applied.join(", ")}`);
+            if (round.blocked.length > 0) console.log(`    ${chalk.yellow("blocked")}: ${round.blocked.join(", ")}`);
+            if (round.skipped.length > 0) console.log(`    ${chalk.dim("skipped")}: ${round.skipped.join(", ")}`);
+          }
+          return { consumed: true };
+        }
+
+        // ── Parse task from remaining args (strip flags) ─────────────
+        const flagTokens = new Set(["--dry-run", "--acceptance-first", "--max-concurrency", "--max-workers", "--max-rounds"]);
+        const taskTokens = subArgs.filter((a, i) => {
+          if (flagTokens.has(a)) return false;
+          if (mcIdx !== -1 && i === mcIdx + 1) return false;
+          if (mwIdx !== -1 && i === mwIdx + 1) return false;
+          if (mrIdx !== -1 && i === mrIdx + 1) return false;
+          return true;
+        });
+        const task = taskTokens.join(" ").trim();
+
+        if (!task) {
+          console.log(chalk.dim("usage: /delegate autopilot [--dry-run] [--acceptance-first] [--max-workers N] [--max-rounds N] [--max-concurrency N] <task>"));
+          console.log(chalk.dim("       /delegate autopilot status <plan-id>"));
+          return { consumed: true };
+        }
+
+        // ── Nested delegation guard ─────────────────────────────────
+        const depth = delegateDepthFromEnv(process.env);
+        if (depth > 0) {
+          console.log(chalk.red(`Refusing nested delegation: this process is itself a delegated worker (depth ${depth}).`));
+          return { consumed: true };
+        }
+
+        // ── Non-TTY guard ────────────────────────────────────────────
+        if (!process.stdin.isTTY && !isDryRun) {
+          console.log(chalk.red("Refusing autopilot in a non-interactive session. Use --dry-run for headless plan preview."));
+          return { consumed: true };
+        }
+
+        // ── Build autopilot config ───────────────────────────────────
+        const apConfig = { ...config.delegate.autopilot };
+        if (isDryRun) apConfig.enabled = true; // dry-run bypasses the enabled check
+        if (acceptanceFirst) apConfig.acceptanceFirst = true;
+        if (Number.isFinite(rawMc)) apConfig.maxConcurrency = Math.max(1, Math.min(8, Math.trunc(rawMc)));
+        if (Number.isFinite(rawMw)) apConfig.maxWorkers = Math.max(1, Math.min(20, Math.trunc(rawMw)));
+        if (Number.isFinite(rawMr)) apConfig.maxRounds = Math.max(1, Math.min(10, Math.trunc(rawMr)));
+
+        // ── Enabled check (dry-run always allowed) ──────────────────
+        if (!apConfig.enabled && !isDryRun) {
+          console.log(chalk.red("Autopilot is not enabled."));
+          console.log(chalk.dim("Set DEEPCODER_DELEGATE_AUTOPILOT=1 or configure delegate.autopilot.enabled=true in .deepcoder/config.json."));
+          console.log(chalk.dim("Use --dry-run for a headless plan preview."));
+          return { consumed: true };
+        }
+
+        const modeLabel = isDryRun ? " (dry-run)" : "";
+        console.log(chalk.yellow(`\nRunning delegation autopilot${modeLabel}…`));
+        if (!isDryRun) {
+          console.log(chalk.dim(`  rounds: ${apConfig.maxRounds} · maxWorkers: ${apConfig.maxWorkers} · maxConcurrency: ${apConfig.maxConcurrency}`));
+          console.log(chalk.dim(`  acceptanceFirst: ${apConfig.acceptanceFirst} · autoApply: ${apConfig.autoApply}`));
+          console.log(chalk.dim(`  task: ${task.slice(0, 120)}${task.length > 120 ? "…" : ""}`));
+        }
+
+        const controller = new AbortController();
+        const onSigint = () => controller.abort();
+        process.once("SIGINT", onSigint);
+        try {
+          const result = await runAutopilot({
+            realRoot: root,
+            task,
+            checks: config.checks,
+            config: apConfig,
+            signal: controller.signal,
+            confirm: async (prompt: string) => {
+              // Only prompt when autoApply is true and we're interactive.
+              return await confirm(prompt);
+            },
+            dryRun: isDryRun,
+          });
+          process.removeListener("SIGINT", onSigint);
+
+          console.log("");
+          if (result.status === "dry_run" && result.plan) {
+            console.log(chalk.bold("Dry-Run Plan:"));
+            console.log(chalk.dim(`  id: ${result.planId}`));
+            console.log(chalk.dim(`  workers: ${result.plan.workers.length}`));
+            for (const w of result.plan.workers) {
+              const deps = w.dependsOn.length ? ` (after ${w.dependsOn.join(", ")})` : "";
+              console.log(`    ${chalk.cyan(w.id)}: ${w.title.slice(0, 60)}${deps}`);
+              console.log(chalk.dim(`      check: ${w.checkName} · paths: ${w.allowedPaths.join(", ")}`));
+            }
+            if (result.nextSteps) console.log(chalk.dim(`\n${result.nextSteps}`));
+          } else if (result.status === "completed") {
+            console.log(chalk.green(`✓ Autopilot completed. ${result.summary}`));
+            if (result.appliedWorkers.length > 0) {
+              console.log(chalk.green(`  applied: ${result.appliedWorkers.join(", ")}`));
+            }
+            if (result.finalCheckPassed === true) {
+              console.log(chalk.green("  final check passed"));
+            }
+          } else if (result.status === "blocked") {
+            console.log(chalk.yellow(`△ Autopilot blocked. ${result.summary}`));
+            if (result.blockedWorkers.length > 0) {
+              console.log(chalk.yellow(`  blocked: ${result.blockedWorkers.join(", ")}`));
+            }
+            if (result.nextSteps) {
+              console.log(chalk.dim(`\n${result.nextSteps}`));
+            }
+          } else {
+            console.log(chalk.red(`✗ Autopilot failed. ${result.summary}`));
+          }
+          console.log(chalk.dim(`Artifact: .deepcoder/delegations/${result.planId}/autopilot.json`));
+        } catch (err) {
+          process.removeListener("SIGINT", onSigint);
+          console.log(chalk.red(`Autopilot error: ${(err as Error).message}`));
+        }
+        return { consumed: true };
+      }
+
+      console.log(chalk.dim("usage: /delegate plan [preflight] <task> | run <plan-id> [worker-id] | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id> | autopilot [--dry-run] <task> | autopilot status <plan-id>"));
       return { consumed: true };
     }
 
