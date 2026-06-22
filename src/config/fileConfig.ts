@@ -17,6 +17,7 @@ export interface CheckConfig {
   timeoutMs?: number;
 }
 
+import type { StatuslineField } from "../ui/statusBar.js";
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { LspConfig } from "../lsp/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
@@ -27,6 +28,10 @@ import type { ModelsFileConfig } from "../models/types.js";
 import type { ModelPricing } from "../providers/pricing.js";
 import type { KeybindsConfig } from "../ui/keybinds.js";
 import { hasFallbackCycle } from "../models/router.js";
+
+export interface StatuslineConfig {
+  fields?: StatuslineField[];
+}
 
 export interface TelemetryConfig {
   statusline?: boolean;
@@ -51,6 +56,7 @@ export interface FileConfig {
   semanticSearch?: Partial<SemanticSearchConfig>;
   lsp?: Partial<LspConfig>;
   models?: ModelsFileConfig;
+  statusline?: StatuslineConfig;
   telemetry?: TelemetryConfig;
   keybinds?: KeybindsConfig;
 }
@@ -444,7 +450,20 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     keybinds = result;
   }
 
-  return { mcpServers, checks, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds };
+  const rawStatusline = (parsed as { statusline?: unknown }).statusline;
+  let statusline: StatuslineConfig | undefined;
+  if (rawStatusline && typeof rawStatusline === "object") {
+    const raw = rawStatusline as Record<string, unknown>;
+    const rawFields = raw.fields;
+    if (Array.isArray(rawFields)) {
+      const validFields = rawFields.filter((f): f is StatuslineField =>
+        ["mode","model","sandbox","web","branch","tokens","cost","workers","busy","session","title"].includes(String(f)),
+      );
+      if (validFields.length > 0) statusline = { fields: validFields };
+    }
+  }
+
+  return { mcpServers, checks, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline };
 }
 
 function warn(msg: string): void {

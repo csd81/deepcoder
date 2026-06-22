@@ -32,25 +32,63 @@ export interface StatusBarInfo {
   busy: boolean;
 }
 
+export type StatuslineField =
+  | "mode"
+  | "model"
+  | "sandbox"
+  | "web"
+  | "branch"
+  | "tokens"
+  | "cost"
+  | "workers"
+  | "busy"
+  | "session"
+  | "title";
+
+export const DEFAULT_STATUSBAR_FIELDS: StatuslineField[] = [
+  "title", "mode", "model", "sandbox", "web",
+  "branch", "tokens", "cost", "workers", "busy",
+];
+
 function formatTokens(n: number): string {
   if (n >= 1000) return `${Math.round(n / 1000)}k ctx`;
   return `${n} ctx`;
 }
 
-export function renderStatusBar(info: StatusBarInfo, width: number, theme: Theme): string {
-  // Each entry is a styled segment; falsy entries are skipped so there are never
-  // empty " ·  · " gaps.
+/**
+ * Render a single statusline field. Returns a styled string, or null when the
+ * field's data is absent / not applicable (the segment is then skipped entirely).
+ */
+export function renderField(field: StatuslineField, info: StatusBarInfo, theme: Theme): string | null {
+  switch (field) {
+    case "title":   return theme.title("deepcoder");
+    case "mode":    return info.mode === "yolo" ? theme.warning("YOLO") : theme.dim(info.mode);
+    case "model":   return theme.dim(`${info.provider}/${info.model}`);
+    case "sandbox": return theme.dim(`sandbox ${info.sandbox}`);
+    case "web":     return theme.dim(`web ${info.web ? "on" : "off"}`);
+    case "branch":  return info.branch ? theme.dim(`${info.branch}${info.dirty ? "*" : ""}`) : null;
+    case "tokens":  return (typeof info.tokens === "number" && Number.isFinite(info.tokens)) ? theme.dim(formatTokens(info.tokens)) : null;
+    case "cost":    return (typeof info.costUsd === "number" && Number.isFinite(info.costUsd)) ? theme.dim(`$${info.costUsd.toFixed(2)}`) : null;
+    case "workers": return (typeof info.workers === "number" && info.workers > 0) ? theme.dim(`${info.workers} workers`) : null;
+    case "busy":    return info.busy ? theme.warning("running") : theme.dim("idle");
+    case "session": return null; // sessionId not yet on StatusBarInfo
+    default:        return null;
+  }
+}
+
+export function renderStatusBar(
+  info: StatusBarInfo,
+  width: number,
+  theme: Theme,
+  fields?: StatuslineField[],
+): string {
+  const order = fields ?? DEFAULT_STATUSBAR_FIELDS;
   const segs: string[] = [];
-  segs.push(theme.title("deepcoder"));
-  // 10T: yolo is a powerful mode — highlight it (warning color) vs a dim chip.
-  segs.push(info.mode === "yolo" ? theme.warning("YOLO") : theme.dim(info.mode));
-  segs.push(theme.dim(`${info.provider}/${info.model}`));
-  segs.push(theme.dim(`sandbox ${info.sandbox}`));
-  segs.push(theme.dim(`web ${info.web ? "on" : "off"}`));
-  if (info.branch) segs.push(theme.dim(`${info.branch}${info.dirty ? "*" : ""}`));
-  if (typeof info.tokens === "number" && Number.isFinite(info.tokens)) segs.push(theme.dim(formatTokens(info.tokens)));
-  if (typeof info.costUsd === "number" && Number.isFinite(info.costUsd)) segs.push(theme.dim(`$${info.costUsd.toFixed(2)}`));
-  if (typeof info.workers === "number" && info.workers > 0) segs.push(theme.dim(`${info.workers} workers`));
-  segs.push(info.busy ? theme.warning("running") : theme.dim("idle"));
+
+  for (const field of order) {
+    const s = renderField(field, info, theme);
+    if (s !== null) segs.push(s);
+  }
+
   return truncate(segs.join(theme.dim(" · ")), width);
 }
