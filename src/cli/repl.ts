@@ -78,6 +78,7 @@ import { createStyleTokens } from "../ui/styleTokens.js";
 import { Git } from "../workspace/git.js";
 import { resolveReadPathInWorkspace } from "../workspace/paths.js";
 import { expandMentions } from "./atMention.js";
+import { forkSide, returnToMain, type SideState } from "./sideConversation.js";
 import {
   initPlanMode,
   recordPlan,
@@ -605,11 +606,101 @@ export async function runRepl(session: Session): Promise<void> {
   // SessionStart hooks (Phase 7B): injected context is appended to the system prompt.
   await injectSessionStartContext(session);
 
+  let sideState: SideState | null = null;
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
     while (true) {
       const input = (await rl.question(chalk.cyan("\ndeepcoder> "))).trim();
       if (!input) continue;
+
+      // ── Side conversation: return to main ──
+      if (input === "/main" || input === "/back") {
+        if (!sideState) {
+          stdout.write(chalk.dim("Not in a side conversation.\n"));
+          continue;
+        }
+        const restored = returnToMain(sideState);
+        session.messages = restored.messages;
+        session.readTracker = restored.readTracker;
+        session.writeTracker = restored.writeTracker;
+        sideState = null;
+        stdout.write(chalk.dim("Returned to main thread.\n"));
+        continue;
+      }
+
+      // ── Side conversation: fork on /side or /btw ──
+      const sideMatch = input.match(/^\/(side|btw)\s*(.*)/);
+      if (sideMatch) {
+        const question = sideMatch[2]!.trim();
+        sideState = forkSide(sideState, session.messages, session.readTracker, session.writeTracker);
+        if (question) {
+          // Single-turn: push question, run via temporary swap, return to main.
+          sideState.sideMessages.push({ role: "user", content: question });
+          const savedMessages = session.messages;
+          const savedRead = session.readTracker;
+          const savedWrite = session.writeTracker;
+          session.messages = sideState.sideMessages;
+          session.readTracker = sideState.mainReadTracker;
+          session.writeTracker = sideState.mainWriteTracker;
+          try {
+            await runTask(session);
+          } catch (e) {
+            stdout.write(chalk.red(`\n[side] Error: ${(e as Error).message ?? e}\n`));
+          }
+          // Capture the updated side messages; restore main thread state.
+          sideState.sideMessages = session.messages;
+          session.messages = savedMessages;
+          session.readTracker = savedRead;
+          session.writeTracker = savedWrite;
+          const restored = returnToMain(sideState);
+          session.messages = restored.messages;
+          session.readTracker = restored.readTracker;
+          session.writeTracker = restored.writeTracker;
+          sideState = null;
+        }
+        // else: multi-turn mode — stays in side until /main or /back
+        continue;
+      }
+
+      // ── Side conversation: active — route user input to side messages ──
+      if (sideState) {
+        // Allow ! commands in side context (runs on the session's workspace)
+        const bang = parseBangCommand(input);
+        if (bang !== null) {
+          if (bang === "") { stdout.write(chalk.dim("Usage: !<command> — run a shell command, e.g. !ls -la\n")); continue; }
+          const decision = decideBang(bang, session.mode, classifyCommand);
+          if (decision.action === "refuse") { stdout.write(chalk.yellow(`Refused: ${decision.reason}.\n`)); continue; }
+          if (decision.action === "confirm" && !(await confirm(`Run flagged-dangerous command?  $ ${bang}`))) {
+            stdout.write(chalk.dim("Cancelled.\n")); continue;
+          }
+          const controller = new AbortController();
+          const onSig = () => controller.abort();
+          process.once("SIGINT", onSig);
+          try {
+            const { output, isError } = await executeBang(session, bang, controller.signal);
+            stdout.write((isError ? chalk.red(output) : output).replace(/\n*$/, "\n"));
+          } catch (e) { stdout.write(chalk.red(`Error: ${(e as Error).message ?? e}\n`)); }
+          finally { process.removeListener("SIGINT", onSig); }
+          continue;
+        }
+        sideState.sideMessages.push({ role: "user", content: input });
+        const savedMessages = session.messages;
+        const savedRead = session.readTracker;
+        const savedWrite = session.writeTracker;
+        session.messages = sideState.sideMessages;
+        session.readTracker = sideState.mainReadTracker;
+        session.writeTracker = sideState.mainWriteTracker;
+        try {
+          await runTask(session);
+        } catch (e) {
+          stdout.write(chalk.red(`\n[side] Error: ${(e as Error).message ?? e}\n`));
+        }
+        sideState.sideMessages = session.messages;
+        session.messages = savedMessages;
+        session.readTracker = savedRead;
+        session.writeTracker = savedWrite;
+        continue;
+      }
 
       // Phase 10R: `!cmd` shell-escape — runs a real shell command, never the model.
       const bang = parseBangCommand(input);
@@ -743,6 +834,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let dirty = false;
   let busy = false;
   let queue: InputQueue = createInputQueue();
+  let sideState: SideState | null = null;
   let approvalResolve: ((k: string) => void) | null = null;
   let pendingApproval: { description: string; diff?: string } | null = null;
   let approvalScroll = 0;
@@ -1103,6 +1195,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       costUsd: cost?.pricingKnown ? cost.totalUsd : undefined,
       busy,
       title: session.title,
+      side: sideState?.active === true,
     };
     const status = renderStatusBar(info, width, theme, session.config.statusline?.fields);
     const frame = renderFrame({
@@ -1162,6 +1255,78 @@ export async function runTuiRepl(session: Session): Promise<void> {
     if (!line) { redraw(); return; }
     // /exit still works even when busy — check before the enqueue guard.
     if (line === "/exit" || line === "/quit") { pushUser(line); stickBottom(); redraw(); restore(); resolveDone(); return; }
+
+    // ── Side conversation: return to main ──
+    if (line === "/main" || line === "/back") {
+      if (!sideState) {
+        transcript = applyEvent(transcript, { type: "notice", message: "Not in a side conversation." });
+        stickBottom(); redraw(); return;
+      }
+      const restored = returnToMain(sideState);
+      session.messages = restored.messages;
+      session.readTracker = restored.readTracker;
+      session.writeTracker = restored.writeTracker;
+      sideState = null;
+      transcript = applyEvent(transcript, { type: "notice", message: "Returned to main thread." });
+      stickBottom(); redraw(); return;
+    }
+
+    // ── Side conversation: fork on /side or /btw ──
+    const sideMatch = line.match(/^\/(side|btw)\s*(.*)/);
+    if (sideMatch) {
+      const question = sideMatch[2]!.trim();
+      sideState = forkSide(sideState, session.messages, session.readTracker, session.writeTracker);
+      if (question) {
+        // Single-turn: push question, swap to side messages, run, restore.
+        sideState.sideMessages.push({ role: "user", content: question });
+        const savedMessages = session.messages;
+        const savedRead = session.readTracker;
+        const savedWrite = session.writeTracker;
+        session.messages = sideState.sideMessages;
+        session.readTracker = sideState.mainReadTracker;
+        session.writeTracker = sideState.mainWriteTracker;
+        busy = true; redraw();
+        try { await runTask(session, { sink, approve }); }
+        catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `[side] Error: ${(e as Error).message ?? e}` }); }
+        finally { busy = false; stickBottom(); redraw(); }
+        sideState.sideMessages = session.messages;
+        session.messages = savedMessages;
+        session.readTracker = savedRead;
+        session.writeTracker = savedWrite;
+        const restored = returnToMain(sideState);
+        session.messages = restored.messages;
+        session.readTracker = restored.readTracker;
+        session.writeTracker = restored.writeTracker;
+        sideState = null;
+      }
+      // else: multi-turn mode — stays in side until /main or /back
+      return;
+    }
+
+    // ── Side conversation: active — route user input to side messages ──
+    if (sideState) {
+      pushUser(line); stickBottom(); redraw();
+      sideState.sideMessages.push({ role: "user", content: line });
+      const savedMessages = session.messages;
+      const savedRead = session.readTracker;
+      const savedWrite = session.writeTracker;
+      session.messages = sideState.sideMessages;
+      session.readTracker = sideState.mainReadTracker;
+      session.writeTracker = sideState.mainWriteTracker;
+      busy = true; redraw();
+      try { await runTask(session, { sink, approve }); }
+      catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `[side] Error: ${(e as Error).message ?? e}` }); }
+      finally {
+        sideState.sideMessages = session.messages;
+        session.messages = savedMessages;
+        session.readTracker = savedRead;
+        session.writeTracker = savedWrite;
+        busy = false; stickBottom(); redraw();
+      }
+      await drainQueue();
+      return;
+    }
+
     // Enqueue if the agent is busy (type-ahead).
     if (decideSubmit(busy) === "enqueue") {
       queue = enqueue(queue, line);

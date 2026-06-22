@@ -32,6 +32,8 @@ export interface StatusBarInfo {
   busy: boolean;
   /** Human-readable session title, set via /title or --title. */
   title?: string;
+  /** Side conversation active indicator. */
+  side?: boolean;
 }
 
 export type StatuslineField =
@@ -45,7 +47,8 @@ export type StatuslineField =
   | "workers"
   | "busy"
   | "session"
-  | "title";
+  | "title"
+  | "side";
 
 export const DEFAULT_STATUSBAR_FIELDS: StatuslineField[] = [
   "title", "mode", "model", "sandbox", "web",
@@ -74,6 +77,7 @@ export function renderField(field: StatuslineField, info: StatusBarInfo, theme: 
     case "workers": return (typeof info.workers === "number" && info.workers > 0) ? theme.dim(`${info.workers} workers`) : null;
     case "busy":    return info.busy ? theme.warning("running") : theme.dim("idle");
     case "session": return null; // sessionId not yet on StatusBarInfo
+    case "side":    return info.side ? theme.warning("side") : null;
     default:        return null;
   }
 }
