@@ -24,6 +24,7 @@ import { defaultRegistry } from "../tools/registry.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
 import { systemMessage, resolveInstructions, type Session } from "../cli/repl.js";
+import { startFileWatcher } from "../workspace/fileWatcher.js";
 import { initPlanMode } from "../cli/planMode.js";
 import {
   SessionStore,
@@ -317,7 +318,7 @@ export async function buildSession(
     const fresh = systemMessage(cfg, saved.mode, instr.text, skillsCatalog);
     if (messages[0]?.role === "system") messages[0] = fresh;
     else messages.unshift(fresh);
-    return {
+    const resumedSession: Session = {
       config: cfg,
       provider,
       registry,
@@ -343,10 +344,17 @@ export async function buildSession(
       planState: initPlanMode(),
       title: saved.title,
     };
+    // Start the file watcher for external-change detection
+    const w = startFileWatcher(resumedSession.config.workspaceRoot, (rel) => {
+      resumedSession.readTracker.delete(rel);
+      stdout.write(chalk.dim(`file changed externally: ${rel}\n`));
+    });
+    resumedSession.fileWatcher = w;
+    return resumedSession;
   }
 
   const instr = resolveInstructions(config);
-  return {
+  const freshSession: Session = {
     config,
     provider,
     registry,
@@ -370,4 +378,11 @@ export async function buildSession(
     providerPool,
     planState: initPlanMode(),
   };
+  // Start the file watcher for external-change detection
+  const w = startFileWatcher(freshSession.config.workspaceRoot, (rel) => {
+    freshSession.readTracker.delete(rel);
+    stdout.write(chalk.dim(`file changed externally: ${rel}\n`));
+  });
+  freshSession.fileWatcher = w;
+  return freshSession;
 }

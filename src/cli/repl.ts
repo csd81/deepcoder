@@ -81,6 +81,7 @@ import { renderAssistantBlock } from "../ui/assistantRenderState.js";
 import { renderEmptyState } from "../ui/emptyState.js";
 import { createStyleTokens } from "../ui/styleTokens.js";
 import { Git } from "../workspace/git.js";
+import type { FileWatcher } from "../workspace/fileWatcher.js";
 import { resolveReadPathInWorkspace } from "../workspace/paths.js";
 import { expandMentions } from "./atMention.js";
 import { forkSide, returnToMain, type SideState } from "./sideConversation.js";
@@ -153,6 +154,9 @@ export interface Session {
   title?: string;
   /** When true, renderers strip ANSI escape codes from all output. */
   rawMode?: boolean;
+  /** File-change watcher (detects external edits). Started on session build,
+   *  stopped on session teardown. Passive — never interrupts a turn. */
+  fileWatcher?: FileWatcher;
 }
 
 /**
@@ -520,6 +524,7 @@ export async function runOneShot(
     await session.store.save(snapshot(session));
     await runTask(session, ui);
   } finally {
+    session.fileWatcher?.stop();
     await session.mcp?.closeAll();
     await session.lsp?.closeAll();
   }
@@ -787,6 +792,7 @@ export async function runRepl(session: Session): Promise<void> {
       await printStatusline(session);
     }
   } finally {
+    session.fileWatcher?.stop();
     await fireSessionEvent(session, "SessionEnd");
     rl.close();
     await session.mcp?.closeAll();
@@ -1776,6 +1782,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   try {
     await done;
   } finally {
+    session.fileWatcher?.stop();
     restore();
     stdout.removeListener("resize", onResize);
     process.removeListener("exit", onProcExit);

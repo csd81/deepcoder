@@ -7,6 +7,7 @@ import { resolveInWorkspace, resolveRealPathInWorkspace, displayPath } from "../
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { checkSymlinkTargetSensitivity } from "./pathGuards.js";
 import { unifiedDiff } from "./diff.js";
+import { suppressWatch } from "../workspace/fileWatcher.js";
 
 const schema = z.object({
   path: z.string().describe("File to write, relative to the workspace root. Parent dirs are created."),
@@ -72,6 +73,7 @@ export const writeFileTool: Tool = {
             isError: true,
           };
         }
+        suppressWatch(args.path);
         await ctx.capturePreImage?.(real); // checkpoint pre-image (no-op if disabled)
         await fs.mkdir(path.dirname(real), { recursive: true });
         await fs.writeFile(real, args.content, "utf8");

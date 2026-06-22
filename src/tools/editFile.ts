@@ -6,6 +6,7 @@ import { resolveInWorkspace, resolveRealPathInWorkspace, displayPath } from "../
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { checkSymlinkTargetSensitivity } from "./pathGuards.js";
 import { unifiedDiff } from "./diff.js";
+import { suppressWatch } from "../workspace/fileWatcher.js";
 
 const schema = z.object({
   path: z.string().describe("File to edit, relative to the workspace root."),
@@ -88,6 +89,7 @@ export const editFileTool: Tool = {
       async execute(ctx) {
         try {
           const { updated, count, real } = await apply(ctx);
+          suppressWatch(args.path);
           await ctx.capturePreImage?.(real); // checkpoint pre-image (no-op if disabled)
           await fs.writeFile(real, updated, "utf8");
           await ctx.recordPostWrite?.(real); // record post-write sha for conflict detection
