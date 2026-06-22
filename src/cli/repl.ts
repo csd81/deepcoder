@@ -69,6 +69,12 @@ import { copyToClipboard } from "../clipboard/clipboard.js";
 import { MOUSE_ENABLE, MOUSE_DISABLE, mouseStatusNotice, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
 import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
+import {
+  buildFileIndex,
+  queryFiles,
+  renderCompleterDropdown,
+  type FileIndex,
+} from "../ui/fileCompleter.js";
 import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from "../ui/chatUiState.js";
 import { renderStatusBar, type StatusBarInfo } from "../ui/statusBar.js";
 import { createActivityTimeline, applyActivityEvent, renderActivityTimeline, type ActivityTimelineState } from "../ui/activityTimeline.js";
@@ -738,6 +744,23 @@ export async function runTuiRepl(session: Session): Promise<void> {
   // Viewport (scroll/atBottom), the slash-command menu, and focus all live in a
   // pure ChatUiState; the shell folds keystrokes/mouse into reduceChatUi actions.
   let chat: ChatUiState = initChatUi({ width: stdout.columns ?? 80, height: stdout.rows ?? 24 });
+
+  // ── File completer (local state, like search/approval) ──
+  interface FileCompleterState {
+    active: boolean;
+    prefix: string;
+    matches: string[];
+    selected: number;
+    cursorPos: number;
+  }
+  let fileIndex: FileIndex | null = null;
+  let fileCompleter: FileCompleterState = {
+    active: false,
+    prefix: "",
+    matches: [],
+    selected: 0,
+    cursorPos: 0,
+  };
   // Git branch/dirty for the status bar — resolved once at startup (cheap), best-effort.
   let branch: string | undefined;
   let dirty = false;
@@ -826,6 +849,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     pendingApproval ? "approval"
     : busy ? "busy"
     : search.active ? "search"
+    : fileCompleter.active ? "file-completer"
     : chat.slashMenu.open ? "slash-menu"
     : transcript.selectedBlockId ? "focused-block"
     : "normal";
@@ -994,6 +1018,18 @@ export async function runTuiRepl(session: Session): Promise<void> {
     });
   }
 
+  /** If the token under cursor starts with `@`, return the `@` start + the query text after it. */
+  function atTokenAtCursor(text: string, cursor: number): { start: number; prefix: string } | null {
+    if (cursor === 0) return null;
+    let start = cursor;
+    while (start > 0 && text[start - 1] !== ' ' && text[start - 1] !== '\n') start--;
+    const word = text.slice(start, cursor);
+    if (word.startsWith('@')) {
+      return { start, prefix: word.slice(1) };
+    }
+    return null;
+  }
+
   // Window height = rows minus status(1) + indicator-reserve(1) + composer rows,
   // so the absolutely-positioned diff frame never overflows the screen. The region
   // split is expressed as a column layout solved by the ui/layout engine: a fixed
@@ -1049,21 +1085,48 @@ export async function runTuiRepl(session: Session): Promise<void> {
     chat = reduceChatUi(chat, { type: "input-changed", text: editor.text, maxVisible: 12 }, { maxTop: transcriptMaxTop() });
   }
 
+  /**
+   * Recompute the file completer from the current editor text.
+   * Opens when the token at cursor starts with `@`; closes when the token
+   * no longer qualifies or the file index is unavailable.
+   */
+  function updateFileCompleter(): void {
+    const tok = atTokenAtCursor(editor.text, editor.cursor);
+    if (tok && fileIndex) {
+      const matches = queryFiles(fileIndex, tok.prefix);
+      fileCompleter = {
+        active: matches.length > 0,
+        prefix: tok.prefix,
+        matches,
+        selected: Math.min(fileCompleter.selected, matches.length - 1),
+        cursorPos: editor.cursor,
+      };
+    } else {
+      fileCompleter = { active: false, prefix: "", matches: [], selected: 0, cursorPos: 0 };
+    }
+  }
+
   function redraw(): void {
     if (restored) return;
     const width = stdout.columns ?? 80;
     // Wrap logical lines to the terminal width so nothing is truncated off-screen
     // and a resize re-wraps cleanly. renderFrame's own (ANSI-aware) truncate no-ops.
     const composer = composerLines();
+    // File completer dropdown (mutually exclusive with slash menu / activity).
+    const completerLines = fileCompleter.active && fileCompleter.matches.length > 0
+      ? renderCompleterDropdown(fileCompleter.matches, fileCompleter.selected).lines
+      : [];
     // The slash dropdown is suppressed while an approval/help overlay owns the screen.
     const overlayActive = pendingApproval !== null || helpVisible;
     // Menu slot: slash dropdown when open; otherwise a compact live activity
     // timeline (10A.11) while a turn is running; nothing when idle.
     const menu = overlayActive ? []
+      : fileCompleter.active ? [] // completer dropdown shown separately
       : chat.slashMenu.open ? menuRows(width)
       : busy ? renderActivityTimeline(activity, { width, maxRows: 3, theme })
       : [];
-    const height = viewportH(composer.length, menu.length);
+    const totalMenuCount = menu.length + completerLines.length;
+    const height = viewportH(composer.length, totalMenuCount);
     // While an approval/help overlay is up, the content window IS the overlay.
     const built = overlayActive ? null : buildLinesWithMeta(width);
     // 10A.19: a fresh session (no conversation yet, only the intro notice) shows
@@ -1110,6 +1173,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       width, inputLine: composer[0], inputLines: composer,
       hasNewOutputBelow,
       menuLines: menu.length ? menu : undefined,
+      completerLines: completerLines.length ? completerLines : undefined,
       footerLine: renderFooterHints({ mode: currentFooterMode(), width, theme }),
     });
     // Repaint only the lines that changed since the last frame (anti-flicker).
@@ -1388,13 +1452,21 @@ export async function runTuiRepl(session: Session): Promise<void> {
       if (!busy) { editor = reduceEditor(editor, { type: "newline" }).state; syncMenu(); redraw(); }
       return;
     }
-    // Tab: complete the highlighted slash command when the menu is open; otherwise
-    // step the focus cursor across collapsible blocks (expanding the focused one).
+    // Tab: navigate file completer, complete slash command, or step focus.
     if (key?.name === "tab") {
       if (busy) return;
+      // File completer: Tab selects next match, Shift+Tab selects previous.
+      if (fileCompleter.active && fileCompleter.matches.length > 0) {
+        const shift = (key as { shift?: boolean }).shift ?? false;
+        const delta = shift ? -1 : 1;
+        const next = (fileCompleter.selected + delta + fileCompleter.matches.length) % fileCompleter.matches.length;
+        fileCompleter = { ...fileCompleter, selected: next };
+        redraw();
+        return;
+      }
       if (chat.slashMenu.open) {
         const completed = completeSelected(chat.slashMenu);
-        if (completed !== null) { editor = { ...editor, text: completed, cursor: completed.length }; syncMenu(); redraw(); }
+        if (completed !== null) { editor = { ...editor, text: completed, cursor: completed.length }; syncMenu(); updateFileCompleter(); redraw(); }
         return;
       }
       transcript = moveSelection(transcript, (key as { shift?: boolean }).shift ? -1 : 1);
@@ -1445,11 +1517,29 @@ export async function runTuiRepl(session: Session): Promise<void> {
         if (chat.slashMenu.open) { chat = reduceChatUi(chat, { type: "menu-down" }, { maxTop: 0 }); redraw(); return; }
         editor = reduceEditor(editor, { type: "history-next" }).state; syncMenu(); redraw(); return;
       case "escape":
-        // Esc closes the slash menu first; otherwise clears block selection.
+        // Esc closes the file completer first, then the slash menu, then clears selection.
+        if (fileCompleter.active) {
+          fileCompleter = { active: false, prefix: "", matches: [], selected: 0, cursorPos: 0 };
+          redraw(); return;
+        }
         if (chat.slashMenu.open) { chat = reduceChatUi(chat, { type: "menu-close" }, { maxTop: 0 }); redraw(); return; }
         transcript = clearSelection(transcript); stickBottom(); redraw(); return;
       case "submit": {
         if (busy) return;
+        // File completer: Enter accepts the selected match and inserts the path.
+        if (fileCompleter.active && fileCompleter.matches.length > 0) {
+          const selected = fileCompleter.matches[fileCompleter.selected];
+          if (selected) {
+            const tok = atTokenAtCursor(editor.text, editor.cursor);
+            if (tok) {
+              const before = editor.text.slice(0, tok.start);
+              const after = editor.text.slice(editor.cursor);
+              editor = { ...editor, text: before + '@' + selected + after, cursor: tok.start + 1 + selected.length };
+            }
+          }
+          fileCompleter = { active: false, prefix: "", matches: [], selected: 0, cursorPos: 0 };
+          redraw(); return;
+        }
         // First Enter with the menu open completes the highlighted command (a
         // trailing space closes the menu); a second Enter then submits.
         if (chat.slashMenu.open) {
@@ -1469,6 +1559,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
         if (key?.name === "backspace") editor = reduceEditor(editor, { type: "backspace" }).state;
         else if (str && str.length === 1 && str >= " " && !key?.ctrl) editor = reduceEditor(editor, { type: "insert", ch: str }).state;
         syncMenu();
+        updateFileCompleter();
         redraw();
     }
   }
@@ -1501,6 +1592,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
         redraw();
       }
     } catch { /* status bar simply omits the branch */ }
+  })();
+  // Build the file index once at startup for @-file autocomplete (best-effort).
+  void (async () => {
+    try {
+      fileIndex = await buildFileIndex(session.executionRoot ?? session.config.workspaceRoot);
+    } catch { /* best-effort — @-completer gracefully shows nothing */ }
   })();
   redraw();
   try {

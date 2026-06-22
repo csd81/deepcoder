@@ -14,6 +14,7 @@ export type FooterHintMode =
   | "normal"
   | "busy"
   | "slash-menu"
+  | "file-completer"
   | "search"
   | "focused-block"
   | "approval";
@@ -30,6 +31,7 @@ const HINTS: Record<FooterHintMode, string> = {
   normal:       "Enter send · / commands · ! shell · Ctrl+F search · Tab blocks · ? help",
   busy:         "PgUp/PgDn scroll · Tab inspect · Ctrl+C interrupt · ? help",
   "slash-menu": "↑↓ select · Tab complete · Enter run · Esc close",
+  "file-completer": "Tab select · Enter insert · Esc close",
   search:       "Enter/n next · p previous · PgUp/PgDn scroll · Esc close",
   "focused-block": "Enter expand · y copy · s save · Tab next · Esc clear",
   approval:     "y approve · n deny · ↑↓ scroll · Esc deny",

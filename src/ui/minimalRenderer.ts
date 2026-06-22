@@ -27,6 +27,8 @@ export interface FrameInput {
   hasNewOutputBelow: boolean;
   /** Slash-command dropdown rows, rendered just above the composer when open. */
   menuLines?: string[];
+  /** File-completion dropdown rows, rendered just above the composer when open (same position as menuLines). */
+  completerLines?: string[];
   /** Footer hint line, rendered as the very last row when present. */
   footerLine?: string;
 }
@@ -68,9 +70,12 @@ export function renderFrame(input: FrameInput): string[] {
     result.push(truncate("↓ new output below", width));
   }
 
-  // 4. Slash-command dropdown (above the composer, when open)
+  // 4. Slash-command dropdown or file-completion dropdown (above the composer, when open)
   if (input.menuLines) {
     for (const row of input.menuLines) result.push(truncate(row, width));
+  }
+  if (input.completerLines) {
+    for (const row of input.completerLines) result.push(truncate(row, width));
   }
 
   // 5. Input composer (one or more rows)
