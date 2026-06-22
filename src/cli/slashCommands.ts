@@ -2,6 +2,7 @@ import { promises as fs, openSync, readSync, fstatSync, closeSync } from "node:f
 import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
 import { estimateCost } from "../providers/pricing.js";
+import { enterPlanMode, exitPlanMode, initPlanMode } from "./planMode.js";
 import { Git } from "../workspace/git.js";
 import { resolveReadPathInWorkspace, displayPath, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
@@ -245,6 +246,16 @@ export async function handleSlashCommand(
       }
       return { consumed: true };
     }
+
+    case "plan-mode":
+      if ((session.planState ?? initPlanMode()).phase === "off") {
+        session.planState = enterPlanMode(session.planState ?? initPlanMode(), session.mode);
+        console.log(chalk.dim("Plan mode: ON — read-only investigation. I'll propose a plan for your approval."));
+      } else {
+        session.planState = exitPlanMode(session.planState!);
+        console.log(chalk.dim("Plan mode: OFF."));
+      }
+      return { consumed: true };
 
     case "mode":
       if (MODES.includes(arg as ApprovalMode)) {

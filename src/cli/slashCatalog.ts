@@ -88,6 +88,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
 
   // session
   { name: "goal", args: "[set|update|pause|resume|clear|done] [text]", description: "Manage the persistent session objective", category: "session" },
+  { name: "plan-mode", description: "Toggle interactive plan mode (read-only investigate → approve → execute)", category: "session" },
 ];
 
 /**

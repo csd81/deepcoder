@@ -71,6 +71,15 @@ import { renderAssistantBlock } from "../ui/assistantRenderState.js";
 import { renderEmptyState } from "../ui/emptyState.js";
 import { createStyleTokens } from "../ui/styleTokens.js";
 import { Git } from "../workspace/git.js";
+import {
+  initPlanMode,
+  recordPlan,
+  approvePlan,
+  rejectPlan,
+  exitPlanMode,
+  effectivePlanModeApproval,
+  type PlanModeState,
+} from "./planMode.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -121,6 +130,8 @@ export interface Session {
   providerPool: ProviderPool;
   /** Phase 10C — session usage/cost telemetry (optional; persisted across resume). */
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
+  /** Interactive Plan Mode state — undefined means inactive (/plan-mode off). */
+  planState?: PlanModeState;
 }
 
 /**
@@ -364,7 +375,7 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     registry: session.registry,
     ctx,
     model,
-    mode: session.mode,
+    mode: effectivePlanModeApproval(session.planState ?? initPlanMode(), session.mode),
     // Phase 7I — post-write diagnostics (no-op unless config.diagnostics.enabled).
     diagnostics: session.config.diagnostics,
     maxTurns: effectiveMaxTurns({
@@ -611,6 +622,32 @@ export async function runRepl(session: Session): Promise<void> {
       } catch (err) {
         stdout.write(chalk.red(`\nError: ${(err as Error).message ?? err}\n`));
       }
+
+      // Interactive Plan Mode: after an investigating turn, the assistant's final
+      // text is the proposed plan. Prompt the user to approve or reject it.
+      if ((session.planState ?? initPlanMode()).phase === "investigating") {
+        const lastAssistant = [...session.messages].reverse().find((m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim().length > 0);
+        if (lastAssistant && typeof lastAssistant.content === "string") {
+          const planState = session.planState ?? initPlanMode();
+          session.planState = recordPlan(planState, lastAssistant.content);
+          const approved = await confirm(chalk.bold("Execute this plan?"));
+          if (approved) {
+            session.planState = approvePlan(session.planState);
+            session.messages.push({ role: "user", content: `Execute this plan:\n${lastAssistant.content}` });
+            await session.store.save(snapshot(session));
+            try {
+              await runTask(session);
+            } catch (err) {
+              stdout.write(chalk.red(`\nError: ${(err as Error).message ?? err}\n`));
+            }
+            session.planState = exitPlanMode(session.planState);
+          } else {
+            session.planState = rejectPlan(session.planState);
+            stdout.write(chalk.dim("Plan rejected. Staying in read-only investigation mode.\n"));
+          }
+        }
+      }
+
       await printStatusline(session);
     }
   } finally {
@@ -1172,6 +1209,32 @@ export async function runTuiRepl(session: Session): Promise<void> {
     try { await runTask(session, { sink, approve }); }
     catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` }); }
     finally { busy = false; stickBottom(); redraw(); }
+
+    // Interactive Plan Mode: after an investigating turn, the assistant's final
+    // text is the proposed plan. Prompt the user to approve or reject it.
+    if ((session.planState ?? initPlanMode()).phase === "investigating") {
+      const lastAssistant = [...session.messages].reverse().find(
+        (m) => m.role === "assistant" && typeof m.content === "string" && m.content.trim().length > 0,
+      );
+      if (lastAssistant && typeof lastAssistant.content === "string") {
+        const planState = session.planState ?? initPlanMode();
+        session.planState = recordPlan(planState, lastAssistant.content);
+        const ok = await approval.approve({ description: "Execute this plan?\n\n" + lastAssistant.content });
+        if (ok) {
+          session.planState = approvePlan(session.planState);
+          session.messages.push({ role: "user", content: `Execute this plan:\n${lastAssistant.content}` });
+          busy = true; redraw();
+          try { await runTask(session, { sink, approve }); }
+          catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` }); }
+          finally { busy = false; stickBottom(); redraw(); }
+          session.planState = exitPlanMode(session.planState);
+        } else {
+          session.planState = rejectPlan(session.planState);
+          transcript = applyEvent(transcript, { type: "notice", message: "Plan rejected. Staying in read-only investigation mode." });
+          stickBottom(); redraw();
+        }
+      }
+    }
   }
 
   function onKey(str: string | undefined, key: { name?: string; sequence?: string; ctrl?: boolean } | undefined): void {
