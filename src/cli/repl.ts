@@ -51,6 +51,7 @@ import { renderApprovalModal } from "../ui/approvalModal.js";
 import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
 import { renderFooterHints, type FooterHintMode } from "../ui/footerHints.js";
 import { createNamedTheme, listThemeNames, isValidThemeName, type ThemeName } from "../ui/themes.js";
+import { buildBlockPreview } from "../ui/blockPreview.js";
 import { createSearchState, updateSearch, moveSearchSelection, selectedMatch, type TranscriptSearchState } from "../ui/transcriptSearch.js";
 import { formatTranscriptBlockMarkdown, selectedBlock } from "../ui/transcriptExport.js";
 import { safeExportFilename } from "../ui/exportWriter.js";
@@ -700,10 +701,20 @@ export async function runTuiRepl(session: Session): Promise<void> {
           style: focused ? theme.selected : base,
           meta: { text: "", blockId: b.id, kind: b.kind, header: true, collapsible: true },
         });
+        const bodyMeta: RenderedTranscriptRow = { text: "", blockId: b.id, kind: b.kind, header: false, collapsible: true };
         if (expanded && b.body) {
           for (const ln of b.body.split("\n")) {
-            out.push({ text: "  " + ln, style: theme.dim, meta: { text: "", blockId: b.id, kind: b.kind, header: false, collapsible: true } });
+            out.push({ text: "  " + ln, style: theme.dim, meta: bodyMeta });
           }
+        } else if (!expanded) {
+          // 10A.16: collapsed blocks render as a compact card — summary + a short
+          // bounded preview of the output, so failures/results are visible without expanding.
+          const preview = buildBlockPreview(b, { maxPreviewLines: 2 });
+          if (preview.summary) out.push({ text: "  " + preview.summary, style: theme.dim, meta: bodyMeta });
+          for (const ln of preview.previewLines) {
+            out.push({ text: "  " + ln, style: b.isError ? theme.error : theme.dim, meta: bodyMeta });
+          }
+          if (preview.truncated) out.push({ text: `  … ${preview.lineCount} lines · Enter to expand`, style: theme.dim, meta: bodyMeta });
         }
       } else if (b.kind === "assistant" && b.finishedAt !== undefined && b.body) {
         // A completed assistant message is rendered as markdown (headings, code,
