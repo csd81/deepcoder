@@ -297,7 +297,15 @@ export function systemMessage(
   mode: ApprovalMode,
   instructionsText?: string,
   skillsCatalog?: string,
+  toolNames?: string[],
 ): AgentMessage {
+  // A/B override (Slice D): when DEEPCODER_SYSTEM_PROMPT_FILE points at a
+  // readable file, swap the WHOLE system message content with its contents so
+  // an alternate prompt can be tested on the same battery.
+  const override = loadSystemPromptOverride();
+  if (override !== null) {
+    return { role: "system", content: override };
+  }
   const text = instructionsText ?? resolveInstructions(config).text;
   // Project memory (8B): the control plane is the real workspace root, so memory
   // persists/loads there even under workspace isolation.
@@ -311,11 +319,24 @@ export function systemMessage(
       solve: config.solve,
       memory,
       skillsCatalog,
-      // DeepSeek-only: no kept provider answers from provider-side web knowledge,
-      // so the web-aware prompt is never injected.
-      webAware: false,
+      toolNames,
     }),
   };
+}
+
+/**
+ * A/B experimentation knob (Slice D): if DEEPCODER_SYSTEM_PROMPT_FILE is set,
+ * return that file's contents to fully override the system message; otherwise
+ * (unset/empty/unreadable) return null and never throw.
+ */
+export function loadSystemPromptOverride(): string | null {
+  const file = process.env.DEEPCODER_SYSTEM_PROMPT_FILE;
+  if (!file) return null;
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 /** Synchronous MEMORY.md read for the system prompt (best-effort; "" when none). */
@@ -781,7 +802,7 @@ export async function runRepl(session: Session): Promise<void> {
       if (slash.exit) break;
       if (slash.consumed) {
         // Keep the system prompt in sync if the mode changed.
-        session.messages[0] = systemMessage(session.config, session.mode);
+        session.messages[0] = systemMessage(session.config, session.mode, undefined, undefined, session.registry.names());
         continue;
       }
 

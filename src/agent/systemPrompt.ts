@@ -1,5 +1,4 @@
 import type { ApprovalMode } from "../config/config.js";
-import { buildWebAwarePrompt } from "../web/searchCapableRouting.js";
 
 export function buildSystemPrompt(opts: {
   workspaceRoot: string;
@@ -11,10 +10,13 @@ export function buildSystemPrompt(opts: {
   memory?: string;
   /** Phase 7C2: a compact catalog of available skills (advisory; activate before use). */
   skillsCatalog?: string;
-  /** Phase 10E7: the active model route is web-aware (e.g. OpenRouter) — append a
-   *  note that provider-side web claims are UNVERIFIED until checked with local
-   *  web_fetch/web_search (the only sources that create an auditable trace). */
-  webAware?: boolean;
+  /**
+   * Names of the tools actually registered this session. When present and
+   * non-empty, an `## Available tools` section is appended, bucketed by
+   * category. Tools are conditionally registered, so this is data-driven — never
+   * hardcode the list into the prompt body.
+   */
+  toolNames?: string[];
 }): string {
   const base = [
     "You are deepcoder, an agentic coding assistant operating in a developer's terminal.",
@@ -37,6 +39,7 @@ export function buildSystemPrompt(opts: {
     "",
     "Rules:",
     "- All paths are relative to the workspace root and must stay inside it.",
+    "- Mutating or dangerous shell commands (rm -rf, sudo, chmod, writes/redirects outside the workspace, curl|sh) are gated by the command classifier and may be denied. If a command is denied, propose a safe alternative rather than retrying.",
     "- Never fabricate file contents or command output; call a tool to find out.",
     "- When a tool returns an error, read it and adjust — do not repeat the same failing call.",
     "- When the task is done, stop calling tools and reply with a short summary of what you changed.",
@@ -67,12 +70,6 @@ export function buildSystemPrompt(opts: {
 
   let text = base.join("\n");
 
-  // 10E7: when the route may have provider-side web knowledge, remind the model
-  // that those claims are unverified until checked with the local web tools.
-  if (opts.webAware) {
-    text += "\n\n" + buildWebAwarePrompt();
-  }
-
   if (opts.instructions?.trim()) {
     text += "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
   }
@@ -86,7 +83,56 @@ export function buildSystemPrompt(opts: {
   if (opts.skillsCatalog?.trim()) {
     text += "\n\n## Available skills (activate before use)\nThese are NOT active yet — call activate_skill(name) to load one's instructions:\n\n" + opts.skillsCatalog.trim();
   }
+  // Dynamic tool summary: render only the tools actually registered this
+  // session, bucketed by category. Conditionally-registered tools mean this
+  // must be derived from `toolNames`, never hardcoded. Absent/empty → nothing.
+  if (opts.toolNames && opts.toolNames.length > 0) {
+    text += "\n\n" + renderAvailableTools(opts.toolNames);
+  }
   return text;
+}
+
+/** Ordered tool buckets. Within a category, tools list in this declared order. */
+const TOOL_CATEGORIES: { label: string; tools: string[] }[] = [
+  { label: "Explore", tools: ["read_file", "list_dir", "glob", "grep"] },
+  { label: "Edit", tools: ["edit_file", "write_file", "delete_file", "rename_file", "apply_patch"] },
+  { label: "Execute", tools: ["run_bash", "run_in_shell"] },
+  {
+    label: "Code intelligence",
+    tools: [
+      "find_symbols",
+      "find_references",
+      "repo_map",
+      "repo_index",
+      "impact_graph",
+      "lsp_definition",
+      "lsp_references",
+      "lsp_diagnostics",
+    ],
+  },
+  { label: "Semantic search", tools: ["semantic_search", "hybrid_search", "similar_code"] },
+  { label: "Context & planning", tools: ["list_recent_context", "todo_write"] },
+  { label: "Delegate", tools: ["delegate"] },
+  { label: "Web", tools: ["web_fetch", "web_search"] },
+  { label: "Skills", tools: ["activate_skill"] },
+];
+
+/** Render the `## Available tools` section from the present tool names. */
+function renderAvailableTools(toolNames: string[]): string {
+  const present = new Set(toolNames);
+  const known = new Set(TOOL_CATEGORIES.flatMap((c) => c.tools));
+  const lines: string[] = [
+    "## Available tools",
+    "These tools are available this session (full schemas are sent separately). Prefer calling them over describing actions.",
+  ];
+  for (const cat of TOOL_CATEGORIES) {
+    const items = cat.tools.filter((t) => present.has(t));
+    if (items.length > 0) lines.push(`- **${cat.label}:** ${items.join(", ")}`);
+  }
+  // Surface anything not in a known bucket so nothing is silently hidden.
+  const other = toolNames.filter((t) => !known.has(t));
+  if (other.length > 0) lines.push(`- **Other:** ${other.join(", ")}`);
+  return lines.join("\n");
 }
 
 /**

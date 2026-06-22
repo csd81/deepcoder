@@ -326,7 +326,7 @@ export async function buildSession(
     // trusting the (possibly stale) saved one, then keep the rest of history.
     const instr = resolveInstructions(cfg);
     const messages = saved.messages.slice();
-    const fresh = systemMessage(cfg, saved.mode, instr.text, skillsCatalog);
+    const fresh = systemMessage(cfg, saved.mode, instr.text, skillsCatalog, registry.names());
     if (messages[0]?.role === "system") messages[0] = fresh;
     else messages.unshift(fresh);
     const resumedSession: Session = {
@@ -359,7 +359,7 @@ export async function buildSession(
   }
 
   const instr = resolveInstructions(config);
-  const messages: AgentMessage[] = [systemMessage(config, config.approvalMode, instr.text, skillsCatalog)];
+  const messages: AgentMessage[] = [systemMessage(config, config.approvalMode, instr.text, skillsCatalog, registry.names())];
   // Inject PR context as a second system message when --pr or /pr loaded one.
   if (config.prContext) {
     messages.push(injectPrContext(config.prContext));

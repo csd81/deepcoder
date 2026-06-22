@@ -1,131 +1,141 @@
-# Feature — System prompt audit and improvement
+# Feature — System prompt audit and improvement (post-OpenRouter, DeepSeek-only)
 
 ## Context
 
-Deepcoder's system prompt (`src/agent/systemPrompt.ts`) is 98 lines covering identity, tool guidance, workspace rules, and optional sections (solve mode, instructions, memory, skills, web awareness). It's functional but has never been systematically audited against real model behavior.
+`src/agent/systemPrompt.ts` builds deepcoder's system prompt: identity, workflow,
+efficiency, investigation playbook, rules, workspace, plus a DeepSeek-specific
+guidance block and the conditional sections (solve / instructions / memory / skills
+/ webAware). It has accreted in pieces and was never audited as a whole.
 
-Common issues across all coding agents' system prompts:
-- Too vague → model wastes turns on exploration
-- Too strict → model refuses valid approaches
-- Missing guardrails → model apologizes, speculates, or goes off-topic
-- Wrong prioritization → model follows defaults over project instructions
+This plan was originally written when multiple providers existed. Since then the
+product went **DeepSeek-only** (OpenRouter and all alternate providers removed). Two
+consequences:
 
-## Audit plan
+- The `webAware` prompt injection is now **dead**: `repl.ts:316` hard-codes
+  `webAware: false`, so the `buildWebAwarePrompt()` block (systemPrompt.ts:72-74)
+  never fires. It should be removed from the prompt path.
+- The §4 "conditional sections audit" and §5 web-aware checks are obsolete and are
+  dropped from this plan.
 
-### 1. Review current prompt against best practices
+The `searchCapableRouting.ts` module itself is OUT OF SCOPE — it remains the model
+router's capability layer (with its own test suite). We only remove the prompt-side
+injection that consumes its `buildWebAwarePrompt`.
 
-Current sections analysis:
+## What's already done (do NOT redo)
 
-| Section | What it does | Issue |
-|---|---|---|
-| Identity | "deepcoder, operating in a developer's terminal" | OK |
-| Workflow | "Explore first, read before edit, focused edits" | OK but vague |
-| Efficiency | "Batch independent calls, don't re-read" | Important, well-phrased |
-| Investigation | "Hypothesis first, verify before claiming" | Good for bug fixing |
-| Rules | "No fabricating, don't repeat failures, stop when done" | Missing: "don't apologize", "be concise" |
-| Workspace | Path root + mode | OK |
-| Solve mode | "Don't run tests, harness owns verification" | Good |
-| Instructions | "Project instructions take priority" | OK |
-| Memory | "Recall only, not authoritative" | Correct but could be stronger |
-| Skills | "Activate before use" | OK |
+- Investigation playbook (systemPrompt.ts:33-36) — focused-diagnosis discipline.
+- DeepSeek-specific guidance block (:48-57) — conciseness, direct tool calling, no
+  retry-of-failed-call, strict scope, long-context, minimal code. This already
+  covers the original plan's "conciseness / don't-apologize / stop-when-done /
+  do-exactly-what-was-asked" fixes. Guarded by `deepseek-guidance.test.ts`.
 
-### 2. Specific fixes
+## Workstream A — Remove the dead webAware prompt injection (MUST)
 
-**Add conciseness directive:**
+- `systemPrompt.ts`: delete the `webAware?` option, the
+  `import { buildWebAwarePrompt }`, and the `if (opts.webAware) { … }` block.
+- `repl.ts`: delete the `webAware: false` argument at the `buildSystemPrompt(...)`
+  call (and its comment).
+- Leave `src/web/searchCapableRouting.ts` and `search-capable-routing.test.ts`
+  untouched (router capability layer, not prompt-owned).
+- Test: assert the web-aware verification phrase never appears in a built prompt.
+
+## Workstream B — Dynamic "Available tools" summary (MUST)
+
+The original plan proposed a hardcoded tool list — but tools are **conditionally
+registered** (web/lsp/semantic/run_in_shell/delegate are gated), so a static list
+would lie. Instead make the summary data-driven off the actual registry.
+
+- `buildSystemPrompt` gains an optional `toolNames?: string[]`.
+  - When present and non-empty, render a `## Available tools` section that buckets
+    the *present* tools into fixed categories, omitting any empty category:
+    - **Explore:** read_file, list_dir, glob, grep
+    - **Edit:** edit_file, write_file, delete_file, rename_file, apply_patch
+    - **Execute:** run_bash, run_in_shell
+    - **Code intelligence:** find_symbols, find_references, repo_map, repo_index,
+      impact_graph, lsp_definition, lsp_references, lsp_diagnostics
+    - **Semantic search:** semantic_search, hybrid_search, similar_code
+    - **Context & planning:** list_recent_context, todo_write
+    - **Delegate:** delegate
+    - **Web:** web_fetch, web_search
+    - **Skills:** activate_skill
+  - Any registered tool not in the known buckets (e.g. an MCP tool) goes under an
+    **Other:** bucket so nothing is silently hidden.
+  - When `toolNames` is absent/empty, render NO section (keeps existing tests and
+    non-interactive callers unchanged).
+  - Prefix line: "These tools are available this session (full schemas are sent
+    separately). Prefer calling them over describing actions."
+- Wire `registry.names()` through `systemMessage(...)` (new trailing
+  `toolNames?: string[]` param) at all three call sites:
+  `sessionFactory.ts:329`, `sessionFactory.ts:362`, `repl.ts:784`
+  (`session.registry.names()` in the REPL refresh).
+- Tests: a prompt built with `["read_file","grep","web_search"]` lists those under
+  Explore/Web and does NOT list edit/lsp tools or empty category headers; an unknown
+  tool name lands under **Other:**; no `toolNames` → no section.
+
+## Workstream C — Safety-model awareness line (MUST)
+
+Add ONE truthful line to the Rules block (the command classifier is enforced in
+code, so this is accurate):
+
 ```
-- Be concise. Do not apologize, do not explain basic concepts, do not ask 
-  "would you like me to proceed?" — just do the task and report results.
-```
-
-**Add safety model awareness:**
-```
-- Dangerous commands (rm, sudo, chmod, redirects outside workspace, curl|sh) 
-  are blocked by the command classifier. If a command is denied, suggest a 
-  safe alternative.
-```
-
-**Add compaction awareness:**
-```
-- Context compaction may summarize older turns without warning. If something 
-  you said earlier seems missing, it was compacted. Use /compact to force it.
-```
-
-**Add workspace isolation awareness:**
-```
-- When workspace isolation is active, file edits land in a disposable git 
-  worktree. The real repo changes only when the isolation patch is applied.
-```
-
-**Strengthen "stop when done":**
-```
-- When the task is complete, reply with a one-line summary and stop. Do not 
-  offer to make additional improvements unless the user asks.
-```
-
-**Remove redundant guidance:**
-- "All paths are relative to the workspace root" — the tool descriptions already specify this
-- "Never fabricate file contents" — obvious, models don't do this with tool APIs
-
-### 3. Add tool summary section
-
-The system prompt should list available tools by category so the model has a mental model before seeing the API schemas:
-
-```
-## Available tools
-The following tools are available. Each has a detailed description sent 
-separately. Use them rather than describing actions in text.
-
-### Explore
-- read_file, read_lines, list_dir, glob, grep
-
-### Edit
-- edit_file, write_file, delete_file, rename_file, apply_patch
-
-### Execute
-- run_bash
-
-### Plan & track
-- todo_write, update_plan, complete_task
+- Mutating or dangerous shell commands (rm -rf, sudo, chmod, writes/redirects
+  outside the workspace, curl|sh) are gated by the command classifier and may be
+  denied. If a command is denied, propose a safe alternative rather than retrying.
 ```
 
-This mirrors what opencode does — the tool API schemas are separate, but the system prompt gives a summary. Reduces cognitive load on the model.
+- DECIDED AGAINST (original plan proposed, now rejected): removing the "paths stay
+  inside the workspace" and "never fabricate" lines — they are cheap, accurate
+  reinforcement of the safety posture; keep them.
+- DROPPED: workspace-isolation awareness line. Isolation (`src/workspaceIsolation/`)
+  is real but not consistently surfaced per run, and a blanket statement could be
+  misleading. Out of scope.
+- Test: assert the classifier-awareness line appears in a default prompt.
 
-### 4. Conditional prompt sections audit
+## Workstream D — A/B prompt override (SHOULD)
 
-Check each conditional section fires at the right time:
+A cheap experimentation knob for the smoke suite: an env var that swaps the whole
+system message so alternate prompts can be A/B'd on the same battery.
 
-- **Solve mode**: fires when `opts.solve` is true. Verify it's not also injected during non-solve runs.
-- **Web aware**: fires for OpenRouter. Verify the provider detection is correct.
-- **Instructions**: project AGENTS.md/CLAUDE.md. Verify priority: instructions > memory > defaults.
-- **Memory**: fires when MEMORY.md exists. Verify "recall only" warning is sufficient to prevent the model from treating memory as policy.
-- **Skills**: fires when skills are discovered. Verify "activate before use" prevents the model from pretending skills are active.
+- In `systemMessage` (repl.ts), if `process.env.DEEPCODER_SYSTEM_PROMPT_FILE` points
+  at a readable file, use its contents as the system message `content` verbatim
+  (full override — the point is to test a complete alternate prompt). On a missing/
+  unreadable path, fall back to the built prompt (never throw).
+- Keep the read in a tiny pure helper so it's unit-testable without the env var.
+- Tests: env set to a temp file → content is the file's text; env set to a missing
+  path → falls back to the normal built prompt (no throw); env unset → normal.
 
-### 5. A/B test framework (SHOULD)
+## Files to change
 
-Add a way to swap system prompts for testing:
+- `src/agent/systemPrompt.ts` (A, B, C)
+- `src/cli/repl.ts` (`systemMessage` signature + call, A, B, D)
+- `src/runtime/sessionFactory.ts` (pass `registry.names()` at the two call sites, B)
+- Tests: extend `test/adversarial/system-prompt-*.test.ts` / `deepseek-guidance.test.ts`
+  or add `test/adversarial/system-prompt-tools.test.ts` and a small
+  `test/system-prompt-override.test.ts` (D).
 
-```ts
-// Environment override for A/B testing
-const promptOverrides = process.env.DEEPCODER_SYSTEM_PROMPT_FILE
-  ? readFileSync(process.env.DEEPCODER_SYSTEM_PROMPT_FILE, "utf8")
-  : null;
-```
+## Execution
 
-With the automated smoke suite, alternate prompt versions can be compared on the same test battery.
-
-## Files
-
-- **Edit:** `src/agent/systemPrompt.ts` (all section fixes + tool summary).
+In-house subagents, run **sequentially** (A+C, then B, then D) because every slice
+touches `systemPrompt.ts`/`repl.ts` — parallel edits would collide. Each slice is
+TDD (red→green), and I run `npm run typecheck` + `npm run test:phase` after
+integrating each before starting the next. No same-task wiring is left dangling:
+slice B is not "done" until `registry.names()` is threaded through all three
+`systemMessage` call sites (orphan check: the new section must render in a real
+session, not just in a unit test).
 
 ## Verification
 
-1. `npm run typecheck` clean.
-2. Manual: start deepcoder, observe system prompt in debug output — conciseness directive present, no redundant text, tools listed by category.
-3. Manual: test with instructions, memory, skills — each section appears in the correct position with correct priority labels.
-4. Smoke suite still passes with the new prompt.
+1. `npm run typecheck` clean; `npm run test:phase` green (existing prompt tests +
+   new ones).
+2. New tests assert: web-aware text gone; tool summary lists only present tools and
+   omits empty categories; unknown tool → Other; classifier-awareness line present;
+   env override swaps the prompt and falls back safely.
+3. Manual spot-check: launch deepcoder, dump the system prompt, confirm the tool
+   summary matches the actually-registered tools for that run and no web-aware text
+   remains.
 
-## Safety
+## Out of scope (deliberate)
 
-- Prompt changes affect model behavior but never bypass safety gates (command classifier, sensitive path guards, permission policy all execute in code, not prompt).
-- Conditional sections are gated by existing flags — no new env vars or config needed.
-- The "don't apologize" directive is behavioral, not structural — models may ignore it, but that's harmless.
+- No changes to `searchCapableRouting.ts` (router capability layer).
+- No new tools; no removal/consolidation of the code-intel cluster.
+- No edits to the already-shipped investigation playbook or DeepSeek guidance block.
