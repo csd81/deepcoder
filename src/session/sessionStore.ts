@@ -7,6 +7,7 @@ import type { ApprovalMode } from "../config/config.js";
 import type { CheckpointFile } from "./checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
+import type { SessionGoal } from "./goal.js";
 
 export interface PersistedSession {
   id: string;
@@ -31,6 +32,8 @@ export interface PersistedSession {
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
   /** Phase 10E — auditable web trace. Absent in pre-10E sessions (loads as undefined). */
   webTrace?: import("../web/trace.js").WebTraceRecord[];
+  /** Phase 10M — persistent session goal. Absent in pre-10M sessions (loads as undefined). */
+  goal?: SessionGoal;
   createdAt: string;
   updatedAt: string;
 }
@@ -51,6 +54,8 @@ export interface SessionSnapshot {
   activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
   webTrace?: import("../web/trace.js").WebTraceRecord[];
+  /** Phase 10M — persistent session goal. */
+  goal?: import("./goal.js").SessionGoal;
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -94,6 +99,7 @@ export class SessionStore {
       activatedSkills: snapshot.activatedSkills ?? [],
       telemetry: snapshot.telemetry,
       webTrace: snapshot.webTrace,
+      goal: snapshot.goal,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };
