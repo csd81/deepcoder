@@ -21,8 +21,8 @@ test("DeepSeek (default provider) defaults to the full 1M context window", () =>
 });
 
 test("non-DeepSeek providers keep the conservative 120K default", () => {
-  // ollama: a non-deepseek provider that requires no API key (clean to load here).
-  withEnv({ DEEPCODER_PROVIDER: "ollama", DEEPCODER_CONTEXT_BUDGET_TOKENS: undefined, DEEPCODER_COMPACT_AT: undefined }, () => {
+  // openai-compatible: the one non-deepseek provider (generic escape hatch).
+  withEnv({ DEEPCODER_PROVIDER: "openai-compatible", DEEPCODER_API_KEY: "k", DEEPCODER_CONTEXT_BUDGET_TOKENS: undefined, DEEPCODER_COMPACT_AT: undefined }, () => {
     const c = loadConfig({ ...base });
     assert.equal(c.contextBudgetTokens, 120_000);
     assert.equal(c.compactAt, 0.8);

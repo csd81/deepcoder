@@ -31,10 +31,34 @@ export interface OpenAICompatibleOptions {
    */
   temperature?: number;
   /**
-   * Optional default headers to send with every request (e.g. OpenRouter
-   * attribution headers). Default/undefined means no extra headers.
+   * Optional default headers to send with every request. Default/undefined
+   * means no extra headers.
    */
   defaultHeaders?: Record<string, string>;
+  /**
+   * Reasoning effort for reasoning-capable DeepSeek models. Only emitted for
+   * models that support it (deepseek-v4-pro); silently ignored otherwise so a
+   * non-reasoning model (e.g. deepseek-v4-flash) never receives an unsupported
+   * field. `undefined` → omit entirely (let the API use its own default).
+   */
+  reasoningEffort?: "low" | "medium" | "high";
+}
+
+/** Models that accept a `reasoning: { effort }` body field. */
+function supportsReasoningEffort(wireModel: string): boolean {
+  return wireModel.includes("deepseek-v4-pro");
+}
+
+/**
+ * The `reasoning` fragment to spread into a request body. Emitted ONLY when an
+ * effort is configured AND the target model supports it; otherwise empty (the
+ * field is omitted) so unsupported models never 400 on it.
+ */
+export function reasoningField(
+  wireModel: string,
+  effort: "low" | "medium" | "high" | undefined,
+): { reasoning?: { effort: string } } {
+  return effort && supportsReasoningEffort(wireModel) ? { reasoning: { effort } } : {};
 }
 
 /**
@@ -61,6 +85,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private client: OpenAI;
   private label: string;
   private temperature?: number;
+  private reasoningEffort?: "low" | "medium" | "high";
   private modelName: (model: string) => string;
 
   constructor(opts: OpenAICompatibleOptions) {
@@ -71,6 +96,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     });
     this.label = opts.label;
     this.temperature = opts.temperature;
+    this.reasoningEffort = opts.reasoningEffort;
     this.modelName = opts.modelName ?? ((model) => model);
   }
 
@@ -82,6 +108,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         {
           model: wireModel,
           ...temperatureField(input.temperature, this.temperature),
+          ...reasoningField(wireModel, this.reasoningEffort),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
           tool_choice: input.tools.length ? "auto" : undefined,
@@ -112,6 +139,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         {
           model: wireModel,
           ...temperatureField(input.temperature, this.temperature),
+          ...reasoningField(wireModel, this.reasoningEffort),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
           tool_choice: input.tools.length ? "auto" : undefined,

@@ -330,40 +330,23 @@ function req(name: string, value: string | undefined): string {
   return value;
 }
 
+// deepcoder is DeepSeek-only. `deepseek` is the default; `openai-compatible` is a
+// generic escape hatch (same engine) for a local/proxy/self-hosted DeepSeek
+// endpoint set via DEEPCODER_BASE_URL.
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
-  deepseek: "deepseek-chat",
-  ollama: "llama3.1",
-  "openai-compatible": "gpt-4o-mini",
-  "openai-responses": "gpt-5.3-codex",
-  qwen: "qwen2.5-coder-32b-instruct",
-  // Default Gemini: 3.1 Pro (preview). 3.x works now that the provider
-  // captures/replays Gemini's thought_signature in the tool loop.
-  gemini: "gemini-3.1-pro-preview",
-  anthropic: "claude-3-5-sonnet-latest",
-  // OpenRouter is kept only as a DeepSeek fallback (free models dropped): route
-  // to DeepSeek via OpenRouter, never `openrouter/auto` (which could pick a
-  // pricey model).
-  openrouter: "deepseek/deepseek-chat",
+  deepseek: "deepseek-v4-flash",
+  "openai-compatible": "deepseek-v4-flash",
 };
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
 
 /**
  * Per-provider env-var prefix. Each provider resolves its key/baseUrl/model from
- * its OWN prefix only (e.g. `OPENAI_API_KEY` for openai-compatible), so multiple
- * providers' credentials can live in `.env` uncommented at the same time and
- * `DEEPCODER_PROVIDER` selects which one is active. A prefix never bleeds across
- * providers (a stray `DEEPSEEK_*` cannot satisfy openai-compatible).
+ * its OWN prefix only, so credentials never bleed across providers.
  */
 const PROVIDER_ENV_PREFIX: Record<string, string> = {
   deepseek: "DEEPSEEK",
-  ollama: "OLLAMA",
   "openai-compatible": "OPENAI",
-  "openai-responses": "OPENAI",
-  qwen: "QWEN",
-  gemini: "GEMINI",
-  anthropic: "ANTHROPIC",
-  openrouter: "OPENROUTER",
 };
 
 export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "diagnostics" | "skills" | "dependencyHealing" | "delegate">> & {
@@ -617,23 +600,21 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   // Validate the provider BEFORE requiring a key, so a typo'd provider reports
   // "unknown provider" rather than a misleading "missing API key".
   if (!KNOWN_PROVIDERS.has(provider)) {
-    throw new Error(`Unknown provider "${provider}". Use deepseek | openai-compatible | ollama | qwen | gemini | anthropic | openrouter.`);
+    throw new Error(`Unknown provider "${provider}". Use deepseek | openai-compatible.`);
   }
 
-  // Resolve credentials from the selected provider's OWN prefix (DEEPSEEK_*,
-  // OPENAI_*, GEMINI_*, …). Explicit DEEPCODER_* always wins; a provider never
-  // reads another provider's prefix, so DEEPSEEK_* can't silently satisfy
-  // openai-compatible. This lets every provider's keys stay uncommented in .env.
+  // Resolve credentials from the selected provider's OWN prefix (DEEPSEEK_* or
+  // OPENAI_*). Explicit DEEPCODER_* always wins; a provider never reads another
+  // provider's prefix.
   const prefix = PROVIDER_ENV_PREFIX[provider];
   const providerEnv = (suffix: string): string | undefined =>
     prefix ? process.env[`${prefix}_${suffix}`] : undefined;
 
   const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? providerEnv("API_KEY");
-  // Ollama runs locally and ignores the key, so it isn't required there.
-  const apiKey = provider === "ollama" ? apiKeyRaw ?? "" : req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
+  const apiKey = req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
   const baseUrl = process.env.DEEPCODER_BASE_URL ?? providerEnv("BASE_URL") ?? "";
   const model =
-    process.env.DEEPCODER_MODEL ?? providerEnv("MODEL") ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-chat";
+    process.env.DEEPCODER_MODEL ?? providerEnv("MODEL") ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-v4-flash";
 
   // Temperature: a number, or omitted ("default"/"omit"/"none") so reasoning
   // models can use their own default. Unset → 0 (deterministic, back-compat).
@@ -692,7 +673,9 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     semanticSearch,
     web,
     lsp,
-    reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL"),
+    // Planning/reasoning role defaults to DeepSeek's reasoning model (Pro);
+    // other roles use `model` (Flash) via the model router.
+    reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL") ?? "deepseek-v4-pro",
     planFirst:
       ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||
       ["1", "true", "yes"].includes((process.env.DEEPCODER_SOLVE_PLAN_FIRST ?? "").toLowerCase()),

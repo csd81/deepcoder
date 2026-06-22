@@ -2,17 +2,16 @@
 
 Guidance for AI agents (Codex, Claude, etc.) working in this repo.
 
-## Delegating work to a model worker (DeepSeek / Gemini)
+## Delegating work to a model worker (DeepSeek)
 
-When you delegate a slice of work to a DeepSeek/Gemini worker (deepcoder-as-subagent),
+When you delegate a slice of work to a DeepSeek worker (deepcoder-as-subagent),
 follow the verified playbook: **[docs/delegation-workflow.md](docs/delegation-workflow.md)**.
 
 The non-negotiable highlights:
 
 1. **Override ALL provider env vars inline** — `DEEPCODER_PROVIDER`, `DEEPCODER_MODEL`,
-   `DEEPCODER_BASE_URL`, **and `DEEPCODER_API_KEY`**. The shell's generic `DEEPCODER_*` vars
-   (an OpenAI key) otherwise win and get sent to the wrong provider (→ 401/400). Never run a
-   worker on the global default (`gpt-4o-mini`).
+   `DEEPCODER_BASE_URL`, **and `DEEPCODER_API_KEY`** — so a stray generic `DEEPCODER_*`
+   var can't send the wrong key to DeepSeek (→ 401). `scripts/delegate.sh` does this for you.
 2. **Red-seed first** — commit a tagged failing test that's red on baseline. DeepSeek no-ops
    on a green check, so the red anchor is what forces real implementation.
 3. **Cap `--solve-attempts 3`** — more chokes the worker on re-dumped check output.

@@ -89,25 +89,13 @@ function redactValue(value: unknown): string | boolean | number | null {
 /** Per-provider env-var prefix (mirrors config.ts). */
 const PROVIDER_ENV_PREFIX: Record<string, string> = {
   deepseek: "DEEPSEEK",
-  ollama: "OLLAMA",
   "openai-compatible": "OPENAI",
-  "openai-responses": "OPENAI",
-  qwen: "QWEN",
-  gemini: "GEMINI",
-  anthropic: "ANTHROPIC",
-  openrouter: "OPENROUTER",
 };
 
 /** Default model per provider (mirrors config.ts). */
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
-  deepseek: "deepseek-chat",
-  ollama: "llama3.1",
-  "openai-compatible": "gpt-4o-mini",
-  "openai-responses": "gpt-5.3-codex",
-  qwen: "qwen2.5-coder-32b-instruct",
-  gemini: "gemini-3.1-pro-preview",
-  anthropic: "claude-3-5-sonnet-latest",
-  openrouter: "openrouter/auto",
+  deepseek: "deepseek-v4-flash",
+  "openai-compatible": "deepseek-v4-flash",
 };
 
 interface BuildContext {
@@ -214,7 +202,7 @@ function defineKeys(ctx: BuildContext): DebugConfigEntry[] {
         { source: "env", sourceRef: `${prefix}_API_KEY`, present: providerEnvPresent, wins: !envPresent && providerEnvPresent, value: providerEnvPresent ? "<set>" : undefined, redacted: true },
         { source: "default", sourceRef: "unset", present: false, wins: false, value: "<unset>" },
       ],
-      provider === "ollama" ? ["ollama runs locally; API key is not required"] : undefined,
+      undefined,
     );
   }
 

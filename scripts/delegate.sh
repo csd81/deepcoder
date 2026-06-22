@@ -10,8 +10,7 @@
 # Usage:
 #   scripts/delegate.sh <provider> <task-file> <branch> [attempts] [base]
 #
-#   provider:   deepseek | deepseek-pro | openrouter   (openrouter = DeepSeek via
-#               OpenRouter — the cheap fallback when the direct DeepSeek API is down)
+#   provider:   deepseek | deepseek-pro   (DeepSeek V4 Flash / Pro)
 #   task-file:  path to the worker task contract (e.g. /tmp/task-foo.txt)
 #   branch:     feature branch name; a worktree is created at <repo>/../deleg-<branch>.
 #               If the branch/dir is taken, a numeric slug (-2, -3, …) is appended.
@@ -55,11 +54,9 @@ cd "$REPO"
 case "$provider" in
   deepseek)     P=deepseek   M=deepseek-v4-flash    U=https://api.deepseek.com    K="${DEEPSEEK_API_KEY:-}" ;;
   deepseek-pro) P=deepseek   M=deepseek-v4-pro      U=https://api.deepseek.com    K="${DEEPSEEK_API_KEY:-}" ;;
-  # Fallback: DeepSeek served via OpenRouter (cheap), for when the direct API is down.
-  openrouter)   P=openrouter M=deepseek/deepseek-chat U=https://openrouter.ai/api/v1 K="${OPENROUTER_API_KEY:-}" ;;
-  *) echo "unknown provider '$provider' (want: deepseek | deepseek-pro | openrouter)" >&2; exit 2 ;;
+  *) echo "unknown provider '$provider' (want: deepseek | deepseek-pro)" >&2; exit 2 ;;
 esac
-[ -n "$K" ] || { echo "no API key in env for '$provider' (need DEEPSEEK_API_KEY / OPENROUTER_API_KEY)" >&2; exit 3; }
+[ -n "$K" ] || { echo "no API key in env for '$provider' (need DEEPSEEK_API_KEY)" >&2; exit 3; }
 
 # ── Self-provision the branch worktree (slug-on-collision, like dogfood) ──────
 DIR="$REPO/../deleg-$branch"

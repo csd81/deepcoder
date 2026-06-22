@@ -46,15 +46,7 @@ test("malformed numeric env vars fall back to defaults (no NaN)", () => {
   });
 });
 
-// --- F1: DeepSeek aliases must not leak into other providers ---
-
-test("ollama does not inherit DEEPSEEK_BASE_URL (no silent DeepSeek calls)", () => {
-  withEnv({ DEEPCODER_PROVIDER: "ollama", DEEPSEEK_BASE_URL: "https://api.deepseek.com", DEEPSEEK_API_KEY: "sk-deepseek" }, () => {
-    const cfg = loadConfig({ workspaceRoot: "/tmp" });
-    assert.notEqual(cfg.baseUrl, "https://api.deepseek.com", "DeepSeek base URL must not leak into ollama");
-    assert.equal(cfg.baseUrl, ""); // factory then applies the local Ollama default
-  });
-});
+// --- F1: DeepSeek aliases must not leak into the escape-hatch provider ---
 
 test("openai-compatible is not satisfied by a leftover DEEPSEEK_BASE_URL", () => {
   withEnv({ DEEPCODER_PROVIDER: "openai-compatible", DEEPCODER_API_KEY: "k", DEEPSEEK_BASE_URL: "https://api.deepseek.com" }, () => {
@@ -86,19 +78,6 @@ test("openai-compatible resolves OPENAI_* vars for its own prefix", () => {
     assert.equal(cfg.apiKey, "sk-openai");
     assert.equal(cfg.baseUrl, "https://api.openai.com/v1");
     assert.equal(cfg.model, "gpt-4o-mini");
-  });
-});
-
-test("gemini resolves GEMINI_* vars for its own prefix", () => {
-  withEnv({
-    DEEPCODER_PROVIDER: "gemini",
-    GEMINI_API_KEY: "g-key",
-    GEMINI_BASE_URL: "https://generativelanguage.googleapis.com/v1beta/openai",
-  }, () => {
-    const cfg = loadConfig({ workspaceRoot: "/tmp" });
-    assert.equal(cfg.apiKey, "g-key");
-    assert.equal(cfg.baseUrl, "https://generativelanguage.googleapis.com/v1beta/openai");
-    assert.equal(cfg.model, "gemini-3.1-pro-preview"); // 3.1 Pro (preview); 3.x tool loop works via thought_signature round-trip
   });
 });
 
@@ -160,18 +139,6 @@ test("temperatureField sends a number but OMITS the field when temperature is un
   assert.deepEqual(temperatureField(0.7, 0), { temperature: 0.7 }); // per-call wins
   const omitted = temperatureField(undefined, undefined);
   assert.equal("temperature" in omitted, false, "must not send temperature at all when omitted");
-});
-
-test("openai-responses: resolves OPENAI_* keys, default model gpt-5.3-codex, builds a non-streaming provider", () => {
-  withEnv({ DEEPCODER_PROVIDER: "openai-responses", OPENAI_API_KEY: "sk-o", OPENAI_BASE_URL: "https://api.openai.com/v1" }, () => {
-    const cfg = loadConfig({ workspaceRoot: "/tmp" });
-    assert.equal(cfg.provider, "openai-responses");
-    assert.equal(cfg.apiKey, "sk-o");
-    assert.equal(cfg.model, "gpt-5.3-codex");
-    const p = createProvider(cfg);
-    assert.equal(p.constructor.name, "OpenAIResponsesProvider");
-    assert.equal(typeof p.streamChat, "undefined", "v1 is non-streaming → loop falls back to chat()");
-  });
 });
 
 test("DEEPCODER_REASONING_EFFORT resolves (default medium, validated)", () => {

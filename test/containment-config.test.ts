@@ -17,7 +17,7 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
     for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }
 }
-const KEY = { DEEPCODER_PROVIDER: "openrouter", DEEPCODER_API_KEY: "k" };
+const KEY = { DEEPCODER_PROVIDER: "deepseek", DEEPCODER_API_KEY: "k" };
 
 test("default: containment ON → sandbox is fail-closed bubblewrap/no-mounts", () => {
   withEnv(KEY, () => {

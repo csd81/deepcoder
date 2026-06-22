@@ -31,26 +31,15 @@ export interface CostEstimate {
  * effectiveDate is the date the rate was last reviewed/updated.
  */
 export const DEFAULT_PRICING: ModelPricing[] = [
-  // DeepSeek
+  // DeepSeek — the one supported family.
+  { provider: "deepseek", modelPattern: "deepseek-v4-flash", inputPerMillionUsd: 0.27, outputPerMillionUsd: 1.10, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
+  { provider: "deepseek", modelPattern: "deepseek-v4-pro", inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
+  // Legacy aliases (still route to the same engine; kept for back-compat).
   { provider: "deepseek", modelPattern: "deepseek-chat", inputPerMillionUsd: 0.27, outputPerMillionUsd: 1.10, effectiveDate: "2025-06-01", source: "deepseek.com/pricing" },
   { provider: "deepseek", modelPattern: "deepseek-reasoner", inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19, effectiveDate: "2025-06-01", source: "deepseek.com/pricing" },
-  // OpenAI GPT-4o family
-  { provider: "openai-compatible", modelPattern: "gpt-4o", inputPerMillionUsd: 2.50, outputPerMillionUsd: 10.00, effectiveDate: "2025-06-01", source: "openai.com/pricing" },
-  { provider: "openai-compatible", modelPattern: "gpt-4o-mini", inputPerMillionUsd: 0.15, outputPerMillionUsd: 0.60, effectiveDate: "2025-06-01", source: "openai.com/pricing" },
-  { provider: "openai-compatible", modelPattern: "gpt-5", inputPerMillionUsd: 5.00, outputPerMillionUsd: 20.00, effectiveDate: "2025-06-01", source: "openai.com/pricing" },
-  // OpenAI Responses
-  { provider: "openai-responses", modelPattern: "gpt-4o", inputPerMillionUsd: 2.50, outputPerMillionUsd: 10.00, effectiveDate: "2025-06-01", source: "openai.com/pricing" },
-  { provider: "openai-responses", modelPattern: "gpt-4o-mini", inputPerMillionUsd: 0.15, outputPerMillionUsd: 0.60, effectiveDate: "2025-06-01", source: "openai.com/pricing" },
-  { provider: "openai-responses", modelPattern: "gpt-5", inputPerMillionUsd: 5.00, outputPerMillionUsd: 20.00, effectiveDate: "2025-06-01", source: "openai.com/pricing" },
-  // Gemini
-  { provider: "gemini", modelPattern: "gemini-3.1-pro-preview", inputPerMillionUsd: 1.25, outputPerMillionUsd: 5.00, effectiveDate: "2025-06-01", source: "ai.google.dev/pricing" },
-  { provider: "gemini", modelPattern: "gemini-3", inputPerMillionUsd: 1.25, outputPerMillionUsd: 5.00, effectiveDate: "2025-06-01", source: "ai.google.dev/pricing" },
-  // Anthropic
-  { provider: "anthropic", modelPattern: "claude-3-5-sonnet", inputPerMillionUsd: 3.00, outputPerMillionUsd: 15.00, effectiveDate: "2025-06-01", source: "anthropic.com/pricing" },
-  { provider: "anthropic", modelPattern: "claude-3-5-haiku", inputPerMillionUsd: 0.80, outputPerMillionUsd: 4.00, effectiveDate: "2025-06-01", source: "anthropic.com/pricing" },
-  { provider: "anthropic", modelPattern: "claude-3-opus", inputPerMillionUsd: 15.00, outputPerMillionUsd: 75.00, effectiveDate: "2025-06-01", source: "anthropic.com/pricing" },
-  // Ollama (local — free, but show a nominal rate so cost is "known")
-  { provider: "ollama", modelPattern: "*", inputPerMillionUsd: 0, outputPerMillionUsd: 0, effectiveDate: "2025-06-01", source: "local (free)" },
+  // openai-compatible escape hatch defaults to a DeepSeek endpoint.
+  { provider: "openai-compatible", modelPattern: "deepseek-v4-flash", inputPerMillionUsd: 0.27, outputPerMillionUsd: 1.10, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
+  { provider: "openai-compatible", modelPattern: "deepseek-v4-pro", inputPerMillionUsd: 0.55, outputPerMillionUsd: 2.19, effectiveDate: "2026-06-01", source: "deepseek.com/pricing" },
 ];
 
 /**

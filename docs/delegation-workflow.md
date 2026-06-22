@@ -1,8 +1,8 @@
-# Delegating work to a model worker (DeepSeek / Gemini)
+# Delegating work to a model worker (DeepSeek)
 
 This is the **verified, working** workflow for delegating a bounded slice of work to a
-DeepSeek (or Gemini) worker running deepcoder-as-subagent, then verifying and landing the
-result in-house. Follow it exactly — the ordering and the env overrides matter.
+DeepSeek worker running deepcoder-as-subagent, then verifying and landing the result
+in-house. Follow it exactly — the ordering and the env overrides matter.
 
 > TL;DR: bound the slice → red-seed a tagged failing test → launch the worker with the
 > correct provider env overrides → **verify the patch yourself** (scope + red-on-baseline +
@@ -15,20 +15,19 @@ result in-house. Follow it exactly — the ordering and the env overrides matter
 The shell profile exports generic `DEEPCODER_*` vars (an OpenAI key + base URL + a default
 `gpt-4o-mini`). Those **generic vars win** over provider-specific ones in deepcoder's config
 resolution (`DEEPCODER_API_KEY ?? providerEnv("API_KEY")`). So setting only
-`DEEPCODER_PROVIDER`/`DEEPCODER_MODEL` sends the **OpenAI key to DeepSeek** → `401`, or to
-Gemini → `400 "Please pass a valid API key"`. The provider keys are NOT revoked; they're
-just never used.
+`DEEPCODER_PROVIDER`/`DEEPCODER_MODEL` sends the wrong key to DeepSeek → `401`. The
+provider keys are NOT revoked; they're just never used.
 
-**Always override ALL of these inline** when launching a non-OpenAI provider:
+**Always override ALL of these inline** when launching a worker:
 
 | Provider | DEEPCODER_PROVIDER | DEEPCODER_MODEL | DEEPCODER_BASE_URL | DEEPCODER_API_KEY |
 |---|---|---|---|---|
-| DeepSeek | `deepseek` | `deepseek-v4-flash` (or `deepseek-chat`) | `https://api.deepseek.com` | `$DEEPSEEK_API_KEY` |
-| Gemini | `gemini` | `gemini-3.1-pro-preview` | `https://generativelanguage.googleapis.com/v1beta/openai` | `$GEMINI_API_KEY` |
+| DeepSeek (Flash) | `deepseek` | `deepseek-v4-flash` | `https://api.deepseek.com` | `$DEEPSEEK_API_KEY` |
+| DeepSeek (Pro)   | `deepseek` | `deepseek-v4-pro`   | `https://api.deepseek.com` | `$DEEPSEEK_API_KEY` |
 
-- **Never** run a worker on the global default (`openai-compatible` / `gpt-4o-mini`).
-- Provider keys live in the shell env (`$DEEPSEEK_API_KEY`, `$GEMINI_API_KEY`). Never print,
-  log, or commit them. Inject as an env var; never interpolate into a string.
+- **Never** run a worker on the global default base URL.
+- The DeepSeek key lives in the shell env (`$DEEPSEEK_API_KEY`). Never print,
+  log, or commit it. Inject as an env var; never interpolate into a string.
 - DeepSeek model ids: `deepseek-v4-flash` (chat/edit) and `deepseek-v4-pro` (reasoning) are
   the modern names; `deepseek-chat`/`deepseek-reasoner` still work (deprecate 2026-07-24).
 
@@ -210,9 +209,9 @@ Seed each slice (sequential commits), then fire the workers from one checkout wi
 ```bash
 # 1. seed each slice's red test and commit (sequential — they're tiny)
 # 2. launch all workers at once (5th arg = keep):
-scripts/delegate.sh deepseek /tmp/task-A.txt /tmp/A.log 3 keep
-scripts/delegate.sh deepseek /tmp/task-B.txt /tmp/B.log 3 keep
-scripts/delegate.sh gemini   /tmp/task-C.txt /tmp/C.log 3 keep
+scripts/delegate.sh deepseek     /tmp/task-A.txt /tmp/A.log 3 keep
+scripts/delegate.sh deepseek     /tmp/task-B.txt /tmp/B.log 3 keep
+scripts/delegate.sh deepseek-pro /tmp/task-C.txt /tmp/C.log 3 keep
 # 3. as each finishes (`patch written`), apply its UNIQUE patch on a clean baseline and
 #    verify-then-force (section 5). Clean ONLY each run's own ws path — never blanket-rm.
 ```
@@ -269,8 +268,8 @@ Notes:
 ## Model choice
 
 - **`deepseek-v4-flash`** — bounded, well-seeded slices (cheap, one-passes most). Default.
-- **`deepseek-v4-pro` / Gemini `gemini-3.1-pro-preview`** — ambiguous refactors, security-
-  sensitive or cross-cutting work where Flash tends to do partial work.
+- **`deepseek-v4-pro`** — ambiguous refactors, security-sensitive or cross-cutting work
+  where Flash tends to do partial work.
 - Verification is model-agnostic, so a weaker model never risks correctness — a shortfall just
   shows up as a failed verify and you escalate.
 

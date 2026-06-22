@@ -13,7 +13,6 @@ import { runAgentLoop, type AgentDeps } from "../agent/agentLoop.js";
 import { runPreToolUseHooks, runAdvisoryHooks, type HookRunContext } from "../hooks/runner.js";
 import type { HookEvent } from "../hooks/types.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
-import { shouldInjectWebAwarePrompt } from "../web/searchCapableRouting.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import {
   buildInstructionGraph,
@@ -302,8 +301,9 @@ export function systemMessage(
       solve: config.solve,
       memory,
       skillsCatalog,
-      // 10E7: OpenRouter routes may answer from provider-side web knowledge.
-      webAware: shouldInjectWebAwarePrompt({ webAware: config.provider === "openrouter" }),
+      // DeepSeek-only: no kept provider answers from provider-side web knowledge,
+      // so the web-aware prompt is never injected.
+      webAware: false,
     }),
   };
 }

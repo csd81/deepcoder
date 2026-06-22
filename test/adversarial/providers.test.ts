@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createProvider, geminiWireModelName } from "../../src/providers/factory.js";
+import { createProvider } from "../../src/providers/factory.js";
 import {
   createToolCallAccumulator,
   mapProviderError,
   OpenAICompatibleProvider,
+  reasoningField,
 } from "../../src/providers/openaiCompatible.js";
 import { DeepSeekProvider } from "../../src/providers/deepseek.js";
-import { AnthropicProvider } from "../../src/providers/anthropic.js";
 import { checkPermission } from "../../src/permissions/policy.js";
 import type { Config } from "../../src/config/config.js";
 import type { ToolInvocation } from "../../src/tools/types.js";
@@ -22,30 +22,32 @@ function cfg(over: Partial<Config>): Config {
 
 // --- Factory ---
 
-test("factory builds a provider for each supported backend", () => {
+test("factory builds a provider for each supported backend (DeepSeek-only)", () => {
   assert.ok(createProvider(cfg({ provider: "deepseek" })) instanceof OpenAICompatibleProvider);
-  assert.ok(createProvider(cfg({ provider: "ollama", apiKey: "" })) instanceof OpenAICompatibleProvider); // no key needed
   assert.ok(createProvider(cfg({ provider: "openai-compatible", baseUrl: "https://x.example/v1" })) instanceof OpenAICompatibleProvider);
-  assert.ok(createProvider(cfg({ provider: "qwen" })) instanceof OpenAICompatibleProvider); // DashScope preset
-  assert.ok(createProvider(cfg({ provider: "gemini" })) instanceof OpenAICompatibleProvider); // OpenAI-compat endpoint
-  assert.ok(createProvider(cfg({ provider: "anthropic" })) instanceof AnthropicProvider); // native adapter
 });
 
 test("openai-compatible without a base URL fails with a clear error", () => {
   assert.throws(() => createProvider(cfg({ provider: "openai-compatible", baseUrl: "" })), /requires a base URL/);
 });
 
-test("unknown provider is rejected", () => {
-  assert.throws(() => createProvider(cfg({ provider: "totally-made-up" })), /Unknown provider/);
+test("removed providers are now rejected (DeepSeek-only)", () => {
+  for (const p of ["ollama", "qwen", "gemini", "anthropic", "openai-responses", "openrouter", "totally-made-up"]) {
+    assert.throws(() => createProvider(cfg({ provider: p })), /Unknown provider/, `provider "${p}" must be rejected`);
+  }
 });
 
 test("DeepSeekProvider preset still constructs (back-compat)", () => {
   assert.ok(new DeepSeekProvider({ apiKey: "k" }) instanceof OpenAICompatibleProvider);
 });
 
-test("Gemini model names are normalized only for Google's OpenAI-compatible endpoint", () => {
-  assert.equal(geminiWireModelName("gemini-3.5-flash"), "models/gemini-3.5-flash");
-  assert.equal(geminiWireModelName("models/gemini-3.5-flash"), "models/gemini-3.5-flash");
+test("reasoningField is emitted ONLY for reasoning-capable models (deepseek-v4-pro)", () => {
+  // Pro + an effort → reasoning block present.
+  assert.deepEqual(reasoningField("deepseek-v4-pro", "high"), { reasoning: { effort: "high" } });
+  // Flash must NEVER receive the field (it would 400 on it).
+  assert.deepEqual(reasoningField("deepseek-v4-flash", "high"), {});
+  // No effort configured → omit entirely even for Pro.
+  assert.deepEqual(reasoningField("deepseek-v4-pro", undefined), {});
 });
 
 // --- Streaming tool-call accumulation ---

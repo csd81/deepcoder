@@ -29,10 +29,10 @@ test("system prompt tells the model to batch independent tool calls in one turn"
 });
 
 test("default turn cap is raised from 20 to 40 (env still overrides)", () => {
-  withEnv({ DEEPCODER_PROVIDER: "openrouter", OPENROUTER_API_KEY: "k" }, () => {
+  withEnv({ DEEPCODER_PROVIDER: "deepseek", DEEPCODER_API_KEY: "k" }, () => {
     assert.equal(loadConfig({ workspaceRoot: "/tmp" }).maxTurns, 40);
   });
-  withEnv({ DEEPCODER_PROVIDER: "openrouter", OPENROUTER_API_KEY: "k", DEEPCODER_MAX_TURNS: "75" }, () => {
+  withEnv({ DEEPCODER_PROVIDER: "deepseek", DEEPCODER_API_KEY: "k", DEEPCODER_MAX_TURNS: "75" }, () => {
     assert.equal(loadConfig({ workspaceRoot: "/tmp" }).maxTurns, 75);
   });
 });

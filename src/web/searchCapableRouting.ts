@@ -40,16 +40,16 @@ export interface ModelRouteCapabilities {
 // ─────────────────────────────────────────────────────────
 
 /**
- * A citation returned by a provider (e.g. OpenRouter) that may have used
- * provider-side search or may only be generated text.
+ * A citation returned by a provider that may have used provider-side search or
+ * may only be generated text.
  *
  * These are stored separately from WebTraceRecord — they are advisory until
  * verified with local web_fetch.
  */
 export interface ProviderCitation {
-  /** Provider name, e.g. "openrouter". */
+  /** Provider name, e.g. "deepseek". */
   provider: string;
-  /** Model name, e.g. "openrouter/auto". */
+  /** Model name, e.g. "deepseek-v4-flash". */
   model: string;
   /** The URL being cited. */
   url: string;
