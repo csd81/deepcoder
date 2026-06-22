@@ -1,5 +1,5 @@
 import path from "node:path";
-import { realpathSync } from "node:fs";
+import { realpathSync, lstatSync, readlinkSync } from "node:fs";
 
 /**
  * Resolve a user/model-supplied path against the workspace root and guarantee
@@ -95,6 +95,7 @@ export function resolveRealPathInWorkspace(workspaceRoot: string, p: string): st
 
   // Find the nearest existing ancestor (the file may not exist yet).
   let probe = resolved;
+  let hops = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -106,6 +107,30 @@ export function resolveRealPathInWorkspace(workspaceRoot: string, p: string): st
       return resolved;
     } catch (err) {
       if (err instanceof Error && err.message.includes("outside the workspace")) throw err;
+      // realpathSync threw because the path is missing OR is a BROKEN symlink
+      // (its target doesn't exist — same ENOENT). A broken symlink is the
+      // dangerous case: a write to it follows the link and escapes. Detect a
+      // symlink at `probe`, validate its target lexically (it may not exist
+      // yet), and follow the chain — checking containment at every hop.
+      let st: ReturnType<typeof lstatSync> | undefined;
+      try {
+        st = lstatSync(probe);
+      } catch {
+        st = undefined; // truly absent — climb to the parent
+      }
+      if (st?.isSymbolicLink()) {
+        if (++hops > 40) {
+          throw new Error(`Path "${p}" resolves (via symlink) outside the workspace root.`);
+        }
+        const target = readlinkSync(probe);
+        const targetAbs = path.resolve(path.dirname(probe), target);
+        const relT = path.relative(realRoot, targetAbs);
+        if (relT !== "" && (relT.startsWith("..") || path.isAbsolute(relT))) {
+          throw new Error(`Path "${p}" resolves (via symlink) outside the workspace root.`);
+        }
+        probe = targetAbs; // re-probe the (in-workspace) target on the next loop
+        continue;
+      }
       const parent = path.dirname(probe);
       if (parent === probe) return resolved; // reached filesystem root
       probe = parent;
