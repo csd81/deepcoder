@@ -21,6 +21,7 @@ import { defaultRegistry } from "../tools/registry.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
 import { systemMessage, resolveInstructions, type Session } from "../cli/repl.js";
+import { initPlanMode } from "../cli/planMode.js";
 import {
   SessionStore,
   newSessionId,
@@ -296,6 +297,7 @@ export async function buildSession(
       telemetry: saved.telemetry,
       modelRouter,
       providerPool,
+      planState: initPlanMode(),
     };
   }
 
@@ -321,5 +323,6 @@ export async function buildSession(
     tokenUsage: { ...EMPTY_USAGE },
     modelRouter,
     providerPool,
+    planState: initPlanMode(),
   };
 }
