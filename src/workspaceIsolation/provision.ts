@@ -28,8 +28,17 @@ export async function provisionWorktree(
     const link = path.join(isolatedRoot, name);
     if (!(await exists(target))) continue; // nothing to provision
     if (await exists(link)) continue; // already present (e.g. tracked) — never shadow
+    // Windows distinguishes "dir" vs "file" symlinks; a "dir" link to a file is
+    // broken there. POSIX ignores the type. Pick it from the real target so a
+    // file dependency (e.g. a lockfile) links correctly cross-platform.
+    let type: "dir" | "file" = "dir";
     try {
-      await symlink(target, link, "dir");
+      type = (await stat(target)).isDirectory() ? "dir" : "file";
+    } catch {
+      /* target vanished between checks; keep default and let symlink fail below */
+    }
+    try {
+      await symlink(target, link, type);
       out.push({ link, target });
     } catch {
       /* a provisioning failure is non-fatal; the check will report if it can't run */
