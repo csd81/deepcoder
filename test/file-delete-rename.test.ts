@@ -46,7 +46,7 @@ test("delete_file refuses a path escaping the workspace (nothing deleted)", asyn
     await assert.rejects(async () => {
       const inv = deleteFileTool.build({ path: "../escape.txt" });
       await inv.execute(ctx(root, []));
-    }, "out-of-workspace delete is refused");
+    });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -57,7 +57,7 @@ test("delete_file refuses a sensitive path (.env)", async () => {
     await assert.rejects(async () => {
       const inv = deleteFileTool.build({ path: ".env" });
       await inv.execute(ctx(root, []));
-    }, ".env is protected");
+    });
     await stat(path.join(root, ".env")); // still there
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -82,7 +82,7 @@ test("rename_file refuses a destination escaping the workspace (no write)", asyn
     await assert.rejects(async () => {
       const inv = renameFileTool.build({ from: "a.ts", to: "../escaped.ts" });
       await inv.execute(ctx(root, []));
-    }, "out-of-workspace destination is refused");
+    });
     await stat(path.join(root, "a.ts")); // source untouched
   } finally { await rm(root, { recursive: true, force: true }); }
 });
