@@ -108,6 +108,30 @@ test("an explicit DEEPCODER_API_KEY still overrides the per-provider key", () =>
   });
 });
 
+// --- ConfigOverrides.apiKey / .provider must be honoured (dogfood #3) ---
+// loadConfig resolved apiKey/provider from process.env ONLY, ignoring the values
+// passed via ConfigOverrides. A caller (library/test) passing { apiKey } with no
+// env var would hit a "Missing required config" throw; passing { provider } left
+// every provider-derived default (credential prefix, model, context budget) on the
+// deepseek default even though the final .provider field was corrected by ...rest.
+
+test("ConfigOverrides.apiKey is honoured when no env key is set", () => {
+  withEnv({}, () => {
+    const cfg = loadConfig({ workspaceRoot: "/tmp", apiKey: "sk-via-override" });
+    assert.equal(cfg.apiKey, "sk-via-override");
+  });
+});
+
+test("ConfigOverrides.provider drives the provider-derived defaults, not just the final field", () => {
+  withEnv({ DEEPCODER_API_KEY: "k" }, () => {
+    const cfg = loadConfig({ workspaceRoot: "/tmp", provider: "openai-compatible" });
+    assert.equal(cfg.provider, "openai-compatible");
+    // Derived from the provider: must reflect the override, not deepseek's 1M/0.95.
+    assert.equal(cfg.contextBudgetTokens, 120_000);
+    assert.equal(cfg.compactAt, 0.8);
+  });
+});
+
 // --- Configurable temperature (lets GPT-5 reasoning models work via chat/completions) ---
 
 test("DEEPCODER_TEMPERATURE unset defaults to 0 (deterministic, back-compat)", () => {

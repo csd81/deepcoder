@@ -611,7 +611,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     pathRules: fileTestTargeting.pathRules ?? DEFAULT_TEST_TARGETING.pathRules,
   };
 
-  const provider = (process.env.DEEPCODER_PROVIDER || "deepseek").toLowerCase();
+  const provider = (overrides.provider ?? (process.env.DEEPCODER_PROVIDER || "deepseek")).toLowerCase();
   // Validate the provider BEFORE requiring a key, so a typo'd provider reports
   // "unknown provider" rather than a misleading "missing API key".
   if (!KNOWN_PROVIDERS.has(provider)) {
@@ -625,7 +625,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const providerEnv = (suffix: string): string | undefined =>
     prefix ? process.env[`${prefix}_${suffix}`] : undefined;
 
-  const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? providerEnv("API_KEY");
+  const apiKeyRaw = overrides.apiKey ?? process.env.DEEPCODER_API_KEY ?? providerEnv("API_KEY");
   // The faux smoke-harness provider makes no network calls, so it needs no key.
   const apiKey = provider === "faux" ? (apiKeyRaw ?? "") : req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
   const baseUrl = process.env.DEEPCODER_BASE_URL ?? providerEnv("BASE_URL") ?? "";
