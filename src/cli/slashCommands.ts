@@ -2457,6 +2457,29 @@ export async function handleSlashCommand(
       await runGoalSlash(session, arg, save);
       return { consumed: true };
 
+    case "title": {
+      const trimmed = arg.trim();
+      if (!trimmed) {
+        console.log(session.title ? chalk.dim(`Session title: ${session.title}`) : chalk.dim("No title set. Use /title <name>."));
+        return { consumed: true };
+      }
+      if (trimmed.length > 120) {
+        console.log(chalk.red("Title too long (max 120 chars)."));
+        return { consumed: true };
+      }
+      session.title = trimmed;
+      save();
+      console.log(chalk.dim(`Title set to: ${trimmed}`));
+      return { consumed: true };
+    }
+
+    case "clear-title": {
+      session.title = undefined;
+      save();
+      console.log(chalk.dim("Title cleared."));
+      return { consumed: true };
+    }
+
     default:
       console.log(chalk.dim(`Unknown command: /${cmd}. Try /help.`));
       return { consumed: true };

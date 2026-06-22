@@ -19,6 +19,8 @@ export interface PersistedSession {
   messages: AgentMessage[];
   todos: Todo[];
   readTracker: string[];
+  /** Human-readable session label, set via /title or --title. Optional; absent in pre-title sessions. */
+  title?: string;
   /** Absolute real paths the agent has mutated (for checkpoint scoping). */
   writeTracker?: string[];
   /** Not-yet-finalized checkpoint pre-images (manual mode survives a restart). */
@@ -47,6 +49,7 @@ export interface SessionSnapshot {
   messages: AgentMessage[];
   todos: Todo[];
   readTracker: Set<string>;
+  title?: string;
   writeTracker: Set<string>;
   pendingCheckpoint: CheckpointFile[];
   reviews: SubagentRunRecord[];
@@ -100,6 +103,7 @@ export class SessionStore {
       telemetry: snapshot.telemetry,
       webTrace: snapshot.webTrace,
       goal: snapshot.goal,
+      title: snapshot.title,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };
@@ -121,6 +125,7 @@ export interface SessionMeta {
   id: string;
   updatedAt: string;
   messageCount: number;
+  title?: string;
 }
 
 export async function listSessions(workspaceRoot: string): Promise<SessionMeta[]> {
@@ -134,7 +139,7 @@ export async function listSessions(workspaceRoot: string): Promise<SessionMeta[]
   for (const f of files) {
     try {
       const s = JSON.parse(await fs.readFile(path.join(sessionsDir(workspaceRoot), f), "utf8")) as PersistedSession;
-      metas.push({ id: s.id, updatedAt: s.updatedAt, messageCount: s.messages.length });
+      metas.push({ id: s.id, updatedAt: s.updatedAt, messageCount: s.messages.length, title: s.title });
     } catch {
       // skip corrupt files
     }
