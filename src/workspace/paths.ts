@@ -18,6 +18,20 @@ export function resolveInWorkspace(workspaceRoot: string, p: string): string {
 }
 
 /**
+ * Phase 10S — reject a glob pattern that could escape the workspace. The glob
+ * walk only descends from the root (safe by construction), but this hardens the
+ * input so an absolute or `..`-bearing pattern is refused outright.
+ */
+export function validateGlobPattern(pattern: string): void {
+  if (pattern.startsWith("/")) {
+    throw new Error(`Glob pattern "${pattern}" must be workspace-relative (no leading "/").`);
+  }
+  if (pattern === ".." || pattern.startsWith("../") || pattern.includes("/../") || pattern.endsWith("/..")) {
+    throw new Error(`Glob pattern "${pattern}" must not escape the workspace (no "..").`);
+  }
+}
+
+/**
  * Validate a store id (session / checkpoint / check-run) before it's used to
  * build a filesystem path. Rejects `..`, slashes, and anything outside a safe
  * charset, so a crafted `--resume ../../x` can't read/write outside the store.

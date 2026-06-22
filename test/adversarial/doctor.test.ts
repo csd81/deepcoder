@@ -52,6 +52,7 @@ function makeMinimalConfig(overrides?: Partial<Config>): Config {
     mcpExecuteEnabled: false,
     interactiveShell: false,
     sandbox,
+    containment: { enabled: false },
     workspaceIsolation: wsIsolation,
     hooks,
     diagnostics: { mode: "off", debounceMs: 2000, concurrency: 1, maxOutputBytes: 4096, maxTotalOutputBytes: 16384, timeoutMs: 15000, allowAllTools: false, allowCommands: [] },

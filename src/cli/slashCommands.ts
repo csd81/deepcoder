@@ -1077,6 +1077,7 @@ export async function handleSlashCommand(
         mcpStatus.filter((s) => s.mode === mode).reduce((n, s) => n + s.tools.length, 0);
       const summary = await buildPermissionSummary({
         approvalMode: session.mode,
+        containmentEnabled: config.containment.enabled,
         sandboxConfig: config.sandbox,
         workspaceIsolationConfig: config.workspaceIsolation,
         hooksConfig: config.hooks,

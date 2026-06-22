@@ -29,6 +29,8 @@ import type { ResolvedBackend } from "../sandbox/index.js";
 
 export interface PermissionSummary {
   approvalMode: ApprovalMode;
+  /** Phase 10S — workspace containment (fail-closed, workspace-locked) status. */
+  containment: { enabled: boolean };
   sandbox: {
     mode: SandboxMode;
     backend: string;
@@ -69,6 +71,7 @@ export interface PermissionSummary {
 
 export interface PermissionSummaryInput {
   approvalMode: ApprovalMode;
+  containmentEnabled: boolean;
   sandboxConfig: SandboxConfig;
   workspaceIsolationConfig: WorkspaceIsolationConfig;
   hooksConfig: HooksConfig;
@@ -205,6 +208,7 @@ export async function buildPermissionSummary(
 
   return {
     approvalMode: input.approvalMode,
+    containment: { enabled: input.containmentEnabled },
     sandbox: {
       mode: input.sandboxConfig.mode,
       backend,
@@ -256,6 +260,9 @@ export function formatPermissionSummary(summary: PermissionSummary): string {
   const lines: string[] = ["Permissions"];
 
   lines.push(`  approval mode: ${summary.approvalMode}`);
+  if (summary.containment.enabled) {
+    lines.push(`  containment: ON (workspace-locked, fail-closed)`);
+  }
 
   const sb = summary.sandbox;
   const backendStatus = sb.backendOk ? sb.backend : `${sb.backend} (unavailable)`;

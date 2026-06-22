@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
-import { displayPath } from "../workspace/paths.js";
+import { displayPath, validateGlobPattern } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 
 const schema = z.object({
@@ -26,6 +26,7 @@ export const globTool: Tool = {
       kind: "read-only",
       describe: () => `glob ${args.pattern}`,
       async execute(ctx) {
+        validateGlobPattern(args.pattern); // 10S: reject absolute/.. patterns
         const re = globToRegExp(args.pattern);
         const matches: string[] = [];
         await walk(ctx.workspaceRoot, ctx.workspaceRoot, re, matches, ctx.signal);

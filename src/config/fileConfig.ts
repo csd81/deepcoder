@@ -37,6 +37,7 @@ export interface FileConfig {
   mcpServers?: Record<string, McpServerConfig>;
   checks?: Record<string, CheckConfig>;
   sandbox?: Partial<SandboxConfig>;
+  containment?: { enabled?: boolean };
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
   context?: Partial<ContextConfig>;
@@ -263,6 +264,14 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "sandbox": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
+  const rawContain = (parsed as { containment?: unknown }).containment;
+  let containment: { enabled?: boolean } | undefined;
+  if (rawContain && typeof rawContain === "object") {
+    const result = z.object({ enabled: z.boolean().optional() }).safeParse(rawContain);
+    if (result.success) containment = result.data;
+    else warn(`ignoring "containment": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
   const rawIso = (parsed as { workspaceIsolation?: unknown }).workspaceIsolation;
   let workspaceIsolation: Partial<WorkspaceIsolationConfig> | undefined;
   if (rawIso && typeof rawIso === "object") {
@@ -411,7 +420,7 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     };
   }
 
-  return { mcpServers, checks, sandbox, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch };
+  return { mcpServers, checks, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch };
 }
 
 function warn(msg: string): void {

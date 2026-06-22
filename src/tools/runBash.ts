@@ -26,9 +26,16 @@ export const runBashTool: Tool = {
       execute(ctx) {
         // Isolate the command when a sandbox is configured (run_bash is an
         // execute-kind tool — exactly what tool-level sandboxing targets).
-        const toRun = ctx.sandbox
-          ? wrapCommand({ command: args.command, workspaceRoot: ctx.workspaceRoot }, ctx.sandbox).command
-          : args.command;
+        // 10S: under containment, wrapCommand throws if bubblewrap is missing —
+        // fail closed with a clear message instead of an unhandled rejection.
+        let toRun: string;
+        try {
+          toRun = ctx.sandbox
+            ? wrapCommand({ command: args.command, workspaceRoot: ctx.workspaceRoot }, ctx.sandbox).command
+            : args.command;
+        } catch (e) {
+          return Promise.resolve({ output: `Workspace containment requires bubblewrap; install it or drop --contain. (${(e as Error).message})`, isError: true });
+        }
         const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
         return new Promise((resolve) => {
           if (ctx.signal.aborted) {

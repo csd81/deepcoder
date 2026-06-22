@@ -3,6 +3,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { loadConfig, type ApprovalMode } from "../config/config.js";
 import type { SandboxMode } from "../sandbox/types.js";
+import { bwrapAvailable } from "../sandbox/index.js";
 import type { WorkspaceIsolationMode } from "../workspaceIsolation/types.js";
 import { runOneShot, runRepl, runTuiRepl } from "./repl.js";
 import { resolveUiMode } from "../ui/uiMode.js";
@@ -28,6 +29,8 @@ program
   .option("--telemetry <path>", "write a solve telemetry JSON to this path (headless eval)")
   .option("--preflight", "run context preflight (plan + explorer) before solve attempt 1")
   .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
+  .option("--contain", "hard workspace containment: no file/shell access escapes the workspace (requires bubblewrap)")
+  .option("--no-contain", "disable workspace containment (default)")
   .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
   .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
   .option("--tui", "interactive: use the experimental scrollable terminal UI (TTY only)")
@@ -50,6 +53,7 @@ program
         reproPath?: string;
         telemetry?: string;
         sandbox?: string;
+        contain?: boolean;
         workspaceIsolation?: string;
         workspaceIsolationIncludeDirty?: boolean;
         tui?: boolean;
@@ -70,6 +74,9 @@ program
       ...(opts.reproPath ? { solveReproPath: opts.reproPath } : {}),
       ...(opts.telemetry ? { solveTelemetry: opts.telemetry } : {}),
       ...(opts.sandbox ? { sandbox: { mode: opts.sandbox as SandboxMode } } : {}),
+      // --contain / --no-contain → commander gives opts.contain (boolean | undefined).
+      // undefined leaves env/file to decide; a boolean makes the CLI win.
+      ...(opts.contain !== undefined ? { containment: { enabled: opts.contain } } : {}),
       ...(opts.workspaceIsolation || opts.workspaceIsolationIncludeDirty
         ? {
             workspaceIsolation: {
@@ -79,6 +86,14 @@ program
           }
         : {}),
     });
+    // Phase 10S — fail closed early: containment is meaningless without bubblewrap.
+    if (baseConfig.containment.enabled && !bwrapAvailable()) {
+      console.error(chalk.red(
+        "Workspace containment (--contain) requires bubblewrap (bwrap), which is not available here.\n" +
+        "Install bubblewrap, or drop --contain to run without containment.",
+      ));
+      process.exit(1);
+    }
     if (opts.preflight) baseConfig.context.preflight = true;
 
     if (opts.listSessions) {

@@ -123,6 +123,7 @@ function makeCheckConfig(command: string): CheckConfig {
 function makeMinimalInput(overrides?: Partial<PermissionSummaryInput>): PermissionSummaryInput {
   return {
     approvalMode: "ask",
+    containmentEnabled: false,
     sandboxConfig: { ...DEFAULT_SANDBOX },
     workspaceIsolationConfig: { ...DEFAULT_WS_ISOLATION },
     hooksConfig: { ...DEFAULT_HOOKS },
@@ -255,6 +256,7 @@ test("6. Plugin trust counts are computed without executing plugins", async () =
 test("7. Formatter output is bounded and deterministic", async () => {
   const summary: PermissionSummary = {
     approvalMode: "ask",
+    containment: { enabled: false },
     sandbox: {
       mode: "fast",
       backend: "bubblewrap",
@@ -301,6 +303,7 @@ test("7. Formatter output is bounded and deterministic", async () => {
 test("8. JSON-like summary contains no secrets", async () => {
   const summary: PermissionSummary = {
     approvalMode: "readonly",
+    containment: { enabled: false },
     sandbox: {
       mode: "off",
       backend: "off",

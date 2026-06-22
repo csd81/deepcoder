@@ -2,6 +2,7 @@ import "dotenv/config";
 import { loadFileConfig, type McpServerConfig, type CheckConfig, type TelemetryConfig } from "./fileConfig.js";
 import { isWorkspaceTrusted } from "./trust.js";
 import { DEFAULT_SANDBOX, type SandboxConfig, type SandboxMode } from "../sandbox/types.js";
+import { DEFAULT_CONTAINMENT, applyContainment, type ContainmentConfig } from "../containment/types.js";
 import {
   DEFAULT_WORKSPACE_ISOLATION,
   type WorkspaceIsolationConfig,
@@ -111,6 +112,9 @@ export interface Config {
    * Precedence: CLI `--sandbox` > `DEEPCODER_SANDBOX` env > config file > default `fast`.
    */
   sandbox: SandboxConfig;
+  /** Phase 10S — opt-in workspace containment (fail-closed, default off). When
+   *  enabled, `sandbox` is rewritten to a workspace-only bubblewrap profile. */
+  containment: ContainmentConfig;
   /**
    * Workspace isolation policy. When not "off", agent file edits + checks run in
    * a disposable git worktree (execution plane); config/sessions stay on the real
@@ -415,6 +419,16 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...(SANDBOX_MODES.includes(envMode as SandboxMode) ? { mode: envMode as SandboxMode } : {}),
   };
 
+  // Phase 10S — workspace containment: default < config file < env gate < CLI.
+  const containEnv = (process.env.DEEPCODER_CONTAIN ?? "").toLowerCase();
+  const containment: ContainmentConfig = {
+    ...DEFAULT_CONTAINMENT,
+    ...(file.containment ?? {}),
+    ...(["1", "true", "yes"].includes(containEnv) ? { enabled: true } : {}),
+    ...(["0", "false", "no"].includes(containEnv) ? { enabled: false } : {}),
+    ...(overrides.containment ?? {}), // CLI wins
+  };
+
   const envIso = (process.env.DEEPCODER_WORKSPACE_ISOLATION || "").toLowerCase();
   const workspaceIsolation: WorkspaceIsolationConfig = {
     ...DEFAULT_WORKSPACE_ISOLATION,
@@ -670,8 +684,12 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       process.env.DEEPCODER_INTERACTIVE_SHELL === "true", // Phase 10G: default-off
     ...rest,
     // A CLI partial (e.g. {mode}) layers on top of the file/env-resolved sandbox
-    // rather than replacing it wholesale.
-    sandbox: { ...sandbox, ...(sandboxOverride ?? {}) },
+    // rather than replacing it wholesale. 10S: when containment is on it WINS —
+    // the effective sandbox becomes fail-closed workspace-only (overrides --sandbox).
+    sandbox: containment.enabled
+      ? applyContainment({ ...sandbox, ...(sandboxOverride ?? {}) })
+      : { ...sandbox, ...(sandboxOverride ?? {}) },
+    containment,
     workspaceIsolation: { ...workspaceIsolation, ...(wsIsoOverride ?? {}) },
     hooks: { ...hooks, ...(overrides.hooks ?? {}) },
     diagnostics: { ...diagnostics, ...(overrides.diagnostics ?? {}) },

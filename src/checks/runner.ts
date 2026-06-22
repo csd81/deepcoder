@@ -103,9 +103,15 @@ async function runCheckOnce(
 
   // Isolate the check command when a sandbox policy is supplied (the original
   // command is still what gets logged below — the wrapper carries no secrets).
-  const toRun = opts.sandbox
-    ? wrapCommand({ command: check.command, workspaceRoot: opts.workspaceRoot }, opts.sandbox).command
-    : check.command;
+  // 10S: under containment, wrapCommand throws if bubblewrap is missing.
+  let toRun: string;
+  try {
+    toRun = opts.sandbox
+      ? wrapCommand({ command: check.command, workspaceRoot: opts.workspaceRoot }, opts.sandbox).command
+      : check.command;
+  } catch (e) {
+    throw new Error(`Workspace containment requires bubblewrap; install it or drop --contain. (${(e as Error).message})`);
+  }
 
   // A configured check is a shell command string (it may use pipes/redirects),
   // so it runs through a shell — unlike the worker runner, which spawns argv.

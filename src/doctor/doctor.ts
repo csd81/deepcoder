@@ -347,6 +347,14 @@ async function collectSandbox(input: DoctorInput): Promise<DoctorFinding[]> {
   const { config } = input;
   const findings: DoctorFinding[] = [];
 
+  // Phase 10S — workspace containment status (the backend resolution below
+  // already reports the fail-closed error when bubblewrap is missing).
+  if (config.containment.enabled) {
+    findings.push(
+      okFinding("containment", "sandbox", "Workspace containment ON — file/shell access is locked to the workspace (fail-closed)."),
+    );
+  }
+
   try {
     const resolveFn = input.resolveBackend ?? resolveBackend;
     const backend = resolveFn(config.sandbox.mode, config.sandbox.fallback) as ReturnType<typeof resolveBackend>;
