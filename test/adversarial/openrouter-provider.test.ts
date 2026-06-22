@@ -10,7 +10,6 @@ import {
   OPENROUTER_DEFAULT_BASE_URL,
   openRouterAttributionHeaders,
 } from "../../src/providers/factory.js";
-import { OPENROUTER_DEFAULT_FREE_MODEL } from "../../src/providers/openrouterFreeModels.js";
 import {
   OpenAICompatibleProvider,
   ProviderError,
@@ -59,9 +58,8 @@ test("DEEPCODER_PROVIDER=openrouter resolves via OPENROUTER_API_KEY, default mod
     const cfg = loadConfig({ workspaceRoot: "/tmp" });
     assert.equal(cfg.provider, "openrouter");
     assert.equal(cfg.apiKey, "or-test-key");
-    // Free-only rule: default is a live-probed free model, never paid-capable auto.
-    assert.equal(cfg.model, OPENROUTER_DEFAULT_FREE_MODEL);
-    assert.ok(cfg.model.endsWith(":free"));
+    // OpenRouter is kept only as a DeepSeek fallback (free models dropped).
+    assert.equal(cfg.model, "deepseek/deepseek-chat");
     const p = createProvider(cfg);
     assert.ok(p instanceof OpenAICompatibleProvider);
   });

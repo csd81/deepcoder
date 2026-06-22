@@ -9,7 +9,6 @@ import {
   type WorkspaceIsolationMode,
 } from "../workspaceIsolation/types.js";
 import { DEFAULT_HOOKS, type HooksConfig } from "../hooks/types.js";
-import { OPENROUTER_DEFAULT_FREE_MODEL } from "../providers/openrouterFreeModels.js";
 import type { ModelsFileConfig } from "../models/types.js";
 import { DEFAULT_DIAGNOSTICS, type DiagnosticsConfig } from "../diagnostics/types.js";
 import { webConfigFromEnv, type WebConfig } from "./webConfig.js";
@@ -336,9 +335,10 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   // captures/replays Gemini's thought_signature in the tool loop.
   gemini: "gemini-3.1-pro-preview",
   anthropic: "claude-3-5-sonnet-latest",
-  // Free-only rule: default to a live-probed free model, NOT `openrouter/auto`
-  // (auto can route to a paid model). See providers/openrouterFreeModels.ts.
-  openrouter: OPENROUTER_DEFAULT_FREE_MODEL,
+  // OpenRouter is kept only as a DeepSeek fallback (free models dropped): route
+  // to DeepSeek via OpenRouter, never `openrouter/auto` (which could pick a
+  // pricey model).
+  openrouter: "deepseek/deepseek-chat",
 };
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
