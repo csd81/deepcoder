@@ -20,6 +20,16 @@ import { renderTodos } from "../tools/todoWrite.js";
 import type { HookEvent } from "../hooks/types.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
+import {
+  setGoal,
+  updateGoal,
+  pauseGoal,
+  resumeGoal,
+  completeGoal,
+  renderGoal,
+  type SessionGoal,
+} from "../session/goal.js";
+import { loadSession, type PersistedSession } from "../session/sessionStore.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
@@ -2255,9 +2265,174 @@ export async function handleSlashCommand(
       );
       return { consumed: true };
 
+    case "goal":
+      await runGoalSlash(session, arg, save);
+      return { consumed: true };
+
     default:
       console.log(chalk.dim(`Unknown command: /${cmd}. Try /help.`));
       return { consumed: true };
+  }
+}
+
+/**
+ * Read the current session goal from the persisted session file.
+ * Returns `undefined` when no goal is stored or the file is absent/corrupt.
+ */
+async function readSessionGoal(workspaceRoot: string, storeId: string): Promise<SessionGoal | undefined> {
+  try {
+    const persisted: PersistedSession = await loadSession(workspaceRoot, storeId);
+    if (persisted.goal && typeof persisted.goal.objective === "string") {
+      // Validate that the persisted goal has the expected shape.
+      const g = persisted.goal;
+      if (["active", "paused", "done"].includes(g.status) && typeof g.createdAt === "string" && typeof g.updatedAt === "string") {
+        return g as SessionGoal;
+      }
+    }
+  } catch {
+    // Session file may not exist yet on first save
+  }
+  return undefined;
+}
+
+/**
+ * Persist a session goal by reading the current session file, updating it,
+ * and writing it back atomically.  This bypasses repl.ts's snapshot function
+ * (which we cannot modify), writing directly to the persisted session JSON.
+ */
+async function persistGoal(
+  workspaceRoot: string,
+  storeId: string,
+  goal: SessionGoal | undefined,
+): Promise<void> {
+  const dir = path.join(workspaceRoot, ".deepcoder", "sessions");
+  const file = path.join(dir, `${storeId}.json`);
+  const tmp = `${file}.tmp`;
+
+  let data: PersistedSession;
+  try {
+    data = await loadSession(workspaceRoot, storeId);
+  } catch {
+    // If the session file doesn't exist yet, create a minimal record.
+    data = { id: storeId, model: "", messages: [], todos: [], readTracker: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as unknown as PersistedSession;
+  }
+  data.goal = goal;
+  data.updatedAt = new Date().toISOString();
+
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
+  await fs.rename(tmp, file);
+}
+
+/**
+ * Handle `/goal` slash command.
+ *
+ * Syntax:
+ *   /goal                        — show current goal
+ *   /goal set <objective>        — set a new goal
+ *   /goal update <objective>     — update objective, preserve createdAt
+ *   /goal pause [reason]         — pause goal
+ *   /goal resume                 — resume goal
+ *   /goal done [note]            — mark goal done
+ *   /goal clear                  — remove goal
+ */
+async function runGoalSlash(
+  session: Session,
+  arg: string,
+  _save: () => Promise<void>,
+): Promise<void> {
+  const workspaceRoot = session.config.workspaceRoot;
+  const storeId = session.store.id;
+
+  // Load current goal from persisted session.
+  let goal = await readSessionGoal(workspaceRoot, storeId);
+
+  if (!arg) {
+    // No argument: display current goal.
+    console.log(renderGoal(goal));
+    return;
+  }
+
+  const [sub, ...rest] = arg.split(/\s+/);
+  const subArg = rest.join(" ").trim();
+
+  switch (sub) {
+    case "set": {
+      if (!subArg) {
+        console.log(chalk.dim("usage: /goal set <objective>"));
+        return;
+      }
+      try {
+        goal = setGoal(subArg);
+        await persistGoal(workspaceRoot, storeId, goal);
+        console.log(chalk.dim("Goal set."));
+      } catch (e) {
+        console.log(chalk.red((e as Error).message));
+      }
+      return;
+    }
+
+    case "update": {
+      if (!subArg) {
+        console.log(chalk.dim("usage: /goal update <objective>"));
+        return;
+      }
+      try {
+        goal = updateGoal(goal, subArg);
+        await persistGoal(workspaceRoot, storeId, goal);
+        console.log(chalk.dim("Goal updated."));
+      } catch (e) {
+        console.log(chalk.red((e as Error).message));
+      }
+      return;
+    }
+
+    case "pause": {
+      if (!goal) {
+        console.log(chalk.dim("No active goal. Use /goal set <objective>."));
+        return;
+      }
+      goal = pauseGoal(goal, subArg || undefined);
+      await persistGoal(workspaceRoot, storeId, goal);
+      console.log(chalk.dim(subArg ? `Goal paused: ${subArg}` : "Goal paused."));
+      return;
+    }
+
+    case "resume": {
+      if (!goal) {
+        console.log(chalk.dim("No active goal. Use /goal set <objective>."));
+        return;
+      }
+      try {
+        goal = resumeGoal(goal);
+        await persistGoal(workspaceRoot, storeId, goal);
+        console.log(chalk.dim("Goal resumed."));
+      } catch (e) {
+        console.log(chalk.red((e as Error).message));
+      }
+      return;
+    }
+
+    case "done": {
+      if (!goal) {
+        console.log(chalk.dim("No active goal. Use /goal set <objective>."));
+        return;
+      }
+      goal = completeGoal(goal, subArg || undefined);
+      await persistGoal(workspaceRoot, storeId, goal);
+      console.log(chalk.dim(subArg ? `Goal marked done: ${subArg}` : "Goal marked done."));
+      return;
+    }
+
+    case "clear": {
+      goal = undefined;
+      await persistGoal(workspaceRoot, storeId, undefined);
+      console.log(chalk.dim("Goal cleared."));
+      return;
+    }
+
+    default:
+      console.log(chalk.dim("usage: /goal [set <objective> | update <objective> | pause [reason] | resume | done [note] | clear]"));
   }
 }
 
