@@ -28,6 +28,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "exit", description: "Quit the session", category: "session", aliases: ["quit"] },
   { name: "clear", description: "Clear conversation + todos (keep system prompt)", category: "session" },
   { name: "save", description: "Save the session now", category: "session" },
+  { name: "fork", description: "Fork the current session to a new id", category: "session" },
   { name: "status", description: "Show git status", category: "session" },
   { name: "diff", description: "Show git diff", category: "session" },
   { name: "copy", args: "[last|code|diff|goal|plan|check <id>|worker <plan> <worker> [patch|log|review]]", description: "Copy useful session output to clipboard", category: "session" },

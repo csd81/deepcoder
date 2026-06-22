@@ -146,3 +146,31 @@ export async function latestSessionId(workspaceRoot: string): Promise<string | n
   const all = await listSessions(workspaceRoot);
   return all[0]?.id ?? null;
 }
+
+/**
+ * Fork an existing session to a new id. The original session is never mutated.
+ * Checkpoints, reviews, briefs, telemetry, and web trace are cleared in the copy.
+ */
+export async function forkSession(root: string, id: string): Promise<string> {
+  const original = await loadSession(root, id);
+  const newId = newSessionId();
+  const store = new SessionStore(root, newId);
+  await store.save({
+    provider: original.provider ?? "",
+    baseUrl: original.baseUrl ?? "",
+    model: original.model,
+    mode: original.mode,
+    messages: original.messages,
+    todos: original.todos ?? [],
+    readTracker: new Set(original.readTracker ?? []),
+    writeTracker: new Set(original.writeTracker ?? []),
+    pendingCheckpoint: [],
+    reviews: [],
+    briefs: [],
+    activatedSkills: [],
+    telemetry: undefined,
+    webTrace: undefined,
+    goal: original.goal,
+  });
+  return newId;
+}
