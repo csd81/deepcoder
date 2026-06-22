@@ -63,6 +63,8 @@ import { runReviewUi, runReviewPicker } from "./reviewUi.js";
 import { resolveUiMode } from "../ui/uiMode.js";
 import { loadWorkerArtifacts } from "../delegate/artifacts.js";
 import type { WorkerRun, DelegationPlan, WorkerTask } from "../delegate/types.js";
+import { proposeFeatures, renderProposals } from "../delegate/propose.js";
+import type { ProposalScope } from "../delegate/propose.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1819,7 +1821,46 @@ export async function handleSlashCommand(
         return { consumed: true };
       }
 
-      console.log(chalk.dim("usage: /delegate plan [preflight] <task> | run <plan-id> [worker-id] | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id>"));
+      if (sub === "propose") {
+        const AVAILABLE_SCOPES: ProposalScope[] = [
+          "all", "ui", "context", "delegation", "safety", "verification",
+          "benchmarks", "web", "plugins", "routing", "server",
+        ];
+        // Parse flags
+        const scopeFlag: ProposalScope = (() => {
+          const si = subArgs.indexOf("--scope");
+          if (si !== -1 && subArgs[si + 1]) {
+            const s = subArgs[si + 1]!.toLowerCase() as ProposalScope;
+            return AVAILABLE_SCOPES.includes(s) ? s : "all";
+          }
+          return "all";
+        })();
+        const limitFlag = (() => {
+          const li = subArgs.indexOf("--limit");
+          if (li !== -1 && subArgs[li + 1]) {
+            const n = parseInt(subArgs[li + 1]!, 10);
+            return Number.isFinite(n) && n > 0 ? n : 10;
+          }
+          return 10;
+        })();
+        const jsonFlag = subArgs.includes("--json");
+
+        const root = session.executionRoot ?? config.workspaceRoot;
+        const proposals = await proposeFeatures({
+          workspaceRoot: root,
+          scope: scopeFlag,
+          limit: limitFlag,
+          json: jsonFlag,
+          smartSeam: null,
+        });
+        console.log(renderProposals(proposals, {
+          json: jsonFlag,
+          limit: limitFlag,
+        }));
+        return { consumed: true };
+      }
+
+      console.log(chalk.dim("usage: /delegate plan [preflight] <task> | run <plan-id> [worker-id] | status <plan-id> | review <plan-id> | apply <plan-id> <worker-id> | discard <plan-id> <worker-id> | propose [--scope <s>] [--limit <n>] [--json]"));
       return { consumed: true };
     }
 
