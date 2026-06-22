@@ -195,4 +195,37 @@ describe("fileWatcher", () => {
       assert.equal(received.length, 0, "stopped watcher should not fire");
     });
   });
+
+  // ── Ignored dirs (.deepcoder/.git/node_modules) do NOT fire — prevents the
+  //    session-store-write flood that hung the TUI. ──
+
+  describe("ignored dirs", () => {
+    let root: string;
+    let watcher: FileWatcher;
+    const received: string[] = [];
+
+    before(async () => {
+      root = await ws();
+      await mkdir(path.join(root, ".deepcoder", "sessions"), { recursive: true });
+    });
+
+    after(async () => {
+      watcher?.stop();
+      await rm(root, { recursive: true, force: true });
+    });
+
+    test("a write under .deepcoder/ does NOT fire onChange", async () => {
+      received.length = 0;
+      watcher = startFileWatcher(root, (rel) => received.push(rel));
+
+      // Mimic the session store rewriting its file on every save.
+      await writeFromChildProcess(path.join(root, ".deepcoder", "sessions", "s.json.tmp"), "{}");
+      // A normal tracked file DOES still fire — proves the watcher is alive.
+      await writeFromChildProcess(path.join(root, "real.txt"), "x");
+
+      await poll(() => received.includes("real.txt"));
+      await new Promise((r) => setTimeout(r, 350)); // let any (wrongly) queued .deepcoder event flush
+      assert.ok(!received.some((r) => r.startsWith(".deepcoder/")), `must ignore .deepcoder churn; got ${received.join(", ")}`);
+    });
+  });
 });

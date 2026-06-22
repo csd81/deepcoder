@@ -17,9 +17,17 @@ const COOLDOWN_MS = 1_000;
 const DEBOUNCE_MS = 300;
 
 /**
+ * Directories whose churn is never an "external edit" the agent cares about, and
+ * which would otherwise flood the watcher. `.deepcoder` is critical: the session
+ * store rewrites `.deepcoder/sessions/*.json(.tmp)` on every save, so without this
+ * the watcher fires continuously on our own bookkeeping.
+ */
+const IGNORED_PATH = /(^|\/)(\.git|\.deepcoder|node_modules|dist|coverage|\.cache|\.next|\.turbo)(\/|$)/;
+
+/**
  * Start watching `root` for external file changes.
  * `onChange` is called with workspace-relative paths.
- * Our own PID writes are suppressed via a cooldown map.
+ * Our own PID writes are suppressed via a cooldown map; noise dirs are ignored.
  */
 export function startFileWatcher(
   root: string,
@@ -29,6 +37,8 @@ export function startFileWatcher(
     if (!filename || typeof filename !== "string") return;
     // Normalize to forward-slash workspace-relative path
     const rel = filename.replace(/\\/g, "/");
+    // Ignore VCS / tooling / our-own-session-store churn (prevents the flood).
+    if (IGNORED_PATH.test(rel)) return;
     // Cooldown: skip if we just wrote this file ourselves
     if (_cooldown.has(rel)) return;
 

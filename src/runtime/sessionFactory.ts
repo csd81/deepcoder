@@ -400,8 +400,14 @@ export async function buildSession(
  */
 export function attachFileWatcher(session: Session): void {
   if (session.fileWatcher) return;
-  session.fileWatcher = startFileWatcher(session.config.workspaceRoot, (rel) => {
-    session.readTracker.delete(rel);
+  const root = session.config.workspaceRoot;
+  session.fileWatcher = startFileWatcher(root, (rel) => {
+    // Only react to files the agent has actually READ (readTracker keys are the
+    // absolute resolved paths). Anything else is noise we shouldn't surface or
+    // act on — this keeps the notice rare and meaningful, not a per-save flood.
+    const abs = path.resolve(root, rel);
+    if (!session.readTracker.has(abs)) return;
+    session.readTracker.delete(abs); // force a re-read next time the agent needs it
     stdout.write(chalk.dim(`file changed externally: ${rel}\n`));
   });
 }
