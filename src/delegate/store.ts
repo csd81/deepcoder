@@ -8,6 +8,7 @@
  */
 
 import { promises as fs } from "node:fs";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { assertSafeId } from "../workspace/paths.js";
 import { isDelegationPlan } from "./types.js";
@@ -34,9 +35,18 @@ function planPath(root: string, id: string): string {
 /* ------------------------------------------------------------------ */
 
 async function atomicWrite(file: string, data: string): Promise<void> {
-  const tmp = `${file}.tmp`;
-  await fs.writeFile(tmp, data, "utf8");
-  await fs.rename(tmp, file);
+  // Unique per-write tmp: a static `${file}.tmp` collides when parallel workers
+  // save the same plan concurrently (one rename consumes the tmp, a sibling's
+  // rename then ENOENTs, or the tmp is half-written). pid + random keeps it
+  // unique across processes and within one.
+  const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  try {
+    await fs.writeFile(tmp, data, "utf8");
+    await fs.rename(tmp, file);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 /* ------------------------------------------------------------------ */
