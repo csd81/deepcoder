@@ -63,6 +63,7 @@ import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
 import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from "../ui/chatUiState.js";
 import { renderStatusBar, type StatusBarInfo } from "../ui/statusBar.js";
 import { createActivityTimeline, applyActivityEvent, renderActivityTimeline, type ActivityTimelineState } from "../ui/activityTimeline.js";
+import { renderAssistantBlock } from "../ui/assistantRenderState.js";
 import { Git } from "../workspace/git.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
@@ -741,11 +742,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
           }
           if (preview.truncated) out.push({ text: `  … ${preview.lineCount} lines · Enter to expand`, style: theme.dim, meta: bodyMeta });
         }
-      } else if (b.kind === "assistant" && b.finishedAt !== undefined && b.body) {
-        // A completed assistant message is rendered as markdown (headings, code,
-        // lists, emphasis). Streaming/unfinished assistant text stays raw below.
-        out.push({ text: theme.dim("assistant> "), style: (s) => s, final: true });
-        for (const ln of renderMarkdown(b.body, { width, theme })) out.push({ text: ln, style: (s) => s, final: true });
+      } else if (b.kind === "assistant" && b.body) {
+        // 10A.15: a stable header + progressive Markdown that never corrupts an
+        // open code fence — used for BOTH the streaming and the finished message.
+        const rendered = renderAssistantBlock({ body: b.body, finished: b.finishedAt !== undefined, width, theme, modelLabel: session.config.model });
+        out.push({ text: theme.dim(rendered.header), style: (s) => s, final: true });
+        for (const ln of rendered.lines) out.push({ text: ln, style: (s) => s, final: true });
       } else {
         const prefix =
           b.kind === "assistant" ? "assistant> "
