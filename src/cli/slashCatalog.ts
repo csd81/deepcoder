@@ -71,6 +71,8 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "isolation", args: "[status|diff|apply|discard|path]", description: "Manage workspace isolation", category: "config" },
   { name: "mcp", args: "[reload]", description: "List configured MCP servers and tools", category: "config" },
   { name: "models", description: "Show the model routing table", category: "config" },
+  { name: "model", args: "[<role> [<provider>/<model>]] | reset <role|all>", description: "Inspect or set a session-local model override", category: "config" },
+  { name: "effort", args: "[[<role>] <low|medium|high>] | reset <role|all>", description: "Inspect or set reasoning effort", category: "config" },
 
   // debug
   { name: "usage", description: "Show session token usage", category: "debug" },

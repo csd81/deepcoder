@@ -48,6 +48,19 @@ import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
 import { resolveInstructions, skillsRuntime } from "./repl.js";
 import { activateSkill } from "../skills/activation.js";
+import {
+  emptySessionModelOverrides,
+  parseModelTarget,
+  isValidRole,
+  isValidEffort,
+  applyModelOverride,
+  applyEffortOverride,
+  clearModelOverride,
+  clearEffortOverride,
+} from "../models/sessionOverrides.js";
+import type { SessionModelOverrides } from "../models/sessionOverrides.js";
+import type { ModelRole } from "../models/types.js";
+import { ALL_ROLES } from "../models/types.js";
 import { buildPlan } from "../delegate/planner.js";
 import { buildContextAwarePlan } from "../delegate/contextPlan.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
@@ -2207,8 +2220,18 @@ export async function handleSlashCommand(
         const effort = r.reasoningEffort ? ` · effort ${r.reasoningEffort}` : "";
         console.log(`  ${chalk.cyan(r.role.padEnd(14))} ${r.provider}/${r.model}${src}${temp}${effort}`);
       }
+      console.log(chalk.dim("Use /model <role> <provider>/<model> to override for this session."));
+      console.log(chalk.dim("Use /effort [<role>] <low|medium|high> to set reasoning effort."));
       return { consumed: true };
     }
+
+    case "model":
+      await runModelSlash(session, arg);
+      return { consumed: true };
+
+    case "effort":
+      await runEffortSlash(session, arg);
+      return { consumed: true };
 
     case "help":
       console.log(
@@ -2242,6 +2265,10 @@ export async function handleSlashCommand(
           "/status          git status",
           "/diff            git diff",
           "/models          show the model routing table (Phase 10F)",
+          "/model [role] [provider/model|model]  inspect/set session model override",
+          "/model reset <role|all>  clear session model override",
+          "/effort [<role>] <low|medium|high>  set reasoning effort",
+          "/effort reset <role|all|>  clear effort override",
           "/delegate plan <task>  build a delegation plan",
           "/delegate plan preflight <task>  build a context-aware delegation plan (runs explorer)",
           "/delegate run <plan-id> [worker-id]  run one worker or all runnable workers sequentially",
@@ -2519,6 +2546,193 @@ async function runPlugins(session: Session, arg: string): Promise<void> {
  * reuse a cached structured summary when fresh, else compute + persist one. Wires
  * the understand producer + cache.
  */
+/**
+ * Phase 10L — initialise session overrides on the model router if not already set.
+ */
+function ensureSessionOverrides(session: Session): SessionModelOverrides {
+  if (!session.modelRouter.sessionOverrides) {
+    session.modelRouter.sessionOverrides = emptySessionModelOverrides();
+  }
+  return session.modelRouter.sessionOverrides;
+}
+
+/**
+ * Phase 10L — `/model` slash command.
+ *
+ * /model                          → print all routes with sources
+ * /model <role>                   → inspect one resolved role
+ * /model <role> <provider>/<model> → set session override (with provider)
+ * /model <role> <model>           → set session override (keep current provider)
+ * /model reset <role>             → clear override for one role
+ * /model reset all                → clear all role overrides
+ */
+async function runModelSlash(session: Session, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/).filter(Boolean);
+
+  // ── /model (no args) — print all routes ────────────────────────────
+  if (parts.length === 0) {
+    const routes = session.modelRouter.explain();
+    console.log(chalk.bold("Model routes:"));
+    for (const r of routes) {
+      const src = chalk.dim(`[${r.source}]`);
+      const effort = r.reasoningEffort ? ` · effort ${r.reasoningEffort}` : "";
+      console.log(`  ${chalk.cyan(r.role.padEnd(14))} ${r.provider}/${r.model} ${src}${effort}`);
+    }
+    console.log("");
+    console.log(chalk.dim("Use: /model <role> <provider>/<model>"));
+    return;
+  }
+
+  // ── /model reset <role|all> ────────────────────────────────────────
+  if (parts[0] === "reset") {
+    const target = parts[1];
+    if (!target) {
+      console.log(chalk.dim("usage: /model reset <role|all>"));
+      return;
+    }
+    if (target !== "all" && !isValidRole(target)) {
+      console.log(chalk.red(`Unknown role "${target}". Valid roles: ${ALL_ROLES.join(", ")}`));
+      return;
+    }
+    const overrides = ensureSessionOverrides(session);
+    session.modelRouter.sessionOverrides = clearModelOverride(overrides, target as ModelRole | "all");
+    if (target === "all") {
+      console.log(chalk.dim("All model overrides cleared for this session."));
+    } else {
+      console.log(chalk.dim(`Model override cleared for "${target}".`));
+    }
+    return;
+  }
+
+  // ── /model <role> [target] ─────────────────────────────────────────
+  const role = parts[0];
+  if (!isValidRole(role)) {
+    console.log(chalk.red(`Unknown role "${role}". Valid roles: ${ALL_ROLES.join(", ")}`));
+    return;
+  }
+
+  // ── /model <role> (inspect only) ───────────────────────────────────
+  if (parts.length === 1) {
+    const route = session.modelRouter.resolve(role);
+    const src = chalk.dim(`[${route.source}]`);
+    const effort = route.reasoningEffort ? ` · effort ${route.reasoningEffort}` : "";
+    console.log(`${role}: ${route.provider}/${route.model} ${src}${effort}`);
+    console.log(chalk.dim(`fallbacks: ${session.modelRouter.fallbackChain(role).join(", ") || "none"}`));
+    return;
+  }
+
+  // ── /model <role> <target> ─────────────────────────────────────────
+  const targetInput = parts.slice(1).join(" ");
+  let parsed: { provider?: string; model: string };
+  try {
+    parsed = parseModelTarget(targetInput);
+  } catch (err) {
+    console.log(chalk.red((err as Error).message));
+    return;
+  }
+
+  const overrides = ensureSessionOverrides(session);
+  session.modelRouter.sessionOverrides = applyModelOverride(overrides, role, parsed);
+  const display = parsed.provider ? `${parsed.provider}/${parsed.model}` : parsed.model;
+  console.log(chalk.dim(`${role} route set for this session: ${display}`));
+}
+
+/**
+ * Phase 10L — `/effort` slash command.
+ *
+ * /effort                     → show current effort defaults + overrides
+ * /effort <low|medium|high>   → set default session effort
+ * /effort <role> <level>      → set role-specific effort
+ * /effort reset <role>        → clear role effort override
+ * /effort reset all           → clear all effort overrides
+ */
+async function runEffortSlash(session: Session, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/).filter(Boolean);
+
+  // ── /effort (no args) — show current state ─────────────────────────
+  if (parts.length === 0) {
+    const overrides = session.modelRouter.sessionOverrides;
+    const globalEffort = overrides?.defaultReasoningEffort;
+    const hasRoleEfforts = overrides && Object.values(overrides.roles).some((o) => o?.reasoningEffort !== undefined);
+
+    if (globalEffort) {
+      console.log(chalk.dim(`global reasoning effort: ${globalEffort}`));
+    } else {
+      // Show the base config effort as a hint
+      const baseEffort = session.config.reasoningEffort ?? "none";
+      console.log(chalk.dim(`global reasoning effort: ${baseEffort} [config]`));
+    }
+
+    if (hasRoleEfforts) {
+      console.log(chalk.dim("session overrides:"));
+      for (const [r, ov] of Object.entries(overrides!.roles)) {
+        if (ov?.reasoningEffort) {
+          console.log(chalk.dim(`  ${r}: ${ov.reasoningEffort}`));
+        }
+      }
+    } else {
+      console.log(chalk.dim("session overrides: none"));
+    }
+    console.log("");
+    console.log(chalk.dim("Use: /effort <low|medium|high>  or  /effort <role> <level>"));
+    return;
+  }
+
+  // ── /effort reset <role|all> ───────────────────────────────────────
+  if (parts[0] === "reset") {
+    const target = parts[1];
+    if (!target) {
+      console.log(chalk.dim("usage: /effort reset <role|all>"));
+      return;
+    }
+    if (target !== "all" && !isValidRole(target)) {
+      console.log(chalk.red(`Unknown role "${target}". Valid roles: ${ALL_ROLES.join(", ")}`));
+      return;
+    }
+    const overrides = ensureSessionOverrides(session);
+    session.modelRouter.sessionOverrides = clearEffortOverride(overrides, target as ModelRole | "all");
+    if (target === "all") {
+      console.log(chalk.dim("All effort overrides cleared for this session."));
+    } else {
+      console.log(chalk.dim(`Effort override cleared for "${target}".`));
+    }
+    return;
+  }
+
+  // ── /effort <level>  OR  /effort <role> <level> ───────────────────
+  if (parts.length === 1) {
+    const level = parts[0];
+    if (!isValidEffort(level)) {
+      console.log(chalk.red(`Invalid effort level "${level}". Use: low, medium, or high.`));
+      return;
+    }
+    const overrides = ensureSessionOverrides(session);
+    session.modelRouter.sessionOverrides = applyEffortOverride(overrides, level);
+    console.log(chalk.dim(`Default reasoning effort set for this session: ${level}`));
+    return;
+  }
+
+  if (parts.length >= 2) {
+    const role = parts[0];
+    if (!isValidRole(role)) {
+      console.log(chalk.red(`Unknown role "${role}". Valid roles: ${ALL_ROLES.join(", ")}`));
+      return;
+    }
+    const level = parts[1];
+    if (!isValidEffort(level)) {
+      console.log(chalk.red(`Invalid effort level "${level}". Use: low, medium, or high.`));
+      return;
+    }
+    const overrides = ensureSessionOverrides(session);
+    session.modelRouter.sessionOverrides = applyEffortOverride(overrides, level, role);
+    console.log(chalk.dim(`${role} effort set for this session: ${level}`));
+    return;
+  }
+
+  // Fallback: usage
+  console.log(chalk.dim("usage: /effort [<role>] <low|medium|high>  |  /effort reset <role|all>"));
+}
+
 /**
  * Phase 10F — resolve the "delegate" role into a worker model override. Returns
  * undefined when the route is the default (no env/file override), so delegated

@@ -13,6 +13,7 @@ import type {
   ResolvedModelRoute,
   ModelsFileConfig,
 } from "./types.js";
+import type { SessionModelOverrides } from "./sessionOverrides.js";
 
 /**
  * Detect a cycle in a fallback graph (role → fallback roles). A cyclic fallback
@@ -45,6 +46,13 @@ export class ModelRouter {
   private fileRoles: Partial<Record<ModelRole, Omit<ModelRoute, "role">>>;
   private fileFallbacks: Partial<Record<ModelRole, ModelRole[]>>;
 
+  /**
+   * Session-local model overrides (mutable reference). Mutating this object in
+   * place causes future resolve() / explain() calls to pick up the new values
+   * without rebuilding the router. Undefined = no session overrides.
+   */
+  sessionOverrides?: SessionModelOverrides;
+
   constructor(config: Config, fileModels?: ModelsFileConfig) {
     this.config = config;
     this.fileRoles = fileModels?.roles ?? {};
@@ -55,13 +63,17 @@ export class ModelRouter {
    * Resolve a role to a complete ResolvedModelRoute.
    *
    * Precedence (highest first):
-   *   1. CLI override (not yet implemented — future)
+   *   1. Session override (Phase 10L — in-memory, session-local)
    *   2. Environment variable (DEEPCODER_MODEL_<ROLE>, DEEPCODER_PROVIDER_<ROLE>, etc.)
    *   3. File config (.deepcoder/config.json → models.roles.<role>)
    *   4. Default (back-compat mapping from config.model / config.reasonerModel / config.subagentModel)
    */
   resolve(role: ModelRole): ResolvedModelRoute {
-    // Try env override first
+    // Phase 10L: session override beats everything
+    const sessionRoute = this.resolveFromSession(role);
+    if (sessionRoute) return sessionRoute;
+
+    // Try env override
     const envRoute = this.resolveFromEnv(role);
     if (envRoute) return envRoute;
 
@@ -105,6 +117,37 @@ export class ModelRouter {
     const fileChain = this.fileFallbacks[role];
     if (fileChain && fileChain.length > 0) return fileChain;
     return [];
+  }
+
+  /**
+   * Phase 10L — resolve a role using session-local overrides.
+   *
+   * Starts from the lower-precedence route (env→file→default) to fill omitted
+   * fields, then overlays the session override. Returns null when no session
+   * override exists for this role (or globally).
+   */
+  private resolveFromSession(role: ModelRole): ResolvedModelRoute | null {
+    if (!this.sessionOverrides) return null;
+
+    const override = this.sessionOverrides.roles[role];
+    const hasModelOverride = override?.model !== undefined;
+    const hasEffortOverride = override?.reasoningEffort !== undefined;
+    const hasGlobalEffort = this.sessionOverrides.defaultReasoningEffort !== undefined;
+
+    if (!hasModelOverride && !hasEffortOverride && !hasGlobalEffort) return null;
+
+    // Resolve the base route (env→file→default) to fill in anything not overridden.
+    const base = this.resolveFromEnv(role) ?? this.resolveFromFile(role) ?? this.resolveDefault(role);
+
+    return {
+      role,
+      provider: override?.provider ?? base.provider,
+      model: override?.model ?? base.model,
+      baseUrl: override?.baseUrl ?? base.baseUrl,
+      temperature: override?.temperature ?? base.temperature,
+      reasoningEffort: override?.reasoningEffort ?? this.sessionOverrides.defaultReasoningEffort ?? base.reasoningEffort,
+      source: "session",
+    };
   }
 
   // ---- private helpers ----
