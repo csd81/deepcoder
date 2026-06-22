@@ -38,6 +38,8 @@ export interface PersistedSession {
   goal?: SessionGoal;
   createdAt: string;
   updatedAt: string;
+  /** Phase 10 — soft-delete: archived sessions are hidden by default. */
+  archived?: boolean;
 }
 
 /** Live snapshot the REPL hands to the store on each save. */
@@ -126,9 +128,13 @@ export interface SessionMeta {
   updatedAt: string;
   messageCount: number;
   title?: string;
+  archived?: boolean;
 }
 
-export async function listSessions(workspaceRoot: string): Promise<SessionMeta[]> {
+export async function listSessions(
+  workspaceRoot: string,
+  opts?: { includeArchived?: boolean },
+): Promise<SessionMeta[]> {
   let files: string[];
   try {
     files = (await fs.readdir(sessionsDir(workspaceRoot))).filter((f) => f.endsWith(".json"));
@@ -139,12 +145,31 @@ export async function listSessions(workspaceRoot: string): Promise<SessionMeta[]
   for (const f of files) {
     try {
       const s = JSON.parse(await fs.readFile(path.join(sessionsDir(workspaceRoot), f), "utf8")) as PersistedSession;
-      metas.push({ id: s.id, updatedAt: s.updatedAt, messageCount: s.messages.length, title: s.title });
+      metas.push({ id: s.id, updatedAt: s.updatedAt, messageCount: s.messages.length, title: s.title, archived: s.archived });
     } catch {
       // skip corrupt files
     }
   }
-  return metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  let filtered = metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  if (!opts?.includeArchived) {
+    filtered = filtered.filter((m) => !m.archived);
+  }
+  return filtered;
+}
+
+export async function deleteSession(root: string, id: string): Promise<void> {
+  const file = path.join(sessionsDir(root), `${assertSafeId(id)}.json`);
+  await fs.rm(file, { force: true });
+}
+
+export async function archiveSession(root: string, id: string): Promise<void> {
+  const session = await loadSession(root, id);
+  session.archived = true;
+  const file = path.join(sessionsDir(root), `${assertSafeId(id)}.json`);
+  // Atomic write (same pattern as SessionStore.save)
+  const tmp = `${file}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(session, null, 2), "utf8");
+  await fs.rename(tmp, file);
 }
 
 export async function latestSessionId(workspaceRoot: string): Promise<string | null> {
