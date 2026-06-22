@@ -51,6 +51,7 @@ import { estimateCost } from "../providers/pricing.js";
 import { appendWebTrace, type WebTraceRecord } from "../web/trace.js";
 import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
+import { createInputQueue, enqueue, dequeue, queueDepth, decideSubmit, type InputQueue } from "./inputQueue.js";
 import { createTuiApproval } from "../ui/approval.js";
 import { buildApprovalReview, renderApprovalReview } from "../ui/approvalReview.js";
 import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
@@ -671,6 +672,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let branch: string | undefined;
   let dirty = false;
   let busy = false;
+  let queue: InputQueue = createInputQueue();
   let approvalResolve: ((k: string) => void) | null = null;
   let pendingApproval: { description: string; diff?: string } | null = null;
   let approvalScroll = 0;
@@ -1074,11 +1076,28 @@ export async function runTuiRepl(session: Session): Promise<void> {
     transcript = { ...transcript, blocks: [...transcript.blocks, { id: `u${Date.now()}`, kind: "user", body: line, startedAt: new Date().toISOString() }] };
   }
 
+  /** Drain one queued item when idle. Guarded against re-entrancy (checks busy). */
+  async function drainQueue(): Promise<void> {
+    if (busy || queueDepth(queue) === 0) return;
+    const { queue: newQueue, line } = dequeue(queue);
+    queue = newQueue;
+    if (line !== null) {
+      await handleSubmit(line);
+    }
+  }
+
   async function handleSubmit(raw: string): Promise<void> {
     const line = raw.trim();
     if (!line) { redraw(); return; }
+    // /exit still works even when busy — check before the enqueue guard.
+    if (line === "/exit" || line === "/quit") { pushUser(line); stickBottom(); redraw(); restore(); resolveDone(); return; }
+    // Enqueue if the agent is busy (type-ahead).
+    if (decideSubmit(busy) === "enqueue") {
+      queue = enqueue(queue, line);
+      transcript = applyEvent(transcript, { type: "notice", message: `queued: ${line}` });
+      stickBottom(); redraw(); return;
+    }
     pushUser(line); stickBottom(); redraw();
-    if (line === "/exit" || line === "/quit") { restore(); resolveDone(); return; }
     // Phase 10R: `!cmd` shell-escape (the user block was already echoed by pushUser).
     {
       const bang = parseBangCommand(line);
@@ -1107,7 +1126,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
         } catch (e) {
           transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` });
         } finally {
-          process.removeListener("SIGINT", onSig); busy = false; stickBottom(); redraw();
+          process.removeListener("SIGINT", onSig); busy = false; await drainQueue(); stickBottom(); redraw();
         }
         return;
       }
@@ -1171,7 +1190,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     busy = true; redraw();
     try { await runTask(session, { sink, approve }); }
     catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` }); }
-    finally { busy = false; stickBottom(); redraw(); }
+    finally { busy = false; await drainQueue(); stickBottom(); redraw(); }
   }
 
   function onKey(str: string | undefined, key: { name?: string; sequence?: string; ctrl?: boolean } | undefined): void {
@@ -1283,7 +1302,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const half = Math.max(1, Math.floor(viewportH(inputCount, menuRows(stdout.columns ?? 80).length) / 2));
     switch (action) {
       case "interrupt":
-        if (busy) { try { process.kill(process.pid, "SIGINT"); } catch { /* */ } }
+        if (busy) { queue = createInputQueue(); try { process.kill(process.pid, "SIGINT"); } catch { /* */ } }
         else { restore(); resolveDone(); }
         return;
       case "scroll-up": dispatch({ type: "scroll-up" }); return;
