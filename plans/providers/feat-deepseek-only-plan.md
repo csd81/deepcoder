@@ -92,8 +92,10 @@ with `DEEPCODER_PROVIDER=openai-compatible`.
    against live API docs before shipping a header; gate any header behind
    `DEEPSEEK_DISABLE_CACHE`.
 4. **Reasoning effort** (Pro only) — optional `reasoningEffort` → `body.reasoning =
-   { effort }` only when `model.includes("deepseek-v4-pro")`. **⚠ VERIFY FIRST** that
-   DeepSeek exposes this param; omit for Flash.
+   { effort }` only when `model.includes("deepseek-v4-pro")`; omitted for Flash.
+   **✅ VERIFIED 2026-06-22 (live smoke):** `deepseek-v4-pro` accepts
+   `reasoning: { effort: "high" }` with no 400; Flash never receives it. (Accepted
+   without error — a trivial prompt can't prove it deepens reasoning, but it is safe.)
 5. **Context budget** — already `deepseek → 1_000_000`, `compactAt 0.95`. Confirm it
    still resolves after the config trim; no change expected.
 
