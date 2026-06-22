@@ -11,6 +11,19 @@ test("1. QUOTED/ESCAPED DANGEROUS TOKEN (deny bypass)", () => {
   assert.equal(classifyCommand('"sudo" ls'), "deny");
 });
 
+test("1b. REDIRECT WITHOUT WHITESPACE (allow bypass — found via dogfood)", () => {
+  // A redirect glued to its target must NOT auto-allow: with a space it's gated,
+  // so without one it must be too. Real bash treats `>` as a redirect regardless
+  // of spacing; the tokenizer previously swallowed `>/tmp/x` as a benign word.
+  assert.notEqual(classifyCommand("ls >/tmp/evil"), "allow");
+  assert.notEqual(classifyCommand("echo hi >out.txt"), "allow");
+  assert.notEqual(classifyCommand("cat x >>append.txt"), "allow");
+  assert.notEqual(classifyCommand("ls 1>/tmp/evil"), "allow");
+  assert.notEqual(classifyCommand("echo pwned>file"), "allow"); // no spaces at all
+  // Parity: the spaced forms are already gated.
+  assert.notEqual(classifyCommand("ls > /tmp/evil"), "allow");
+});
+
 test("2. PIPE-TO-SHELL VIA A PATH (deny bypass)", () => {
   assert.equal(classifyCommand("echo x | /bin/sh"), "deny");
   assert.equal(classifyCommand("echo x | /usr/bin/bash"), "deny");

@@ -155,9 +155,15 @@ function tokenize(input: string): {
     // Patterns: >, >>, <, 2>, &>, 1>, etc.
     const redirectMatch = input.slice(i).match(/^(\d*)(&?)(>+|<+)/);
     if (redirectMatch && redirectMatch[0]!.length > 0) {
-      // Make sure it's not part of a longer word (e.g., "->" is not a redirect)
       const after = i + redirectMatch[0]!.length;
-      if (after >= input.length || /\s/.test(input[after]!)) {
+      // EXCEPT process substitution `<(` / `>(`: leave that to parseWord, which
+      // flags the nested-command hazard. Everything else is a real redirect.
+      if (input[after] !== "(") {
+        // A redirect operator at a token boundary is a redirect regardless of what
+        // follows — bash treats `>file` (target glued, no space) identically to
+        // `> file`. We must NOT require trailing whitespace: doing so let
+        // `ls >/tmp/x` swallow `>/tmp/x` as a benign word and auto-allow a write
+        // (classifier bypass). The glued target is tokenized as the next word.
         tokens.push({ type: "redirect", value: redirectMatch[0]! });
         i = after;
         continue;
@@ -214,8 +220,10 @@ function parseWord(
     // Whitespace or operator ends the word
     if (/\s/.test(ch)) break;
     if (ch === "|" || ch === ";" || ch === "&") break;
-    // Redirect operators also end words (but we handle them before calling parseWord)
-    if ((ch === ">" || ch === "<") && (i + 1 >= input.length || /\s/.test(input[i + 1]!))) break;
+    // Redirect operators end the word regardless of trailing whitespace, so a
+    // glued redirect like `cmd>file` breaks into `cmd` + `>` + `file` (the main
+    // loop then tokenizes the redirect). Process-subs `<(`/`>(` are handled above.
+    if (ch === ">" || ch === "<") break;
 
     if (ch === "'") {
       // Single-quoted string: everything literal until closing quote
