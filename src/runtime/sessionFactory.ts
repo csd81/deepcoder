@@ -15,6 +15,7 @@ import { createProvider } from "../providers/factory.js";
 import { EMPTY_USAGE } from "../providers/usage.js";
 import { createSemanticTools } from "../tools/semanticTools.js";
 import { createWebTools } from "../tools/webTools.js";
+import { createWebSearchProviderFromConfig } from "../web/providerFactory.js";
 import { createPtyTools } from "../tools/ptyTools.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { discoverSkills } from "../skills/discovery.js";
@@ -223,6 +224,9 @@ export async function buildSession(
     searchProvider: config.web.searchProvider,
     quarantine: config.web.quarantine,
     maxReturnedChars: config.web.maxReturnedChars,
+    // Phase 10E6: resolve a concrete search backend (e.g. Brave) from config +
+    // env; falls back to the refusing noneProvider when disabled/unset.
+    provider: createWebSearchProviderFromConfig({ config: config.web, env: process.env }),
   })) registry.register(t);
   // Phase 10G: register the persistent interactive-shell tool only when opted in
   // (default off / fail-closed); it still flows through the permission policy.
