@@ -25,6 +25,7 @@ import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConf
 import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
 import type { ModelPricing } from "../providers/pricing.js";
+import type { KeybindsConfig } from "../ui/keybinds.js";
 import { hasFallbackCycle } from "../models/router.js";
 
 export interface TelemetryConfig {
@@ -51,6 +52,7 @@ export interface FileConfig {
   lsp?: Partial<LspConfig>;
   models?: ModelsFileConfig;
   telemetry?: TelemetryConfig;
+  keybinds?: KeybindsConfig;
 }
 
 const mcpServerSchema = z.object({
@@ -422,7 +424,27 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     };
   }
 
-  return { mcpServers, checks, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch };
+  const rawKeybinds = (parsed as { keybinds?: unknown }).keybinds;
+  let keybinds: KeybindsConfig | undefined;
+  if (rawKeybinds && typeof rawKeybinds === "object") {
+    const raw = rawKeybinds as Record<string, unknown>;
+    const validActions = new Set<string>([
+      "submit", "cancel", "focus-composer", "toggle-plan-mode",
+      "scroll-up", "scroll-down", "page-up", "page-down",
+      "autocomplete", "close-dropdown",
+    ]);
+    const result: KeybindsConfig = {};
+    for (const [chord, action] of Object.entries(raw)) {
+      if (typeof action === "string" && validActions.has(action)) {
+        result[chord] = action as KeybindsConfig[string];
+      } else {
+        warn(`ignoring keybinds["${chord}"]: invalid action "${String(action)}"`);
+      }
+    }
+    keybinds = result;
+  }
+
+  return { mcpServers, checks, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds };
 }
 
 function warn(msg: string): void {
