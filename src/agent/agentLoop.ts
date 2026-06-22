@@ -17,6 +17,7 @@ import { compactIfNeeded } from "../context/compaction.js";
 import { runPostWriteDiagnostics } from "../diagnostics/runner.js";
 import { formatFile, shouldFormat } from "../tools/formatOnEdit.js";
 import type { FormatConfig } from "../config/fileConfig.js";
+import { isRateLimit, isAuthError, isModelError, backoffMs, abortableSleep } from "./retry.js";
 
 export interface AgentDeps {
   provider: ModelProvider;
@@ -134,7 +135,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       await deps.onPersist?.();
     }
 
-    const response = await getResponse(deps, withEphemeralContext(messages, ctx, deps));
+    const response = await getResponseWithRetry(deps, withEphemeralContext(messages, ctx, deps));
     deps.onUsage?.(response.usage);
 
     messages.push({
@@ -367,8 +368,82 @@ export function sanitizeForProvider(messages: AgentMessage[]): AgentMessage[] {
   return out;
 }
 
+/**
+ * Thrown by {@link consumeStream} when a model stream fails (an explicit
+ * `error` event or a mid-iteration connection drop). `hadContent` is true if
+ * any assistant text or tool call was already received before the failure.
+ *
+ * The distinction drives recovery: a failure AFTER content has streamed must
+ * abort the turn (the partial output is already on the user's screen — a
+ * non-streaming retry would duplicate it AND could mask the failure as a
+ * silent success), whereas an early, no-content failure can safely fall back
+ * to a non-streaming `chat()` call.
+ */
+export class StreamError extends Error {
+  readonly hadContent: boolean;
+  constructor(message: string, hadContent: boolean) {
+    super(message);
+    this.name = "StreamError";
+    this.hadContent = hadContent;
+  }
+}
+
+/**
+ * Call the provider with graceful error recovery. Rate-limit (429) and other
+ * transient errors retry with exponential backoff (signal-aware sleep);
+ * auth (401) and bad-model (404/400) errors are fatal and re-thrown
+ * immediately with a clear notice. A stream error that already streamed
+ * content is never retried. On retry exhaustion the original error is
+ * RE-THROWN (never a fake-success empty response) so the caller reports it.
+ *
+ * `opts.sleep` is injectable so tests can avoid real timers.
+ */
+export async function getResponseWithRetry(
+  deps: AgentDeps,
+  sent: AgentMessage[],
+  opts?: { maxRetries?: number; sleep?: (ms: number, signal?: AbortSignal) => Promise<void> },
+): Promise<ChatResponse> {
+  const maxRetries = opts?.maxRetries ?? 2;
+  const sleep = opts?.sleep ?? abortableSleep;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await getResponse(deps, sent);
+    } catch (err) {
+      lastError = err;
+      // A propagated stream error (content already streamed) is fatal — never
+      // retry it, or a real mid-turn failure would be masked as success.
+      if (err instanceof StreamError) throw err;
+      if (deps.ctx.signal.aborted) throw err;
+      if (isAuthError(err)) {
+        deps.onNotice?.("API key rejected — check your credentials.");
+        throw err;
+      }
+      if (isModelError(err)) {
+        deps.onNotice?.(`Model "${deps.model}" unavailable — check the model name.`);
+        throw err;
+      }
+      if (attempt < maxRetries) {
+        const wait = backoffMs(attempt);
+        deps.onNotice?.(
+          isRateLimit(err)
+            ? `Rate limited — retrying in ${wait}ms… (${attempt + 1}/${maxRetries})`
+            : `API error — retrying… (${attempt + 1}/${maxRetries})`,
+        );
+        await sleep(wait, deps.ctx.signal);
+        if (deps.ctx.signal.aborted) throw err;
+        continue;
+      }
+    }
+  }
+  deps.onNotice?.(
+    `Provider unreachable after ${maxRetries + 1} attempts: ${(lastError as Error)?.message ?? String(lastError)}.`,
+  );
+  throw lastError;
+}
+
 /** Use streaming when the provider supports it; otherwise a single chat() call. */
-async function getResponse(deps: AgentDeps, sent: AgentMessage[]): Promise<ChatResponse> {
+export async function getResponse(deps: AgentDeps, sent: AgentMessage[]): Promise<ChatResponse> {
   const req: ChatRequest = {
     messages: sanitizeForProvider(sent),
     tools: deps.registry.schemas(),
@@ -376,7 +451,16 @@ async function getResponse(deps: AgentDeps, sent: AgentMessage[]): Promise<ChatR
     signal: deps.ctx.signal,
   };
   if (deps.provider.streamChat) {
-    return consumeStream(deps.provider.streamChat(req), deps.onAssistantTextDelta);
+    try {
+      return await consumeStream(deps.provider.streamChat(req), deps.onAssistantTextDelta);
+    } catch (err) {
+      if (deps.ctx.signal.aborted || (err as Error)?.name === "AbortError") throw err;
+      // Content already on screen → propagate (no duplicate re-run, no masking).
+      if (err instanceof StreamError && err.hadContent) throw err;
+      // Early, no-content stream failure → safe to retry on the non-streaming path.
+      deps.onNotice?.("Stream interrupted — falling back to non-streaming…");
+      return deps.provider.chat(req);
+    }
   }
   return deps.provider.chat(req);
 }
@@ -388,21 +472,30 @@ export async function consumeStream(
   let text = "";
   const toolCalls: ToolCall[] = [];
   let usage: ChatResponse["usage"];
-  for await (const ev of stream) {
-    switch (ev.type) {
-      case "assistant_text_delta":
-        text += ev.text;
-        onDelta?.(ev.text);
-        break;
-      case "tool_call_complete":
-        toolCalls.push(ev.toolCall);
-        break;
-      case "error":
-        throw new Error(ev.message);
-      case "done":
-        usage = ev.usage;
-        break;
+  let hadContent = false;
+  try {
+    for await (const ev of stream) {
+      switch (ev.type) {
+        case "assistant_text_delta":
+          text += ev.text;
+          hadContent = true;
+          onDelta?.(ev.text);
+          break;
+        case "tool_call_complete":
+          toolCalls.push(ev.toolCall);
+          hadContent = true;
+          break;
+        case "error":
+          throw new StreamError(ev.message, hadContent);
+        case "done":
+          usage = ev.usage;
+          break;
+      }
     }
+  } catch (err) {
+    if (err instanceof StreamError) throw err;
+    // A mid-iteration connection drop — wrap with the current content state.
+    throw new StreamError((err as Error)?.message ?? String(err), hadContent);
   }
   return { text, toolCalls, usage };
 }
