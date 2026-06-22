@@ -8,6 +8,8 @@ import { globTool } from "./glob.js";
 import { editFileTool } from "./editFile.js";
 import { writeFileTool } from "./writeFile.js";
 import { runBashTool } from "./runBash.js";
+import { deleteFileTool } from "./deleteFile.js";
+import { renameFileTool } from "./renameFile.js";
 import { todoWriteTool } from "./todoWrite.js";
 import { repoMapTool, findSymbolsTool, listRecentContextTool } from "./contextTools.js";
 import { repoIndexTool, findReferencesTool, impactGraphTool, targetTestsTool } from "./repoIndexTools.js";
@@ -58,6 +60,8 @@ const NATIVE_TOOLS: Tool[] = [
   editFileTool,
   writeFileTool,
   runBashTool,
+  deleteFileTool,
+  renameFileTool,
   todoWriteTool,
   repoMapTool,
   findSymbolsTool,
