@@ -60,6 +60,7 @@ import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
 import { runSolveCommand } from "./solveRunner.js";
+import { runUserCommand } from "./runUserCommand.js";
 import { stdout } from "node:process";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
@@ -2457,9 +2458,17 @@ export async function handleSlashCommand(
       await runGoalSlash(session, arg, save);
       return { consumed: true };
 
-    default:
+    default: {
+      // Last-resort: check user-defined commands before reporting unknown.
+      const cmdMap = session.config.commands ?? {};
+      const match = cmdMap[cmd];
+      if (match) {
+        await runUserCommand(cmd, match, session);
+        return { consumed: true };
+      }
       console.log(chalk.dim(`Unknown command: /${cmd}. Try /help.`));
       return { consumed: true };
+    }
   }
 }
 
