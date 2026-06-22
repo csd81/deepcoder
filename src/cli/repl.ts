@@ -62,6 +62,7 @@ import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from ".
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
 import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from "../ui/chatUiState.js";
 import { renderStatusBar, type StatusBarInfo } from "../ui/statusBar.js";
+import { createActivityTimeline, applyActivityEvent, renderActivityTimeline, type ActivityTimelineState } from "../ui/activityTimeline.js";
 import { Git } from "../workspace/git.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
@@ -680,6 +681,8 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let helpVisible = false;
   // ── 10A.9: scrollback search (Ctrl+F) ──
   let search: TranscriptSearchState = createSearchState();
+  // ── 10A.11: compact live activity timeline (shown in the menu slot while busy) ──
+  let activity: ActivityTimelineState = createActivityTimeline();
   const currentHelpMode = (): HelpMode =>
     pendingApproval ? "approval"
     : busy ? "busy"
@@ -921,7 +924,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const composer = composerLines();
     // The slash dropdown is suppressed while an approval/help overlay owns the screen.
     const overlayActive = pendingApproval !== null || helpVisible;
-    const menu = overlayActive ? [] : menuRows(width);
+    // Menu slot: slash dropdown when open; otherwise a compact live activity
+    // timeline (10A.11) while a turn is running; nothing when idle.
+    const menu = overlayActive ? []
+      : chat.slashMenu.open ? menuRows(width)
+      : busy ? renderActivityTimeline(activity, { width, maxRows: 3, theme })
+      : [];
     const height = viewportH(composer.length, menu.length);
     // While an approval/help overlay is up, the content window IS the overlay.
     const built = overlayActive ? null : buildLinesWithMeta(width);
@@ -982,7 +990,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   }
 
   const sink = {
-    emit: (e: UiEvent) => { transcript = applyEvent(transcript, e); redraw(); },
+    emit: (e: UiEvent) => { transcript = applyEvent(transcript, e); activity = applyActivityEvent(activity, e, Date.now()); redraw(); },
     endTurn: () => { redraw(); },
   };
   const approval = createTuiApproval({
