@@ -3,7 +3,7 @@ import os from "node:os";
 import { stdin, stdout } from "node:process";
 import { writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
-import { loadConfig } from "../config/config.js";
+import { loadConfig, type PrContext } from "../config/config.js";
 import { discoverPlugins } from "../plugins/discovery.js";
 import { composePluginChecks, composePluginSkills } from "../plugins/compose.js";
 import type { PluginTrustStore } from "../plugins/trust.js";
@@ -36,6 +36,7 @@ import { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../config/config.js";
+import type { AgentMessage } from "../providers/types.js";
 import { ModelRouter } from "../models/router.js";
 import { ProviderPool } from "../models/providerPool.js";
 import { runSubagent } from "../subagents/runner.js";
@@ -240,6 +241,16 @@ export function buildDelegateRuntime(session: Session): DelegateRuntime {
   };
 }
 
+/**
+ * Build a system message carrying the PR diff context so the model can review it.
+ */
+function injectPrContext(pr: PrContext): AgentMessage {
+  return {
+    role: "system",
+    content: `Reviewing PR #${pr.number}.\n\nDiff:\n\`\`\`diff\n${pr.diff}\n\`\`\`\n\nThe PR branch (${pr.prBranch}) is checked out locally.`,
+  };
+}
+
 export async function buildSession(
   config: ReturnType<typeof loadConfig>,
   resume?: string | boolean,
@@ -348,12 +359,17 @@ export async function buildSession(
   }
 
   const instr = resolveInstructions(config);
+  const messages: AgentMessage[] = [systemMessage(config, config.approvalMode, instr.text, skillsCatalog)];
+  // Inject PR context as a second system message when --pr or /pr loaded one.
+  if (config.prContext) {
+    messages.push(injectPrContext(config.prContext));
+  }
   const freshSession: Session = {
     config,
     provider,
     registry,
     store: new SessionStore(config.workspaceRoot, newSessionId()),
-    messages: [systemMessage(config, config.approvalMode, instr.text, skillsCatalog)],
+    messages,
     mode: config.approvalMode,
     executionRoot: config.workspaceRoot,
     todos: [],

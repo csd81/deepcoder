@@ -4,6 +4,7 @@ import type { ApprovalMode } from "../config/config.js";
 import { estimateCost } from "../providers/pricing.js";
 import { enterPlanMode, exitPlanMode, initPlanMode } from "./planMode.js";
 import { Git } from "../workspace/git.js";
+import { fetchPr, getPrDiff } from "./prFetch.js";
 import { resolveReadPathInWorkspace, displayPath, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
@@ -1251,6 +1252,26 @@ export async function handleSlashCommand(
       const git = new Git(config.workspaceRoot);
       if (await git.isRepo()) console.log((await git.diff()) || chalk.dim("No unstaged changes."));
       else console.log(chalk.dim("Not a git repository."));
+      return { consumed: true };
+    }
+
+    case "pr": {
+      const parts = arg.trim().split(/\s+/);
+      const prNumber = parts[0];
+      if (!prNumber || !/^\d+$/.test(prNumber)) {
+        console.log(chalk.red("Usage: /pr <number> [--remote <name>]"));
+        return { consumed: true };
+      }
+      const remoteIdx = parts.indexOf("--remote");
+      const remote = remoteIdx !== -1 && parts[remoteIdx + 1] ? parts[remoteIdx + 1]! : undefined;
+      try {
+        const info = await fetchPr(Number(prNumber), { remote, workspaceRoot: config.workspaceRoot });
+        const diff = await getPrDiff(new Git(config.workspaceRoot), info);
+        console.log(chalk.bold(`\nPR #${prNumber} (${info.prBranch}) — diff from ${info.baseRef}:`));
+        console.log(diff.slice(0, 5000) + (diff.length > 5000 ? "\n… (truncated)" : ""));
+      } catch (err) {
+        console.log(chalk.red(`PR fetch failed: ${(err as Error).message}`));
+      }
       return { consumed: true };
     }
 

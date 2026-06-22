@@ -160,6 +160,15 @@ export interface Config {
   telemetry: TelemetryConfig;
   /** Format-on-edit config (opt-in). null = not configured. */
   format: FormatConfig | null;
+  /** PR context for injecting the diff into a session's initial messages. */
+  prContext?: PrContext;
+}
+
+/** PR context injected into the session startup (from `--pr` or `/pr`). */
+export interface PrContext {
+  number: string;
+  diff: string;
+  prBranch: string;
 }
 
 export interface QualityGateOptions {
@@ -352,6 +361,7 @@ const PROVIDER_ENV_PREFIX: Record<string, string> = {
 };
 
 export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolation" | "hooks" | "diagnostics" | "skills" | "dependencyHealing" | "delegate" | "format">> & {
+  prContext?: PrContext;
   sandbox?: Partial<SandboxConfig>;
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;

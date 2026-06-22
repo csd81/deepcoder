@@ -9,6 +9,8 @@ import { runOneShot, runRepl, runTuiRepl } from "./repl.js";
 import { resolveUiMode } from "../ui/uiMode.js";
 import { listSessions, forkSession, latestSessionId } from "../session/sessionStore.js";
 import { buildSession, setupIsolation, finalizeIsolation } from "../runtime/sessionFactory.js";
+import { fetchPr, getPrDiff } from "./prFetch.js";
+import { Git } from "../workspace/git.js";
 
 const program = new Command();
 
@@ -39,6 +41,8 @@ program
   .option("--tui", "interactive: use the experimental scrollable terminal UI (TTY only)")
   .option("--no-tui", "interactive: force the plain line UI")
   .option("--title <name>", "set a session title")
+  .option("--pr <number>", "fetch a GitHub PR (by number) and start a session with its diff")
+  .option("--remote <name>", "remote name for --pr (default: origin)")
   .option("-p, --print", "one-shot: print only the raw assistant reply (no chrome) and exit")
   .action(
     async (
@@ -65,6 +69,8 @@ program
         workspaceIsolationIncludeDirty?: boolean;
         tui?: boolean;
         title?: string;
+        pr?: string;
+        remote?: string;
         print?: boolean;
       },
     ) => {
@@ -140,6 +146,12 @@ program
       const resolvedId = typeof opts.resume === "string" ? opts.resume : await latestSessionId(baseConfig.workspaceRoot);
       if (!resolvedId) throw new Error("No saved session to fork/resume.");
       resumeArg = await forkSession(baseConfig.workspaceRoot, resolvedId);
+    }
+
+    if (opts.pr) {
+      const prInfo = await fetchPr(Number(opts.pr), { remote: opts.remote, workspaceRoot: baseConfig.workspaceRoot });
+      const diff = await getPrDiff(new Git(baseConfig.workspaceRoot), prInfo);
+      baseConfig.prContext = { number: opts.pr, diff, prBranch: prInfo.prBranch };
     }
 
     const session = await buildSession(baseConfig, resumeArg);
