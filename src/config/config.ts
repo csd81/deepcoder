@@ -13,6 +13,7 @@ import { OPENROUTER_DEFAULT_FREE_MODEL } from "../providers/openrouterFreeModels
 import type { ModelsFileConfig } from "../models/types.js";
 import { DEFAULT_DIAGNOSTICS, type DiagnosticsConfig } from "../diagnostics/types.js";
 import { webConfigFromEnv, type WebConfig } from "./webConfig.js";
+import type { LspConfig } from "../lsp/types.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
@@ -52,6 +53,8 @@ export interface Config {
   semanticSearch: SemanticSearchConfig;
   /** Phase 10E opt-in web tools (default disabled). */
   web: WebConfig;
+  /** Opt-in LSP code-intelligence tools (default disabled). */
+  lsp: LspConfig;
   /**
    * When true, a one-shot run first asks the reasoner model for a step-by-step
    * plan (no tools), prepends it as context, then runs the normal agent loop.
@@ -661,6 +664,17 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   // DEEPCODER_WEB* env vars; overrides (e.g. test) apply on top.
   const web: WebConfig = { ...webConfigFromEnv(process.env), ...(overrides.web ?? {}) };
 
+  // LSP: opt-in (default off). fileConfig provides the block; DEEPCODER_LSP flips
+  // enabled. `servers` (per-language command overrides) comes from the file only.
+  const lspFile = (file as { lsp?: Partial<LspConfig> }).lsp ?? {};
+  const lsp: LspConfig = {
+    enabled:
+      ["1", "true", "yes"].includes((process.env.DEEPCODER_LSP ?? "").toLowerCase()) ||
+      lspFile.enabled === true,
+    ...(lspFile.servers ? { servers: lspFile.servers } : {}),
+    ...(overrides.lsp ?? {}),
+  };
+
   return {
     provider,
     apiKey,
@@ -670,6 +684,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     reasoningEffort,
     semanticSearch,
     web,
+    lsp,
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL"),
     planFirst:
       ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||

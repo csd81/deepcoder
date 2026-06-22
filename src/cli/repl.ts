@@ -31,6 +31,7 @@ import { slashNeedsSuspend } from "./tuiSlashRouting.js";
 import { runSolveCommand } from "./solveRunner.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
+import type { LspRuntime } from "../lsp/types.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
@@ -109,6 +110,8 @@ export interface Session {
   writeTracker: Set<string>;
   /** Connected MCP servers (Phase 4A); undefined if none configured. */
   mcp?: McpManager;
+  /** LSP runtime (lazy servers per language); undefined when LSP is disabled. */
+  lsp?: LspRuntime;
   /** Pre-image recorder for checkpoints; undefined when checkpoints are off. */
   recorder?: CheckpointRecorder;
   /** Subagent run records — persisted for audit, NEVER sent to the model. */
@@ -487,6 +490,7 @@ export async function runOneShot(
     await runTask(session, ui);
   } finally {
     await session.mcp?.closeAll();
+    await session.lsp?.closeAll();
   }
 }
 
@@ -664,6 +668,7 @@ export async function runRepl(session: Session): Promise<void> {
     await fireSessionEvent(session, "SessionEnd");
     rl.close();
     await session.mcp?.closeAll();
+    await session.lsp?.closeAll();
   }
 }
 
