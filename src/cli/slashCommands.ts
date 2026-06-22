@@ -5,6 +5,7 @@ import { estimateCost } from "../providers/pricing.js";
 import { enterPlanMode, exitPlanMode, initPlanMode } from "./planMode.js";
 import { Git } from "../workspace/git.js";
 import { fetchPr, getPrDiff } from "./prFetch.js";
+import { detectConflicts, readConflict, buildResolvePrompt, type ConflictFile } from "./mergeConflict.js";
 import { resolveReadPathInWorkspace, displayPath, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
 import { loadInstructions } from "../context/projectInstructions.js";
@@ -1252,6 +1253,54 @@ export async function handleSlashCommand(
       const git = new Git(config.workspaceRoot);
       if (await git.isRepo()) console.log((await git.diff()) || chalk.dim("No unstaged changes."));
       else console.log(chalk.dim("Not a git repository."));
+      return { consumed: true };
+    }
+
+    case "resolve": {
+      // Resolve git merge/rebase/cherry-pick conflicts with the agent. `--continue`
+      // is accepted but behaves the same: each run detects the CURRENT conflicts and
+      // resolves whatever remains (so manual fixes in between are picked up).
+      const git = new Git(config.workspaceRoot);
+      if (!(await git.isRepo())) {
+        console.log(chalk.dim("Not a git repository."));
+        return { consumed: true };
+      }
+      const conflicts = await detectConflicts(git);
+      if (conflicts.length === 0) {
+        console.log(chalk.green("No conflicts detected."));
+        return { consumed: true };
+      }
+      console.log(chalk.bold(`\nFound ${conflicts.length} conflicted file(s):`));
+      for (const f of conflicts) console.log(`  ${f}`);
+
+      const conflictData: ConflictFile[] = [];
+      for (const f of conflicts) {
+        const cf = await readConflict(git, config.workspaceRoot, f);
+        if (cf) conflictData.push(cf);
+      }
+      if (conflictData.length === 0) {
+        console.log(chalk.yellow("Conflicts are binary or unreadable — resolve them manually."));
+        return { consumed: true };
+      }
+      if (!runAgent) {
+        console.log(chalk.yellow("/resolve needs an interactive agent turn — run it from the REPL."));
+        return { consumed: true };
+      }
+
+      // Hand the model the full file + all three stages; it edits via its normal
+      // (permission-gated) tools. We never stage/commit on its behalf here.
+      session.messages.push({ role: "user", content: buildResolvePrompt(conflictData) });
+      await runAgent();
+
+      const remaining = await detectConflicts(git);
+      if (remaining.length === 0) {
+        for (const f of conflicts) await git.run(["add", f]);
+        console.log(chalk.green("\nAll conflicts resolved and staged."));
+        console.log(chalk.dim("Run `git merge --continue` (or rebase/cherry-pick --continue) to finish."));
+      } else {
+        console.log(chalk.yellow(`\n${remaining.length} conflict(s) remain: ${remaining.join(", ")}`));
+        console.log(chalk.dim("Run /resolve again, or fix them manually."));
+      }
       return { consumed: true };
     }
 

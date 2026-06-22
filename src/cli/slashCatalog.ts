@@ -37,6 +37,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "pull", args: "[--rebase]", description: "Pull from origin (confirmed)", category: "git" },
   { name: "merge", args: "<branch>", description: "Merge a branch (confirmed)", category: "git" },
   { name: "rebase", args: "<branch>", description: "Rebase onto a branch (confirmed)", category: "git" },
+  { name: "resolve", args: "[--continue]", description: "Resolve merge/rebase conflicts with the agent, then stage", category: "git" },
   // session
   { name: "help", description: "Show command help", category: "session" },
   { name: "exit", description: "Quit the session", category: "session", aliases: ["quit"] },

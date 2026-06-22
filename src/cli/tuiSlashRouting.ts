@@ -20,6 +20,7 @@
 const TUI_SUSPEND_SLASH = new Set<string>([
   "plan",         // awaits a (slow) reasoner model call, then prints
   "solve",        // runs the agent loop + streams check output
+  "resolve",      // runs an agent turn to resolve merge conflicts (streams + approvals)
   "delegate",     // streams worker output and reads stdin confirmations
   "research",     // read-only subagent: long model call
   "review",       // read-only subagent: long model call
