@@ -27,6 +27,8 @@ export interface FrameInput {
   hasNewOutputBelow: boolean;
   /** Slash-command dropdown rows, rendered just above the composer when open. */
   menuLines?: string[];
+  /** Footer hint line, rendered as the very last row when present. */
+  footerLine?: string;
 }
 
 // ── renderFrame ──────────────────────────────────────────────────────────────
@@ -74,6 +76,9 @@ export function renderFrame(input: FrameInput): string[] {
   // 5. Input composer (one or more rows)
   const composer = input.inputLines ?? [inputLine];
   for (const row of composer) result.push(truncate(row, width));
+
+  // 6. Footer hint line (very last row)
+  if (input.footerLine !== undefined) result.push(truncate(input.footerLine, width));
 
   return result;
 }

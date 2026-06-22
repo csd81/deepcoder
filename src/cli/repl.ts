@@ -49,6 +49,7 @@ import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
 import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
+import { renderFooterHints, type FooterHintMode } from "../ui/footerHints.js";
 import { createSearchState, updateSearch, moveSearchSelection, selectedMatch, type TranscriptSearchState } from "../ui/transcriptSearch.js";
 import { formatTranscriptBlockMarkdown, selectedBlock } from "../ui/transcriptExport.js";
 import { safeExportFilename } from "../ui/exportWriter.js";
@@ -659,6 +660,14 @@ export async function runTuiRepl(session: Session): Promise<void> {
     : chat.slashMenu.open ? "slash-menu"
     : transcript.selectedBlockId ? "focused-block"
     : "normal";
+  // ── 10A.17: persistent bottom footer hints ──
+  const currentFooterMode = (): FooterHintMode =>
+    pendingApproval ? "approval"
+    : busy ? "busy"
+    : search.active ? "search"
+    : chat.slashMenu.open ? "slash-menu"
+    : transcript.selectedBlockId ? "focused-block"
+    : "normal";
 
   /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping).
    *  `final` lines are already styled + wrapped to `width` (markdown) and must not be re-wrapped.
@@ -815,6 +824,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
         { id: "indicator", fixedHeight: 1 },
         { id: "menu", fixedHeight: Math.max(0, menuCount) },
         { id: "composer", fixedHeight: Math.max(0, inputCount) },
+        { id: "footer", fixedHeight: 1 },
       ],
     };
     validateLayoutTree(tree);
@@ -902,6 +912,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       width, inputLine: composer[0], inputLines: composer,
       hasNewOutputBelow,
       menuLines: menu.length ? menu : undefined,
+      footerLine: renderFooterHints({ mode: currentFooterMode(), width, theme }),
     });
     // Repaint only the lines that changed since the last frame (anti-flicker).
     const ops = diffFrames(prevFrame, frame);
