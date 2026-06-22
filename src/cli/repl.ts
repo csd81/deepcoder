@@ -71,6 +71,8 @@ import { renderAssistantBlock } from "../ui/assistantRenderState.js";
 import { renderEmptyState } from "../ui/emptyState.js";
 import { createStyleTokens } from "../ui/styleTokens.js";
 import { Git } from "../workspace/git.js";
+import { resolveReadPathInWorkspace } from "../workspace/paths.js";
+import { expandMentions } from "./atMention.js";
 
 /** Mutable runtime state for one interactive (or one-shot) session. */
 export interface Session {
@@ -465,7 +467,10 @@ export async function runOneShot(
       return;
     }
     if (session.config.planFirst) await planFirstPass(session, prompt);
-    session.messages.push({ role: "user", content: prompt });
+    const root = session.executionRoot ?? session.config.workspaceRoot;
+    const exp = expandMentions(prompt, { resolve: (p) => resolveReadPathInWorkspace(root, p), readFile: (p) => readFileSync(p, "utf8") });
+    for (const s of exp.skipped) stdout.write(chalk.dim(`@${s.path}: ${s.reason}\n`));
+    session.messages.push({ role: "user", content: exp.prompt });
     await session.store.save(snapshot(session));
     await runTask(session, ui);
   } finally {
@@ -604,7 +609,11 @@ export async function runRepl(session: Session): Promise<void> {
       // UserPromptSubmit hooks (Phase 7B): may warn and inject context for this turn.
       const extra = await fireSessionEvent(session, "UserPromptSubmit", { prompt: input });
       const content = extra.length ? `${input}\n\n[hook context]\n${extra.join("\n")}` : input;
-      session.messages.push({ role: "user", content });
+      // Expand @-file mentions before submitting.
+      const root = session.executionRoot ?? session.config.workspaceRoot;
+      const exp = expandMentions(content, { resolve: (p) => resolveReadPathInWorkspace(root, p), readFile: (p) => readFileSync(p, "utf8") });
+      for (const s of exp.skipped) stdout.write(chalk.dim(`@${s.path}: ${s.reason}\n`));
+      session.messages.push({ role: "user", content: exp.prompt });
       await session.store.save(snapshot(session));
       try {
         await runTask(session);
@@ -1167,7 +1176,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
       redraw();
       return;
     }
-    session.messages.push({ role: "user", content: line });
+    const root = session.executionRoot ?? session.config.workspaceRoot;
+    const exp = expandMentions(line, { resolve: (p) => resolveReadPathInWorkspace(root, p), readFile: (p) => readFileSync(p, "utf8") });
+    for (const s of exp.skipped) {
+      transcript = applyEvent(transcript, { type: "notice", message: `@${s.path}: ${s.reason}` });
+    }
+    session.messages.push({ role: "user", content: exp.prompt });
     busy = true; redraw();
     try { await runTask(session, { sink, approve }); }
     catch (e) { transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` }); }
