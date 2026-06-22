@@ -18,6 +18,7 @@ export interface CheckConfig {
 }
 
 import type { SandboxConfig } from "../sandbox/types.js";
+import type { LspConfig } from "../lsp/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
 import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig, SemanticSearchConfig } from "./config.js";
@@ -47,6 +48,7 @@ export interface FileConfig {
   testTargeting?: Partial<TestTargetingConfig>;
   diagnostics?: Partial<DiagnosticsConfig>;
   semanticSearch?: Partial<SemanticSearchConfig>;
+  lsp?: Partial<LspConfig>;
   models?: ModelsFileConfig;
   telemetry?: TelemetryConfig;
 }

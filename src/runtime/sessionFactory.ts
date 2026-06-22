@@ -17,6 +17,9 @@ import { createSemanticTools } from "../tools/semanticTools.js";
 import { createWebTools } from "../tools/webTools.js";
 import { createWebSearchProviderFromConfig } from "../web/providerFactory.js";
 import { createPtyTools } from "../tools/ptyTools.js";
+import { createLspTools } from "../tools/lspTools.js";
+import { createLspManager } from "../lsp/manager.js";
+import type { LspRuntime } from "../lsp/types.js";
 import { defaultRegistry } from "../tools/registry.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
@@ -232,6 +235,13 @@ export async function buildSession(
   // Phase 10G: register the persistent interactive-shell tool only when opted in
   // (default off / fail-closed); it still flows through the permission policy.
   for (const t of createPtyTools({ enabled: config.interactiveShell })) registry.register(t);
+  // LSP code-intelligence tools: only when opt-in is enabled (default off). The
+  // manager lazily launches a server per language; closeAll() runs on session end.
+  let lsp: LspRuntime | undefined;
+  if (config.lsp.enabled) {
+    lsp = createLspManager(config.lsp, config.workspaceRoot);
+    for (const t of createLspTools(lsp)) registry.register(t);
+  }
   const mcp = await initMcp(config, registry);
   const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
 
@@ -291,6 +301,7 @@ export async function buildSession(
       activatedSkills: saved.activatedSkills ?? [],
       trustedWorkspaceSkills: new Set<string>(),
       mcp,
+      lsp,
       recorder,
       instructionGraph: instr.graph,
       tokenUsage: { ...EMPTY_USAGE },
@@ -318,6 +329,7 @@ export async function buildSession(
     activatedSkills: [],
     trustedWorkspaceSkills: new Set<string>(),
     mcp,
+    lsp,
     recorder,
     instructionGraph: instr.graph,
     tokenUsage: { ...EMPTY_USAGE },
