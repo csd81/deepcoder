@@ -52,6 +52,18 @@ async function shaOfFile(abs: string): Promise<string | null> {
   }
 }
 
+/** Remove `abs` if it is currently a directory, so a file can be restored in its
+ *  place without an EISDIR crash. No-op if it's absent or already a file. */
+async function ensureNotDirectory(abs: string): Promise<void> {
+  try {
+    if ((await fs.lstat(abs)).isDirectory()) {
+      await fs.rm(abs, { recursive: true, force: true });
+    }
+  } catch {
+    // absent — nothing to clear
+  }
+}
+
 function newCheckpointId(): string {
   return `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -211,6 +223,9 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
       }
       const content = await fs.readFile(path.join(checkpointsDir(root), "blobs", f.restoreSha));
       await fs.mkdir(path.dirname(abs), { recursive: true });
+      // If the path was replaced by a directory, writeFile would EISDIR-crash
+      // mid-rollback. Remove the directory first so the file can be restored.
+      await ensureNotDirectory(abs);
       await fs.writeFile(abs, content);
       result.restored.push(f.path);
     } else {
@@ -218,7 +233,9 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
         result.skipped.push(f.path); // already gone
         continue;
       }
-      await fs.rm(abs, { force: true });
+      // recursive: a file replaced by a directory must still be removable
+      // (plain rm throws EISDIR/ERR_FS_EISDIR on a directory).
+      await fs.rm(abs, { force: true, recursive: true });
       result.deleted.push(f.path);
     }
   }

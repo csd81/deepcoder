@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile, mkdir, rename, access } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, mkdir, rename, access, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CheckpointRecorder, listCheckpoints, rollback } from "../../src/session/checkpoints.js";
@@ -18,6 +18,27 @@ async function agentWrite(rec: CheckpointRecorder, abs: string, content: string)
   await writeFile(abs, content, "utf8");
   await rec.recordPostWrite(abs);
 }
+
+test("rollback restores a file replaced by a directory (no EISDIR crash)", async () => {
+  const root = await ws();
+  const file = path.join(root, "a.txt");
+  await writeFile(file, "ORIGINAL", "utf8");
+
+  const rec = new CheckpointRecorder(root);
+  await agentWrite(rec, file, "AGENT EDIT");
+  const id = await rec.finalize("t");
+  assert.ok(id);
+
+  // The user replaces the file with a (non-empty) directory after the run.
+  await rm(file, { force: true });
+  await mkdir(file);
+  await writeFile(path.join(file, "inner.txt"), "x", "utf8");
+
+  // Phase 2 must not crash with EISDIR; it removes the dir and restores bytes.
+  const res = await rollback(root, id!, { force: true });
+  assert.ok(res.restored.includes("a.txt"), "the original file should be restored");
+  assert.equal(await readFile(file, "utf8"), "ORIGINAL");
+});
 
 test("undo a modification restores the exact original bytes", async () => {
   const root = await ws();
