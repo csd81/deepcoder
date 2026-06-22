@@ -48,6 +48,7 @@ import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
+import { renderHelpOverlay, type HelpMode } from "../ui/helpOverlay.js";
 import { MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
 import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
@@ -637,14 +638,21 @@ export async function runTuiRepl(session: Session): Promise<void> {
     try { stdin.pause(); } catch { /* */ }
   }
 
-  const theme: Theme = createTheme(
-    resolveColorEnabled({
-      env: process.env,
-      // The TUI is inherently interactive (raw stdin), but npm/tsx can leave
-      // stdout.isTTY unset — treat either stream being a TTY as color-capable.
-      isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) || Boolean((stdin as { isTTY?: boolean }).isTTY),
-    }),
-  );
+  const colorEnabled = resolveColorEnabled({
+    env: process.env,
+    // The TUI is inherently interactive (raw stdin), but npm/tsx can leave
+    // stdout.isTTY unset — treat either stream being a TTY as color-capable.
+    isTTY: Boolean((stdout as { isTTY?: boolean }).isTTY) || Boolean((stdin as { isTTY?: boolean }).isTTY),
+  });
+  const theme: Theme = createTheme(colorEnabled);
+  // ── 10A.13: contextual help overlay (toggled with `?`) ──
+  let helpVisible = false;
+  const currentHelpMode = (): HelpMode =>
+    pendingApproval ? "approval"
+    : busy ? "busy"
+    : chat.slashMenu.open ? "slash-menu"
+    : transcript.selectedBlockId ? "focused-block"
+    : "normal";
 
   /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping).
    *  `final` lines are already styled + wrapped to `width` (markdown) and must not be re-wrapped.
@@ -838,19 +846,22 @@ export async function runTuiRepl(session: Session): Promise<void> {
     // Wrap logical lines to the terminal width so nothing is truncated off-screen
     // and a resize re-wraps cleanly. renderFrame's own (ANSI-aware) truncate no-ops.
     const composer = composerLines();
-    // The slash dropdown is suppressed while an approval modal owns the screen.
-    const menu = pendingApproval ? [] : menuRows(width);
+    // The slash dropdown is suppressed while an approval/help overlay owns the screen.
+    const overlayActive = pendingApproval !== null || helpVisible;
+    const menu = overlayActive ? [] : menuRows(width);
     const height = viewportH(composer.length, menu.length);
-    // While an approval is pending, the content window IS the modal (diff overlay).
-    const built = pendingApproval ? null : buildLinesWithMeta(width);
+    // While an approval/help overlay is up, the content window IS the overlay.
+    const built = overlayActive ? null : buildLinesWithMeta(width);
     const lines = built
       ? built.lines
-      : renderApprovalModal({ description: pendingApproval!.description, diff: pendingApproval!.diff, width, height, scroll: approvalScroll, theme });
+      : pendingApproval
+        ? renderApprovalModal({ description: pendingApproval.description, diff: pendingApproval.diff, width, height, scroll: approvalScroll, theme })
+        : renderHelpOverlay({ mode: currentHelpMode(), width, height, color: colorEnabled }, theme);
     const maxTop = Math.max(0, lines.length - height);
     // Derive the display offset from chat state without mutating it: an approval
     // pins to top, a bottom-stuck view snaps to maxTop, else clamp the saved top.
-    const viewportTop = pendingApproval ? 0 : chat.atBottom ? maxTop : Math.min(Math.max(0, chat.viewportTop), maxTop);
-    const hasNewOutputBelow = !pendingApproval && !chat.atBottom && viewportTop < maxTop;
+    const viewportTop = overlayActive ? 0 : chat.atBottom ? maxTop : Math.min(Math.max(0, chat.viewportTop), maxTop);
+    const hasNewOutputBelow = !overlayActive && !chat.atBottom && viewportTop < maxTop;
     // Capture geometry for mouse hit-testing (only meaningful for the transcript).
     lastRowMeta = built ? built.meta : [];
     lastViewportTop = viewportTop;
@@ -982,6 +993,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
       const r = approvalResolve; approvalResolve = null;
       r(key?.name === "escape" ? "escape" : (str ?? key?.sequence ?? key?.name ?? ""));
       return;
+    }
+    // 10A.13 help overlay: while it's up, any key dismisses it; otherwise `?`
+    // on an empty composer opens it (so `?` still types into a real prompt).
+    if (helpVisible) { helpVisible = false; redraw(); return; }
+    if (str === "?" && !busy && editor.text.length === 0 && !chat.slashMenu.open) {
+      helpVisible = true; redraw(); return;
     }
     // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
     if (key?.name === "return" && (key as { meta?: boolean }).meta) {
