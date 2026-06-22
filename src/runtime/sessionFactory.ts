@@ -341,6 +341,7 @@ export async function buildSession(
       modelRouter,
       providerPool,
       planState: initPlanMode(),
+      title: saved.title,
     };
   }
 

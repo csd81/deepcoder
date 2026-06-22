@@ -30,6 +30,8 @@ export interface StatusBarInfo {
   workers?: number;
   /** A task/turn is in flight. */
   busy: boolean;
+  /** Human-readable session title, set via /title or --title. */
+  title?: string;
 }
 
 export type StatuslineField =
@@ -61,7 +63,7 @@ function formatTokens(n: number): string {
  */
 export function renderField(field: StatuslineField, info: StatusBarInfo, theme: Theme): string | null {
   switch (field) {
-    case "title":   return theme.title("deepcoder");
+    case "title":   return theme.title(info.title ?? "deepcoder");
     case "mode":    return info.mode === "yolo" ? theme.warning("YOLO") : theme.dim(info.mode);
     case "model":   return theme.dim(`${info.provider}/${info.model}`);
     case "sandbox": return theme.dim(`sandbox ${info.sandbox}`);

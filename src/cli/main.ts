@@ -37,6 +37,7 @@ program
   .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
   .option("--tui", "interactive: use the experimental scrollable terminal UI (TTY only)")
   .option("--no-tui", "interactive: force the plain line UI")
+  .option("--title <name>", "set a session title")
   .option("-p, --print", "one-shot: print only the raw assistant reply (no chrome) and exit")
   .action(
     async (
@@ -61,6 +62,7 @@ program
         workspaceIsolation?: string;
         workspaceIsolationIncludeDirty?: boolean;
         tui?: boolean;
+        title?: string;
         print?: boolean;
       },
     ) => {
@@ -123,11 +125,14 @@ program
     if (opts.listSessions) {
       const all = await listSessions(baseConfig.workspaceRoot);
       if (all.length === 0) console.log(chalk.dim("No saved sessions."));
-      else for (const s of all) console.log(`${s.id}  ${chalk.dim(`${s.messageCount} msgs · ${s.updatedAt}`)}`);
+      else for (const s of all) {
+        const label = s.title ? `${s.title} ${chalk.dim(`(${s.id})`)}` : s.id;
+        console.log(`${label}  ${chalk.dim(`${s.messageCount} msgs · ${s.updatedAt}`)}`);
+      }
       return;
     }
 
-    // Phase fork: if --fork is set, resolve the resume id, fork it, and resume the copy.
+    // --fork: resolve the resume id, fork it, and resume the copy.
     let resumeArg: string | boolean | undefined = opts.resume;
     if (opts.resume && opts.fork) {
       const resolvedId = typeof opts.resume === "string" ? opts.resume : await latestSessionId(baseConfig.workspaceRoot);
@@ -136,6 +141,9 @@ program
     }
 
     const session = await buildSession(baseConfig, resumeArg);
+    if (opts.title) {
+      session.title = opts.title;
+    }
     await setupIsolation(session);
 
     const prompt = promptParts.join(" ").trim();

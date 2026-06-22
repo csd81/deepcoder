@@ -139,6 +139,8 @@ export interface Session {
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
   /** Interactive Plan Mode state — undefined means inactive (/plan-mode off). */
   planState?: PlanModeState;
+  /** Human-readable session label, set via /title or --title. */
+  title?: string;
 }
 
 /**
@@ -317,6 +319,7 @@ function snapshot(session: Session): SessionSnapshot {
     briefs: session.briefs,
     activatedSkills: session.activatedSkills,
     webTrace: session.webTrace,
+    title: session.title,
   };
 }
 
@@ -1085,6 +1088,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
       tokens: usage.totalTokens > 0 ? usage.totalTokens : undefined,
       costUsd: cost?.pricingKnown ? cost.totalUsd : undefined,
       busy,
+      title: session.title,
     };
     const status = renderStatusBar(info, width, theme, session.config.statusline?.fields);
     const frame = renderFrame({
