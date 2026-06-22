@@ -5,8 +5,8 @@ Status: `OPEN` / `FIXED <commit>` / `WONTFIX`.
 
 ---
 
-## FIXED `ad0a206` (mouse) + `82c388e` (no-output) — `/understand` in the TUI does nothing, and mouse starts printing garbage again
-- **No-output fix (`82c388e`):** the TUI used an ALLOWLIST (`TUI_INLINE_SLASH`)
+## FIXED `ad0a206` (mouse) + `e603a91` (no-output) — `/understand` in the TUI does nothing, and mouse starts printing garbage again
+- **No-output fix (`e603a91`):** the TUI used an ALLOWLIST (`TUI_INLINE_SLASH`)
   to decide which slash commands render into the transcript; everything else
   suspended the alt-screen and printed on the hidden normal screen. `/understand`
   (and every other unlisted display command) was invisible. Inverted to a small
