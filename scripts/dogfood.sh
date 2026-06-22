@@ -56,4 +56,5 @@ echo "launching deepcoder TUI in $DIR (branch $BRANCH) — writes stay isolated 
 cd "$DIR"
 # --no-contain: containment is ON by default, but the worktree symlinks node_modules
 # OUTSIDE itself (gitignored), which bubblewrap wouldn't bind — so dogfooding needs it off.
-exec npm run dev -- --tui --mode auto --no-contain
+# --no-contain is quarantined, so re-enable it via DEEPCODER_ALLOW_UNCONTAINED=1.
+exec env DEEPCODER_ALLOW_UNCONTAINED=1 npm run dev -- --tui --mode auto --no-contain

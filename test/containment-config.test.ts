@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { loadConfig } from "../src/config/config.js";
 
 function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
-  const keys = ["DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_CONTAIN", "DEEPCODER_SANDBOX", "DEEPCODER_MCP_EXECUTE", "DEEPCODER_INTERACTIVE_SHELL"];
+  const keys = ["DEEPCODER_PROVIDER", "DEEPCODER_API_KEY", "DEEPCODER_CONTAIN", "DEEPCODER_SANDBOX", "DEEPCODER_MCP_EXECUTE", "DEEPCODER_INTERACTIVE_SHELL", "DEEPCODER_ALLOW_UNCONTAINED"];
   const saved: Record<string, string | undefined> = {};
   for (const k of keys) { saved[k] = process.env[k]; delete process.env[k]; }
   Object.assign(process.env, env);
@@ -29,17 +29,25 @@ test("default: containment ON → sandbox is fail-closed bubblewrap/no-mounts", 
   });
 });
 
-test("--no-contain (CLI false) disables it → sandbox untouched (fast)", () => {
+test("QUARANTINE: --no-contain is IGNORED by default (containment stays ON)", () => {
   withEnv(KEY, () => {
     const c = loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } });
-    assert.equal(c.containment.enabled, false);
-    assert.equal(c.sandbox.mode, "fast");
+    assert.equal(c.containment.enabled, true); // disabling is quarantined
+    assert.equal(c.sandbox.mode, "bubblewrap");
   });
 });
 
-test("env DEEPCODER_CONTAIN=0 disables the default", () => {
+test("QUARANTINE: env DEEPCODER_CONTAIN=0 is IGNORED by default", () => {
   withEnv({ ...KEY, DEEPCODER_CONTAIN: "0" }, () => {
-    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).containment.enabled, false);
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).containment.enabled, true);
+  });
+});
+
+test("DEEPCODER_ALLOW_UNCONTAINED=1 re-enables --no-contain (the bypass hatch)", () => {
+  withEnv({ ...KEY, DEEPCODER_ALLOW_UNCONTAINED: "1" }, () => {
+    const c = loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } });
+    assert.equal(c.containment.enabled, false);
+    assert.equal(c.sandbox.mode, "fast");
   });
 });
 
@@ -49,8 +57,10 @@ test("env DEEPCODER_CONTAIN=1 enables it", () => {
   });
 });
 
-test("CLI override wins over env (flag false beats DEEPCODER_CONTAIN=1)", () => {
-  withEnv({ ...KEY, DEEPCODER_CONTAIN: "1" }, () => {
+test("CLI override wins over env (flag false beats DEEPCODER_CONTAIN=1) — only with the bypass hatch open", () => {
+  // The CLI-beats-env precedence for DISABLING containment only matters when the
+  // quarantine bypass is open; otherwise --no-contain is ignored (covered above).
+  withEnv({ ...KEY, DEEPCODER_CONTAIN: "1", DEEPCODER_ALLOW_UNCONTAINED: "1" }, () => {
     assert.equal(loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } }).containment.enabled, false);
   });
 });

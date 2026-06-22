@@ -50,6 +50,7 @@ DEEPCODER_PROVIDER="$P" \
 DEEPCODER_MODEL="$M" \
 DEEPCODER_BASE_URL="$U" \
 DEEPCODER_API_KEY="$K" \
+DEEPCODER_ALLOW_UNCONTAINED=1 \
 nohup node --import tsx src/cli/main.ts \
   --mode auto --sandbox off --no-contain --workspace-isolation "$isolation" \
   --solve --check phase --solve-attempts "$attempts" \
