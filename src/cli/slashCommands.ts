@@ -106,6 +106,8 @@ import type { ProposalScope } from "../delegate/propose.js";
 import { parseCopyArgs, extractLatestAssistant, extractLatestCodeBlock, type CopyPayload } from "../clipboard/copyTargets.js";
 import { copyToClipboard } from "../clipboard/clipboard.js";
 import { redactSecrets } from "../workspace/redact.js";
+import { formatSessionShare } from "./sessionShare.js";
+import { safeExportFilename, writeExport } from "../ui/exportWriter.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -537,6 +539,32 @@ export async function handleSlashCommand(
         await fs.writeFile(file, json, "utf8");
         console.log(chalk.dim(`Exported session to ${path.relative(config.workspaceRoot, file)}${sanitize ? " (sanitized)" : ""}.`));
       }
+      return { consumed: true };
+    }
+
+    case "share": {
+      const parts = arg.trim().split(/\s+/);
+      const sanitize = parts.includes("--sanitize");
+
+      const md = formatSessionShare({
+        id: session.store.id,
+        title: session.title,
+        model: config.model,
+        provider: config.provider,
+        createdAt: session.store.createdAt,
+        messages: session.messages,
+        telemetry: session.telemetry
+          ? {
+              totalTokens: session.telemetry.usage?.totalTokens,
+              costUsd: session.telemetry.estimatedCost?.totalUsd,
+            }
+          : undefined,
+      }, { sanitize });
+
+      const filename = safeExportFilename("share", new Date(), session.store.id);
+      const relPath = await writeExport(config.workspaceRoot, filename, md);
+      console.log(chalk.green(`Session shared: ${relPath}`));
+      console.log(chalk.dim("Open in any Markdown viewer, or share the file with your team."));
       return { consumed: true };
     }
 

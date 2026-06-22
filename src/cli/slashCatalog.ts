@@ -46,6 +46,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "undo", description: "Undo the last turn's file edits (auto-checkpoint)", category: "session" },
   { name: "redo", description: "Redo the last undone turn", category: "session" },
   { name: "export", args: "[--sanitize] [--stdout]", description: "Export the session to a JSON file", category: "session" },
+  { name: "share", args: "[--sanitize]", description: "Render the session as a portable Markdown file", category: "session" },
   { name: "import", args: "<path>", description: "Import a session from a JSON file", category: "session" },
   { name: "new", description: "Save the current session and start a fresh one", category: "session" },
   { name: "archive", args: "[id]", description: "Archive a session (defaults to current) and exit", category: "session" },
