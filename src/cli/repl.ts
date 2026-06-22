@@ -22,6 +22,9 @@ import {
   type InstructionGraph,
 } from "../context/instructionGraph.js";
 import { promptForApproval, confirm } from "../permissions/prompt.js";
+import { classifyCommand } from "../permissions/commandClassifier.js";
+import { runBashTool } from "../tools/runBash.js";
+import { parseBangCommand, decideBang } from "./bangCommand.js";
 import type { ActivateSkillRuntime } from "../skills/activation.js";
 import { handleSlashCommand } from "./slashCommands.js";
 import { runSolveCommand } from "./solveRunner.js";
@@ -531,6 +534,23 @@ async function printStatusline(session: Session): Promise<void> {
   }
 }
 
+/**
+ * Phase 10R — run a user-typed `!command` through the same sandboxed, redacted,
+ * timeout-bounded path as the model's run_bash tool, returning its output.
+ */
+async function executeBang(session: Session, command: string, signal: AbortSignal): Promise<{ output: string; isError?: boolean }> {
+  const ctx: ToolContext = {
+    workspaceRoot: session.executionRoot ?? session.config.workspaceRoot,
+    signal,
+    sandbox: session.config.sandbox,
+    readTracker: session.readTracker,
+    writeTracker: session.writeTracker,
+    todos: session.todos,
+  };
+  const res = await runBashTool.build({ command }).execute(ctx);
+  return { output: res.output, isError: res.isError };
+}
+
 export async function runRepl(session: Session): Promise<void> {
   session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
   stdout.write(
@@ -538,7 +558,7 @@ export async function runRepl(session: Session): Promise<void> {
       chalk.dim(
         ` — ${session.config.model} | mode: ${session.mode} | session: ${session.store.id}\n${session.config.workspaceRoot}\n`,
       ) +
-      chalk.dim("Type a task, or /help for commands.\n"),
+      chalk.dim("Type a task, /help for commands, or !<cmd> to run a shell command.\n"),
   );
 
   // SessionStart hooks (Phase 7B): injected context is appended to the system prompt.
@@ -549,6 +569,26 @@ export async function runRepl(session: Session): Promise<void> {
     while (true) {
       const input = (await rl.question(chalk.cyan("\ndeepcoder> "))).trim();
       if (!input) continue;
+
+      // Phase 10R: `!cmd` shell-escape — runs a real shell command, never the model.
+      const bang = parseBangCommand(input);
+      if (bang !== null) {
+        if (bang === "") { stdout.write(chalk.dim("Usage: !<command> — run a shell command, e.g. !ls -la\n")); continue; }
+        const decision = decideBang(bang, session.mode, classifyCommand);
+        if (decision.action === "refuse") { stdout.write(chalk.yellow(`Refused: ${decision.reason}.\n`)); continue; }
+        if (decision.action === "confirm" && !(await confirm(`Run flagged-dangerous command?  $ ${bang}`))) {
+          stdout.write(chalk.dim("Cancelled.\n")); continue;
+        }
+        const controller = new AbortController();
+        const onSig = () => controller.abort();
+        process.once("SIGINT", onSig);
+        try {
+          const { output, isError } = await executeBang(session, bang, controller.signal);
+          stdout.write((isError ? chalk.red(output) : output).replace(/\n*$/, "\n"));
+        } catch (e) { stdout.write(chalk.red(`Error: ${(e as Error).message ?? e}\n`)); }
+        finally { process.removeListener("SIGINT", onSig); }
+        continue;
+      }
 
       const slash = await handleSlashCommand(input, session, () => session.store.save(snapshot(session)), () =>
         runTask(session),
@@ -1045,6 +1085,39 @@ export async function runTuiRepl(session: Session): Promise<void> {
     if (!line) { redraw(); return; }
     pushUser(line); stickBottom(); redraw();
     if (line === "/exit" || line === "/quit") { restore(); resolveDone(); return; }
+    // Phase 10R: `!cmd` shell-escape (the user block was already echoed by pushUser).
+    {
+      const bang = parseBangCommand(line);
+      if (bang !== null) {
+        if (bang === "") {
+          transcript = applyEvent(transcript, { type: "notice", message: "Usage: !<command> — run a shell command, e.g. !ls -la" });
+          stickBottom(); redraw(); return;
+        }
+        const decision = decideBang(bang, session.mode, classifyCommand);
+        if (decision.action === "refuse") {
+          transcript = applyEvent(transcript, { type: "notice", message: `Refused: ${decision.reason}.` });
+          stickBottom(); redraw(); return;
+        }
+        if (decision.action === "confirm") {
+          // Raw-mode-safe confirm: reuse the approval review panel (no readline).
+          const ok = await approve(runBashTool.build({ command: bang }));
+          if (!ok) { transcript = applyEvent(transcript, { type: "notice", message: "Cancelled." }); stickBottom(); redraw(); return; }
+        }
+        busy = true; redraw();
+        const controller = new AbortController();
+        const onSig = () => controller.abort();
+        process.once("SIGINT", onSig);
+        try {
+          const { output, isError } = await executeBang(session, bang, controller.signal);
+          transcript = applyEvent(transcript, { type: "notice", message: (isError ? "✗ " : "") + (output || "(no output)") });
+        } catch (e) {
+          transcript = applyEvent(transcript, { type: "notice", message: `Error: ${(e as Error).message ?? e}` });
+        } finally {
+          process.removeListener("SIGINT", onSig); busy = false; stickBottom(); redraw();
+        }
+        return;
+      }
+    }
     if (line.startsWith("/")) {
       const cmd = (line.slice(1).split(/\s+/)[0] ?? "").toLowerCase();
       // 10A.18: /theme switches the live palette and repaints (no suspend).
@@ -1268,7 +1341,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
   process.on("exit", onProcExit);
   process.on("SIGTERM", onProcExit);
   stdout.on("resize", onResize);
-  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — type / for commands · mouse-wheel/PgUp/PgDn scroll · Tab inspect tool output · ↑/↓ history · Alt+Enter newline · Enter submit · Esc collapse · Ctrl+C exit · /exit quits" });
+  transcript = applyEvent(transcript, { type: "notice", message: "deepcoder TUI (experimental) — type / for commands · !cmd for shell · mouse-wheel/PgUp/PgDn scroll · Tab inspect tool output · ↑/↓ history · Alt+Enter newline · Enter submit · Esc collapse · Ctrl+C exit · /exit quits" });
   // Resolve the git branch/dirty flag once for the status bar (best-effort, async).
   void (async () => {
     try {

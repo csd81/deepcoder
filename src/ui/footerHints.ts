@@ -27,7 +27,7 @@ export interface FooterHintInput {
 // ── Hint strings ────────────────────────────────────────────────────────────
 
 const HINTS: Record<FooterHintMode, string> = {
-  normal:       "Enter send · / commands · Ctrl+F search · Tab blocks · ? help",
+  normal:       "Enter send · / commands · ! shell · Ctrl+F search · Tab blocks · ? help",
   busy:         "PgUp/PgDn scroll · Tab inspect · Ctrl+C interrupt · ? help",
   "slash-menu": "↑↓ select · Tab complete · Enter run · Esc close",
   search:       "Enter/n next · p previous · PgUp/PgDn scroll · Esc close",

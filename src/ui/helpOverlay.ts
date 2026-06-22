@@ -42,6 +42,7 @@ const ENTRIES: Record<HelpMode, HelpEntry[]> = {
     { keys: "PgUp/PgDn", label: "scroll transcript" },
     { keys: "Home/End", label: "top/bottom" },
     { keys: "/", label: "slash commands" },
+    { keys: "!cmd", label: "run a shell command" },
     { keys: "Ctrl+F", label: "search transcript" },
     { keys: "Tab", label: "focus next tool/check/worker block" },
     { keys: "?", label: "help" },

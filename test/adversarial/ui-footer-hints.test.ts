@@ -98,7 +98,7 @@ test("[footerhints-plain] no-color theme produces no SGR escape codes", () => {
 
 test("[footerhints-full] normal hints contain all expected segments when unconstrained", () => {
   const s = renderFooterHints({ mode: "normal", width: 200, theme: plain });
-  assert.equal(s, "Enter send · / commands · Ctrl+F search · Tab blocks · ? help");
+  assert.equal(s, "Enter send · / commands · ! shell · Ctrl+F search · Tab blocks · ? help");
 });
 
 test("[footerhints-busy-full] busy hints contain all expected segments when unconstrained", () => {
