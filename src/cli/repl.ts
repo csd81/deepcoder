@@ -43,6 +43,7 @@ import { createPrintRenderer } from "../ui/printRenderer.js";
 import type { UiEvent } from "../ui/events.js";
 import { createTranscript, applyEvent, moveSelection, clearSelection, toggleExpand, selectBlockById, type TranscriptState } from "../ui/transcript.js";
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
+import { actionForKey } from "../ui/keybinds.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
 import { renderMarkdown } from "../ui/markdown.js";
@@ -1387,6 +1388,24 @@ export async function runTuiRepl(session: Session): Promise<void> {
       stickBottom();
       redraw();
       return;
+    }
+    // Configurable keybinds: route scroll/page navigation through the resolved
+    // keybind table so a user's `.deepcoder/config.json` `keybinds` override wins
+    // (defaults unchanged). Approval/search/menu modes already returned above.
+    {
+      const ka = actionForKey(session.config.keybinds, {
+        ctrl: key?.ctrl,
+        alt: (key as { meta?: boolean } | undefined)?.meta,
+        shift: (key as { shift?: boolean } | undefined)?.shift,
+        key: key?.name ?? str ?? "",
+      });
+      if (ka === "scroll-up" || ka === "scroll-down" || ka === "page-up" || ka === "page-down") {
+        const pageAmt = Math.max(1, Math.floor((stdout.rows ?? 24) / 2));
+        if (ka === "scroll-up") dispatch({ type: "scroll-up" });
+        else if (ka === "scroll-down") dispatch({ type: "scroll-down" });
+        else dispatch({ type: ka === "page-up" ? "scroll-up" : "scroll-down", amount: pageAmt });
+        return;
+      }
     }
     const named = key?.name ? keyToAction(key.name) : "none";
     const action = named !== "none" ? named : keyToAction(key?.sequence ?? str ?? "");
