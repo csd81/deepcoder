@@ -20,7 +20,7 @@
  * It never spawns processes, calls models, or mutates files.
  */
 
-import { promises as fs } from "node:fs";
+import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import { validatePatch } from "./patchValidator.js";
 import { evaluateCompleteness } from "./completeness.js";
@@ -39,6 +39,19 @@ import type {
 /* ------------------------------------------------------------------ */
 /*  Input                                                              */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Synchronous existence predicate for the completeness `must_exist` gate.
+ * Sync on purpose: callers test it as `!fileExists(p)`, so a Promise would be
+ * truthy and every must_exist check would pass. Never throws.
+ */
+export function fileExistsIn(root: string, relPath: string): boolean {
+  try {
+    return existsSync(path.join(root, relPath));
+  } catch {
+    return false;
+  }
+}
 
 export interface ValidateWorkerInput {
   root: string;
@@ -521,15 +534,10 @@ export async function loadAndValidateWorker(
   // Get already-changed paths
   const alreadyChangedPaths = opts?.alreadyChangedPaths ?? [];
 
-  // File exists predicate (injected for completeness gate)
-  const fileExists = (relPath: string): boolean => {
-    try {
-      const abs = path.join(root, relPath);
-      return fs.access(abs).then(() => true).catch(() => false) as unknown as boolean;
-    } catch {
-      return false;
-    }
-  };
+  // File exists predicate (injected for completeness gate). MUST be synchronous:
+  // completeness checks it as `!fileExists(p)`, so a Promise would be truthy and
+  // every must_exist check would silently pass.
+  const fileExists = (relPath: string): boolean => fileExistsIn(root, relPath);
 
   // Run validation
   const validation = validateWorkerResult({
