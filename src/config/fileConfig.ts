@@ -17,12 +17,18 @@ export interface CheckConfig {
   timeoutMs?: number;
 }
 
+export interface UserCommandConfig {
+  command: string;
+  timeoutMs?: number;      // default 120_000, max 600_000
+}
+
 import type { StatuslineField } from "../ui/statusBar.js";
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { LspConfig } from "../lsp/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
 import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig, SemanticSearchConfig } from "./config.js";
+import { SLASH_CATALOG } from "../cli/slashCatalog.js";
 import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
 import type { ModelPricing } from "../providers/pricing.js";
@@ -43,6 +49,7 @@ export interface TelemetryConfig {
 export interface FileConfig {
   mcpServers?: Record<string, McpServerConfig>;
   checks?: Record<string, CheckConfig>;
+  commands?: Record<string, UserCommandConfig>;
   sandbox?: Partial<SandboxConfig>;
   containment?: { enabled?: boolean };
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
@@ -266,6 +273,25 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     }
   }
 
+  const rawCommands = (parsed as { commands?: unknown }).commands;
+  const commands: Record<string, UserCommandConfig> = {};
+  if (rawCommands && typeof rawCommands === "object") {
+    const BUILT_IN_NAMES = new Set(SLASH_CATALOG.map((c) => c.name));
+    for (const [name, value] of Object.entries(rawCommands as Record<string, unknown>)) {
+      if (BUILT_IN_NAMES.has(name)) {
+        warn(`command "${name}" shadows a built-in slash command — ignoring`);
+        continue;
+      }
+      if (!CHECK_NAME_RE.test(name)) {
+        warn(`ignoring command "${name}": name must match ${CHECK_NAME_RE}`);
+        continue;
+      }
+      const result = checkSchema.safeParse(value);
+      if (result.success) commands[name] = result.data;
+      else warn(`ignoring commands["${name}"]: ${result.error.issues.map((i) => i.message).join("; ")}`);
+    }
+  }
+
   const rawSandbox = (parsed as { sandbox?: unknown }).sandbox;
   let sandbox: Partial<SandboxConfig> | undefined;
   if (rawSandbox && typeof rawSandbox === "object") {
@@ -463,7 +489,7 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     }
   }
 
-  return { mcpServers, checks, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline };
+  return { mcpServers, checks, commands, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline };
 }
 
 function warn(msg: string): void {

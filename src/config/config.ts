@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { loadFileConfig, type McpServerConfig, type CheckConfig, type TelemetryConfig, type StatuslineConfig } from "./fileConfig.js";
+import { loadFileConfig, type McpServerConfig, type CheckConfig, type UserCommandConfig, type TelemetryConfig, type StatuslineConfig } from "./fileConfig.js";
 import { isWorkspaceTrusted } from "./trust.js";
 import { DEFAULT_SANDBOX, type SandboxConfig, type SandboxMode } from "../sandbox/types.js";
 import { DEFAULT_CONTAINMENT, applyContainment, type ContainmentConfig } from "../containment/types.js";
@@ -97,6 +97,8 @@ export interface Config {
   mcpServers: Record<string, McpServerConfig>;
   /** Named verification checks from .deepcoder/config.json (user-invoked only). */
   checks: Record<string, CheckConfig>;
+  /** User-defined slash commands from .deepcoder/config.json. */
+  commands: Record<string, UserCommandConfig>;
   /**
    * Whether execute-kind MCP tools may run. Off in Phase 4A — execute-mode MCP
    * tools are discovered but denied until a later phase enables them.
@@ -715,6 +717,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     workspaceRoot,
     mcpServers: file.mcpServers ?? {},
     checks: file.checks ?? {},
+    commands: file.commands ?? {},
     // Default-off / fail-closed: execute-mode MCP tools are denied unless
     // explicitly opted in. Enabling only lifts the blanket deny — each call
     // still flows through the permission policy (classifier + approval mode).
