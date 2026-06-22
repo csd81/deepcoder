@@ -37,6 +37,8 @@ import {
 import { loadSession, forkSession, SessionStore, newSessionId, type PersistedSession } from "../session/sessionStore.js";
 import { serializeSession, validateImport } from "../session/sessionExport.js";
 import { renderTable } from "../ui/table.js";
+import { initState, undo, redo } from "./undoRedo.js";
+import { applyUndoEntry } from "../session/undoApply.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
@@ -486,6 +488,32 @@ export async function handleSlashCommand(
         activatedSkills: [], telemetry: s.telemetry, webTrace: s.webTrace, goal: s.goal, title: s.title,
       });
       console.log(chalk.dim(`Imported as ${newId}. Use --resume ${newId} to open it.`));
+      return { consumed: true };
+    }
+
+    case "undo": {
+      const us = session.undoState ?? initState();
+      const { state, entry } = undo(us);
+      if (!entry) { console.log(chalk.dim("Nothing to undo.")); return { consumed: true }; }
+      const res = await applyUndoEntry(config.workspaceRoot, entry);
+      // Swap the just-pushed redo entry for the reverse (current/post-image
+      // snapshot) so /redo re-applies this change rather than the pre-image.
+      const redoStack = [...state.redoStack];
+      redoStack[redoStack.length - 1] = res.reverse;
+      session.undoState = { ...state, redoStack };
+      console.log(chalk.green(`Undid "${entry.label}" — restored ${res.restored.length}, deleted ${res.deleted.length}${res.skipped.length ? `, skipped ${res.skipped.length}` : ""}.`));
+      return { consumed: true };
+    }
+
+    case "redo": {
+      const us = session.undoState ?? initState();
+      const { state, entry } = redo(us);
+      if (!entry) { console.log(chalk.dim("Nothing to redo.")); return { consumed: true }; }
+      const res = await applyUndoEntry(config.workspaceRoot, entry);
+      const undoStack = [...state.undoStack];
+      undoStack[undoStack.length - 1] = res.reverse;
+      session.undoState = { ...state, undoStack };
+      console.log(chalk.green(`Redid "${entry.label}" — restored ${res.restored.length}, deleted ${res.deleted.length}.`));
       return { consumed: true };
     }
 

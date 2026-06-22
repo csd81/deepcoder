@@ -44,6 +44,7 @@ import type { UiEvent } from "../ui/events.js";
 import { createTranscript, applyEvent, moveSelection, clearSelection, toggleExpand, selectBlockById, type TranscriptState } from "../ui/transcript.js";
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { actionForKey } from "../ui/keybinds.js";
+import { initState, pushTurn, type UndoRedoState, type UndoEntry } from "./undoRedo.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
 import { renderMarkdown } from "../ui/markdown.js";
@@ -114,6 +115,8 @@ export interface Session {
   mcp?: McpManager;
   /** LSP runtime (lazy servers per language); undefined when LSP is disabled. */
   lsp?: LspRuntime;
+  /** Per-turn undo/redo stack (rides the checkpoint blob store). */
+  undoState?: UndoRedoState;
   /** Pre-image recorder for checkpoints; undefined when checkpoints are off. */
   recorder?: CheckpointRecorder;
   /** Subagent run records — persisted for audit, NEVER sent to the model. */
@@ -437,7 +440,17 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     // so files the agent already wrote always have a rollback point.
     if (!session.isolation && session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {
       try {
+        // Record this turn's edits as an undo entry BEFORE finalize clears the
+        // window (the pre-image blobs are already in the checkpoint blob store).
+        const lastUser = [...session.messages].reverse().find((m) => m.role === "user" && typeof m.content === "string");
+        const files = session.recorder.serialize()
+          .filter((e) => e.expectedSha !== undefined)
+          .map((e): UndoEntry["files"][number] => ({ path: e.path, existed: e.existed, restoreSha: e.restoreSha ?? null }));
         const id = await session.recorder.finalize(completed ? "auto" : "auto:interrupted");
+        if (files.length > 0) {
+          const label = (typeof lastUser?.content === "string" ? lastUser.content : "").slice(0, 60) || "turn";
+          session.undoState = pushTurn(session.undoState ?? initState(), { label, files });
+        }
         if (id) {
           const msg = `Checkpoint ${id} saved (${completed ? "auto" : "auto:interrupted"}). /rollback ${id} to undo.`;
           if (ui) renderer.emit({ type: "notice", message: msg });
