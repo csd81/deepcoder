@@ -27,6 +27,7 @@ import { runBashTool } from "../tools/runBash.js";
 import { parseBangCommand, decideBang } from "./bangCommand.js";
 import type { ActivateSkillRuntime } from "../skills/activation.js";
 import { handleSlashCommand } from "./slashCommands.js";
+import { slashNeedsSuspend } from "./tuiSlashRouting.js";
 import { runSolveCommand } from "./solveRunner.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
@@ -640,18 +641,6 @@ async function injectSessionStartContext(session: Session): Promise<void> {
  * on every exit path — normal exit, error, signal, or process exit. Slash
  * commands (which print to stdout) SUSPEND the TUI and run on the normal screen.
  */
-/**
- * Read-only / display slash commands that should render INTO the transcript
- * rather than suspending the alt-screen to print on the normal screen (which
- * looked like help/output being "dumped to stdout"). These only print; they
- * never read input or launch a sub-UI, so capturing their stdout is safe.
- */
-const TUI_INLINE_SLASH = new Set([
-  "help", "status", "models", "model", "effort", "mode", "usage", "cost",
-  "telemetry", "checks", "todos", "context", "web", "doctor", "ps", "goal",
-  "memory", "instructions", "skills", "plugins", "mcp", "isolation", "sandbox", "diff", "debug-config", "permissions",
-]);
-
 export async function runTuiRepl(session: Session): Promise<void> {
   session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
   const tty = stdin as NodeJS.ReadStream & { setRawMode?(v: boolean): void };
@@ -1133,9 +1122,10 @@ export async function runTuiRepl(session: Session): Promise<void> {
         }
         stickBottom(); redraw(); return;
       }
-      if (TUI_INLINE_SLASH.has(cmd)) {
+      if (!slashNeedsSuspend(cmd)) {
         // Capture the command's stdout and show it as a transcript block — no
-        // alt-screen suspend, so the output stays in the scrollable UI.
+        // alt-screen suspend, so the output stays in the scrollable UI. This is
+        // the DEFAULT: only long-running/streaming/interactive commands suspend.
         const buf: string[] = [];
         const cap = (...a: unknown[]) => { buf.push(a.map((x) => (typeof x === "string" ? x : String(x))).join(" ")); };
         const origLog = console.log;

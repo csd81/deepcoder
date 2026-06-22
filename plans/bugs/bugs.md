@@ -5,8 +5,18 @@ Status: `OPEN` / `FIXED <commit>` / `WONTFIX`.
 
 ---
 
-## FIXED `ad0a206` — `/understand` in the TUI does nothing, and mouse starts printing garbage again
-- **Fix:** `restore()` removed `onStdinData` but readline's internal `"data"`
+## FIXED `ad0a206` (mouse) + `82c388e` (no-output) — `/understand` in the TUI does nothing, and mouse starts printing garbage again
+- **No-output fix (`82c388e`):** the TUI used an ALLOWLIST (`TUI_INLINE_SLASH`)
+  to decide which slash commands render into the transcript; everything else
+  suspended the alt-screen and printed on the hidden normal screen. `/understand`
+  (and every other unlisted display command) was invisible. Inverted to a small
+  SUSPEND denylist (`src/cli/tuiSlashRouting.ts` → `slashNeedsSuspend`): capture
+  into the transcript is now the DEFAULT; only long-running/streaming/interactive
+  commands (plan, solve, delegate, research, review, explore, triage, context-plan,
+  tests, check, index, semantic) suspend. New display commands render in the TUI
+  automatically. Verified safe: redraws are event-driven only (no timer), so no
+  escape sequences leak into the capture buffer during a command's `await`.
+- **Mouse fix (`ad0a206`):** `restore()` removed `onStdinData` but readline's internal `"data"`
   handler (attached by `emitKeypressEvents`) self-removes only lazily, so on
   slash-suspend re-entry a plain `stdin.on("data", onStdinData)` landed AFTER the
   stale readline handler — inverting the required order and leaking SGR mouse
