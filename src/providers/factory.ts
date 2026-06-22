@@ -1,6 +1,7 @@
 import type { ModelProvider } from "./types.js";
 import { OpenAICompatibleProvider } from "./openaiCompatible.js";
 import { DEEPSEEK_DEFAULT_BASE_URL } from "./deepseek.js";
+import { FauxProvider } from "./fauxProvider.js";
 import type { Config } from "../config/config.js";
 
 /**
@@ -34,6 +35,11 @@ export function createProvider(config: Config): ModelProvider {
         temperature: config.temperature,
         reasoningEffort: config.reasoningEffort,
       });
+
+    // Test/smoke harness only: a canned no-op provider so the smoke suite can
+    // drive the real CLI without keys or network. Not a user-facing provider.
+    case "faux":
+      return new FauxProvider();
 
     default:
       throw new Error(`Unknown provider "${config.provider}". Use deepseek | openai-compatible.`);

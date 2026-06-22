@@ -25,7 +25,8 @@
     "eval:local": "node --import tsx evals/local-bench/run.ts",
     "eval:local:selftest": "node --import tsx evals/local-bench/run.ts --selftest",
     "eval:local:report": "node --import tsx evals/local-bench/report.ts",
-    "sandbox:smoke": "node --import tsx scripts/sandbox-smoke.ts"
+    "sandbox:smoke": "node --import tsx scripts/sandbox-smoke.ts",
+    "smoke": "node --import tsx scripts/smoke.ts"
   },
   "engines": {
     "node": ">=20"

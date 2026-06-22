@@ -347,6 +347,8 @@ function req(name: string, value: string | undefined): string {
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   deepseek: "deepseek-v4-flash",
   "openai-compatible": "deepseek-v4-flash",
+  // Test/smoke harness only (canned no-op provider; no key, no network).
+  faux: "faux",
 };
 
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
@@ -624,7 +626,8 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     prefix ? process.env[`${prefix}_${suffix}`] : undefined;
 
   const apiKeyRaw = process.env.DEEPCODER_API_KEY ?? providerEnv("API_KEY");
-  const apiKey = req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
+  // The faux smoke-harness provider makes no network calls, so it needs no key.
+  const apiKey = provider === "faux" ? (apiKeyRaw ?? "") : req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
   const baseUrl = process.env.DEEPCODER_BASE_URL ?? providerEnv("BASE_URL") ?? "";
   const model =
     process.env.DEEPCODER_MODEL ?? providerEnv("MODEL") ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-v4-flash";
