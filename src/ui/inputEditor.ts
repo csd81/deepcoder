@@ -25,6 +25,10 @@ export type EditorAction =
   | { type: "insert"; ch: string }
   | { type: "backspace" }
   | { type: "newline" }
+  | { type: "left" }
+  | { type: "right" }
+  | { type: "home" }
+  | { type: "end" }
   | { type: "history-prev" }
   | { type: "history-next" }
   | { type: "submit" };
@@ -56,6 +60,15 @@ export function reduceEditor(
       const text = s.text.slice(0, s.cursor - 1) + s.text.slice(s.cursor);
       return { state: edit(s, text, s.cursor - 1) };
     }
+    // Cursor movement (no text change, stays on the current draft/history entry).
+    case "left":
+      return { state: { ...s, cursor: Math.max(0, s.cursor - 1) } };
+    case "right":
+      return { state: { ...s, cursor: Math.min(s.text.length, s.cursor + 1) } };
+    case "home":
+      return { state: { ...s, cursor: 0 } };
+    case "end":
+      return { state: { ...s, cursor: s.text.length } };
     case "history-prev": {
       if (s.history.length === 0) return { state: s };
       const draft = s.histPos === s.history.length ? s.text : s.draft;

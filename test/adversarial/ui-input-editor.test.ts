@@ -72,3 +72,43 @@ test("submitting whitespace-only does not pollute history", () => {
   assert.equal(r.submitted, "   ", "still returns what was typed");
   assert.deepEqual(r.state.history, [], "but blank entries are not recorded");
 });
+
+// ── cursor movement (left/right/home/end) + mid-string editing ──
+test("left/right move the cursor and clamp at the ends", () => {
+  let s = createEditor();
+  for (const ch of "abc") s = reduceEditor(s, { type: "insert", ch }).state;
+  assert.equal(s.cursor, 3);
+  s = reduceEditor(s, { type: "left" }).state;
+  assert.equal(s.cursor, 2);
+  s = reduceEditor(s, { type: "left" }).state;
+  s = reduceEditor(s, { type: "left" }).state;
+  s = reduceEditor(s, { type: "left" }).state; // clamp at 0
+  assert.equal(s.cursor, 0);
+  s = reduceEditor(s, { type: "right" }).state;
+  assert.equal(s.cursor, 1);
+  for (let i = 0; i < 9; i++) s = reduceEditor(s, { type: "right" }).state; // clamp at end
+  assert.equal(s.cursor, 3);
+});
+
+test("home/end jump to the ends; insert happens at the cursor mid-string", () => {
+  let s = createEditor();
+  for (const ch of "ac") s = reduceEditor(s, { type: "insert", ch }).state;
+  s = reduceEditor(s, { type: "home" }).state;
+  assert.equal(s.cursor, 0);
+  s = reduceEditor(s, { type: "right" }).state; // between a and c
+  s = reduceEditor(s, { type: "insert", ch: "b" }).state;
+  assert.equal(s.text, "abc", "inserted at the cursor, not appended");
+  s = reduceEditor(s, { type: "end" }).state;
+  assert.equal(s.cursor, 3);
+  s = reduceEditor(s, { type: "backspace" }).state; // deletes at cursor (end)
+  assert.equal(s.text, "ab");
+});
+
+test("backspace deletes the char before the cursor mid-string", () => {
+  let s = createEditor();
+  for (const ch of "abc") s = reduceEditor(s, { type: "insert", ch }).state;
+  s = reduceEditor(s, { type: "left" }).state; // cursor between b and c
+  s = reduceEditor(s, { type: "backspace" }).state; // delete b
+  assert.equal(s.text, "ac");
+  assert.equal(s.cursor, 1);
+});

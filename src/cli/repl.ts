@@ -819,7 +819,21 @@ export async function runTuiRepl(session: Session): Promise<void> {
       return [`search: ${search.query}  (${pos})  ·  Enter next · ↑/↓ prev/next · Esc exit`];
     }
     const buf = editor.text.length ? editor.text.split("\n") : [""];
-    return buf.map((l, i) => (i === 0 ? "> " : "  ") + l);
+    // Locate the cursor (line, col) and draw a reverse-video caret there — the
+    // alt-screen hides the real terminal cursor, so this is the only insertion marker.
+    let rem = editor.cursor;
+    let cl = 0;
+    for (; cl < buf.length; cl++) {
+      if (rem <= buf[cl].length) break;
+      rem -= buf[cl].length + 1; // +1 for the newline
+    }
+    if (cl >= buf.length) { cl = buf.length - 1; rem = buf[cl].length; }
+    return buf.map((l, i) => {
+      const prefix = i === 0 ? "> " : "  ";
+      if (i !== cl) return prefix + l;
+      const at = l.slice(rem, rem + 1) || " ";
+      return prefix + l.slice(0, rem) + "\x1b[7m" + at + "\x1b[27m" + l.slice(rem + 1);
+    });
   }
 
   // Window height = rows minus status(1) + indicator-reserve(1) + composer rows,
@@ -873,7 +887,8 @@ export async function runTuiRepl(session: Session): Promise<void> {
 
   /** Recompute the slash menu from the current composer text (does not repaint). */
   function syncMenu(): void {
-    chat = reduceChatUi(chat, { type: "input-changed", text: editor.text }, { maxTop: transcriptMaxTop() });
+    // Show more of the catalog when the menu first opens (typing narrows it).
+    chat = reduceChatUi(chat, { type: "input-changed", text: editor.text, maxVisible: 12 }, { maxTop: transcriptMaxTop() });
   }
 
   function redraw(): void {
@@ -1098,6 +1113,12 @@ export async function runTuiRepl(session: Session): Promise<void> {
       }
       return;
     }
+    // Composer cursor movement (←/→ and Ctrl+A/Ctrl+E for line start/end), so the
+    // input is editable mid-string rather than append/backspace-only.
+    if (!busy && key?.name === "left") { editor = reduceEditor(editor, { type: "left" }).state; redraw(); return; }
+    if (!busy && key?.name === "right") { editor = reduceEditor(editor, { type: "right" }).state; redraw(); return; }
+    if (!busy && key?.ctrl && key?.name === "a") { editor = reduceEditor(editor, { type: "home" }).state; redraw(); return; }
+    if (!busy && key?.ctrl && key?.name === "e") { editor = reduceEditor(editor, { type: "end" }).state; redraw(); return; }
     // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).
     if (key?.name === "return" && (key as { meta?: boolean }).meta) {
       if (!busy) { editor = reduceEditor(editor, { type: "newline" }).state; syncMenu(); redraw(); }
