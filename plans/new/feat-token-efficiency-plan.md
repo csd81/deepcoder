@@ -29,6 +29,29 @@ Related/overlapping plans: `feat-ds-optimization-framework-plan.md` (DS tuning) 
 the tool-API optimization plan (output bounding). This plan is the umbrella for the
 efficiency levers; fold those in rather than duplicating.
 
+## Progress (2026-06-22)
+
+- **W4 cost meter — DONE** (`1e3afc0`). The biggest finding: the displayed
+  cost overstated real spend because cache hits were billed at the full rate.
+  `parseUsage` now extracts `prompt_cache_hit_tokens`, `estimateCost` discounts
+  cached tokens (~10%). The meter is now honest — **measure with this before
+  tuning anything else.**
+- **W1 read-budget nudge — DONE** (`b77d3fe`). One-shot system nudge at
+  `READ_BUDGET_NUDGE_BYTES` (~400KB tool output) telling the model to narrow.
+- **W2 output bounding — ALREADY DONE.** Audit found every tool already capped
+  with truncation markers (`outputBound.ts`). No work needed. (Possible later
+  tweak: `grep` MAX_MATCH_LINES=4000 and semantic MAX_RESULTS=25 are generous.)
+- **W4 prefix-stability — MOSTLY FINE.** The system message is built once per
+  session (not per turn) and ephemeral todos/JIT blocks are appended at the
+  TAIL, so the cacheable prefix is stable. No prefix-busting fix needed; a
+  cache-hit % indicator in the statusline is the only optional add.
+- **PENDING — W1 compactAt tuning.** Deliberately deferred: lowering
+  `compactAt` (0.95) trims context earlier but rewrites history and busts the
+  cache once. Whether it's net-positive depends on real cache-hit ratios —
+  measure with the honest meter first, then decide.
+- **PENDING — W3 tool steering** (cheap-first investigation prompt/description
+  tweaks). Low risk; do after measuring W1+W4's effect.
+
 ## Goal & success metric
 
 Re-run the same dogfood bug-hunt and cut total tokens for a *small, localized* bug
