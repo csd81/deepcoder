@@ -14,8 +14,23 @@ import {
   moveSelection,
   clearSelection,
   toggleExpand,
+  selectBlockById,
   type TranscriptState,
 } from "../../src/ui/transcript.js";
+
+test("selectBlockById focuses an existing block; toggleExpand then opens it (click-to-toggle)", () => {
+  const s = build();
+  const toolId = s.blocks.find((b) => b.title === "read_file")!.id;
+  const sel = selectBlockById(s, toolId);
+  assert.equal(sel.selectedBlockId, toolId);
+  const opened = toggleExpand(sel);
+  assert.equal(opened.blocks.find((b) => b.id === toolId)?.expanded, true);
+});
+
+test("selectBlockById with an unknown id is a no-op", () => {
+  const s = build();
+  assert.equal(selectBlockById(s, "nope").selectedBlockId, s.selectedBlockId);
+});
 
 function build(): TranscriptState {
   let s = createTranscript();

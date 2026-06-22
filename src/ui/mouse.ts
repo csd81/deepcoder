@@ -58,3 +58,56 @@ export function parseSgrMouse(seq: string): MouseWheelEvent | null {
     ? { kind: "wheel-up", x, y }
     : { kind: "wheel-down", x, y };
 }
+
+// ── Phase 10A.10: richer event model (wheel + left click/release) ──────────────
+
+export type TuiMouseEventKind =
+  | "wheel-up"
+  | "wheel-down"
+  | "left-click"
+  | "left-release"
+  | "unknown";
+
+export interface TuiMouseEvent {
+  kind: TuiMouseEventKind;
+  /** 1-based terminal row. */
+  row: number;
+  /** 1-based terminal column. */
+  col: number;
+  raw: string;
+}
+
+/** Aliases matching the 10A.10 plan's naming (same sequences as MOUSE_ENABLE/DISABLE). */
+export const ENABLE_MOUSE_TRACKING = MOUSE_ENABLE;
+export const DISABLE_MOUSE_TRACKING = MOUSE_DISABLE;
+
+/** Low 2 bits select the base button (0 = left, 1 = middle, 2 = right). */
+const BUTTON_MASK = 0b11;
+
+/**
+ * Parse an SGR mouse sequence into a {@link TuiMouseEvent}.
+ *
+ * Wheel up/down (incl. with modifiers), left-button press (`M`) and release
+ * (`m`) are classified; any other valid-but-unsupported button is `"unknown"`.
+ * Malformed input returns `null`. Coordinates are the 1-based terminal col/row.
+ */
+export function parseMouseEvent(seq: string): TuiMouseEvent | null {
+  const m = SGR_MOUSE_RE.exec(seq);
+  if (!m) return null;
+  const button = Number(m[1]);
+  const col = Number(m[2]);
+  const row = Number(m[3]);
+  if (!Number.isInteger(button) || !Number.isInteger(col) || !Number.isInteger(row)) return null;
+  const isRelease = seq.endsWith("m");
+
+  const wheel = (button & WHEEL_FLAG) !== 0 && (button & MOTION_FLAG) === 0;
+  if (wheel) {
+    return { kind: (button & DIRECTION_BIT) === 0 ? "wheel-up" : "wheel-down", row, col, raw: seq };
+  }
+  // Left button (low 2 bits == 0), not a motion/drag report.
+  const isLeft = (button & MOTION_FLAG) === 0 && (button & BUTTON_MASK) === 0;
+  if (isLeft) {
+    return { kind: isRelease ? "left-release" : "left-click", row, col, raw: seq };
+  }
+  return { kind: "unknown", row, col, raw: seq };
+}

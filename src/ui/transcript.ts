@@ -92,6 +92,12 @@ export function clearSelection(state: TranscriptState): TranscriptState {
   return { ...state, selectedBlockId: null };
 }
 
+/** Focus a block by id (e.g. from a mouse click); no-op if the id is unknown. */
+export function selectBlockById(state: TranscriptState, id: string): TranscriptState {
+  if (!state.blocks.some((b) => b.id === id)) return state;
+  return { ...state, selectedBlockId: id };
+}
+
 /** Toggle the `expanded` flag on the focused block. */
 export function toggleExpand(state: TranscriptState): TranscriptState {
   if (state.selectedBlockId == null) return state;

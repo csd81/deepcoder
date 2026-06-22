@@ -34,7 +34,7 @@ import type { ProviderPool } from "../models/providerPool.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
 import type { UiEvent } from "../ui/events.js";
-import { createTranscript, applyEvent, moveSelection, clearSelection, type TranscriptState } from "../ui/transcript.js";
+import { createTranscript, applyEvent, moveSelection, clearSelection, toggleExpand, selectBlockById, type TranscriptState } from "../ui/transcript.js";
 import { renderFrame, keyToAction } from "../ui/minimalRenderer.js";
 import { diffFrames } from "../ui/frameWriter.js";
 import { wrapLine } from "../ui/textLayout.js";
@@ -48,7 +48,8 @@ import { resolveColorEnabled, createTheme, type Theme } from "../ui/theme.js";
 import { createEditor, reduceEditor } from "../ui/inputEditor.js";
 import { createTuiApproval } from "../ui/approval.js";
 import { renderApprovalModal } from "../ui/approvalModal.js";
-import { MOUSE_ENABLE, MOUSE_DISABLE, parseSgrMouse } from "../ui/mouse.js";
+import { MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent } from "../ui/mouse.js";
+import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
 import { renderSlashMenu, completeSelected } from "../ui/slashMenu.js";
 import { initChatUi, reduceChatUi, type ChatUiState, type ChatUiAction } from "../ui/chatUiState.js";
 import { renderStatusBar, type StatusBarInfo } from "../ui/statusBar.js";
@@ -624,9 +625,11 @@ export async function runTuiRepl(session: Session): Promise<void> {
   );
 
   /** Logical transcript lines paired with a semantic styler (color applied AFTER wrapping).
-   *  `final` lines are already styled + wrapped to `width` (markdown) and must not be re-wrapped. */
-  function flattenStyled(width: number): { text: string; style: (s: string) => string; final?: boolean }[] {
-    const out: { text: string; style: (s: string) => string; final?: boolean }[] = [];
+   *  `final` lines are already styled + wrapped to `width` (markdown) and must not be re-wrapped.
+   *  `meta` carries the originating block so wrapped rows can be hit-tested by the mouse. */
+  type StyledLine = { text: string; style: (s: string) => string; final?: boolean; meta?: RenderedTranscriptRow };
+  function flattenStyled(width: number): StyledLine[] {
+    const out: StyledLine[] = [];
     const sel = transcript.selectedBlockId;
     for (const b of transcript.blocks) {
       const collapsible = b.kind === "tool" || b.kind === "check" || b.kind === "worker";
@@ -644,9 +647,15 @@ export async function runTuiRepl(session: Session): Promise<void> {
           b.kind === "check" ? (b.isError ? theme.error : theme.success)
           : b.kind === "worker" ? (b.isError ? theme.error : (s) => s)
           : theme.dim;
-        out.push({ text: `${mark} ${b.kind} ${b.title ?? ""}${statusMark}`, style: focused ? theme.selected : base });
+        out.push({
+          text: `${mark} ${b.kind} ${b.title ?? ""}${statusMark}`,
+          style: focused ? theme.selected : base,
+          meta: { text: "", blockId: b.id, kind: b.kind, header: true, collapsible: true },
+        });
         if (expanded && b.body) {
-          for (const ln of b.body.split("\n")) out.push({ text: "  " + ln, style: theme.dim });
+          for (const ln of b.body.split("\n")) {
+            out.push({ text: "  " + ln, style: theme.dim, meta: { text: "", blockId: b.id, kind: b.kind, header: false, collapsible: true } });
+          }
         }
       } else if (b.kind === "assistant" && b.finishedAt !== undefined && b.body) {
         // A completed assistant message is rendered as markdown (headings, code,
@@ -670,15 +679,30 @@ export async function runTuiRepl(session: Session): Promise<void> {
     return out;
   }
 
+  /** Wrap each logical line to width, color each wrapped row, and emit aligned
+   *  per-row metadata (every wrapped chunk inherits its source line's block). */
+  function buildLinesWithMeta(width: number): { lines: string[]; meta: RenderedTranscriptRow[] } {
+    const lines: string[] = [];
+    const meta: RenderedTranscriptRow[] = [];
+    for (const sl of flattenStyled(width)) {
+      const rowMeta: RenderedTranscriptRow = sl.meta ?? { text: "" };
+      if (sl.final) { lines.push(sl.text); meta.push({ ...rowMeta, text: sl.text }); } // markdown: pre-wrapped
+      else for (const chunk of wrapLine(sl.text, width)) { lines.push(sl.style(chunk)); meta.push({ ...rowMeta, text: chunk }); }
+    }
+    return { lines, meta };
+  }
+
   /** Wrap each logical line to width, then color each wrapped row (color is zero-width). */
   function buildLines(width: number): string[] {
-    const lines: string[] = [];
-    for (const sl of flattenStyled(width)) {
-      if (sl.final) lines.push(sl.text); // already markdown-rendered + wrapped
-      else for (const chunk of wrapLine(sl.text, width)) lines.push(sl.style(chunk));
-    }
-    return lines;
+    return buildLinesWithMeta(width).lines;
   }
+
+  // Last rendered transcript geometry, captured each redraw for mouse hit-testing.
+  let lastRowMeta: RenderedTranscriptRow[] = [];
+  let lastViewportTop = 0;
+  let lastRegions = computeFrameRegions({ height: 1, composerRows: 1 });
+  // Rows scrolled per mouse-wheel notch — snappy, a touch faster than the usual 3.
+  const MOUSE_WHEEL_ROWS = 4;
 
   /** The input composer rendered as display rows (continuation lines indented). */
   function composerLines(): string[] {
@@ -749,13 +773,19 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const menu = pendingApproval ? [] : menuRows(width);
     const height = viewportH(composer.length, menu.length);
     // While an approval is pending, the content window IS the modal (diff overlay).
-    const lines = pendingApproval
-      ? renderApprovalModal({ description: pendingApproval.description, diff: pendingApproval.diff, width, height, scroll: approvalScroll, theme })
-      : buildLines(width);
+    const built = pendingApproval ? null : buildLinesWithMeta(width);
+    const lines = built
+      ? built.lines
+      : renderApprovalModal({ description: pendingApproval!.description, diff: pendingApproval!.diff, width, height, scroll: approvalScroll, theme });
     const maxTop = Math.max(0, lines.length - height);
     // Derive the display offset from chat state without mutating it: an approval
     // pins to top, a bottom-stuck view snaps to maxTop, else clamp the saved top.
     const viewportTop = pendingApproval ? 0 : chat.atBottom ? maxTop : Math.min(Math.max(0, chat.viewportTop), maxTop);
+    const hasNewOutputBelow = !pendingApproval && !chat.atBottom && viewportTop < maxTop;
+    // Capture geometry for mouse hit-testing (only meaningful for the transcript).
+    lastRowMeta = built ? built.meta : [];
+    lastViewportTop = viewportTop;
+    lastRegions = computeFrameRegions({ height, composerRows: composer.length, hasIndicator: hasNewOutputBelow, menuRows: menu.length });
     const usage = session.tokenUsage;
     const cost = session.telemetry?.estimatedCost;
     const info: StatusBarInfo = {
@@ -774,7 +804,7 @@ export async function runTuiRepl(session: Session): Promise<void> {
     const frame = renderFrame({
       statusLine: status, lines, viewportTop, height,
       width, inputLine: composer[0], inputLines: composer,
-      hasNewOutputBelow: !pendingApproval && !chat.atBottom && viewportTop < maxTop,
+      hasNewOutputBelow,
       menuLines: menu.length ? menu : undefined,
     });
     // Repaint only the lines that changed since the last frame (anti-flicker).
@@ -836,6 +866,32 @@ export async function runTuiRepl(session: Session): Promise<void> {
   }
 
   function onKey(str: string | undefined, key: { name?: string; sequence?: string; ctrl?: boolean } | undefined): void {
+    // ── Mouse (SGR) — handled FIRST so a wheel/click never resolves an approval ──
+    const rawSeq = key?.sequence ?? str ?? "";
+    if (rawSeq.startsWith("\x1b[<")) {
+      const ev = parseMouseEvent(rawSeq);
+      if (!ev) return;
+      if (ev.kind === "wheel-up" || ev.kind === "wheel-down") {
+        const up = ev.kind === "wheel-up";
+        if (pendingApproval) {
+          // While the approval modal owns the screen, the wheel scrolls the diff.
+          approvalScroll = up ? Math.max(0, approvalScroll - MOUSE_WHEEL_ROWS) : approvalScroll + MOUSE_WHEEL_ROWS;
+          redraw();
+        } else {
+          dispatch({ type: up ? "scroll-up" : "scroll-down", amount: MOUSE_WHEEL_ROWS });
+        }
+        return;
+      }
+      // Left-click on a collapsible block header focuses + toggles it (keyboard parity).
+      if (ev.kind === "left-click" && !pendingApproval && !busy) {
+        const frameIdx = ev.row - 1; // mouse rows are 1-based; frame indices 0-based
+        if (frameIdx >= lastRegions.transcriptStartRow && frameIdx <= lastRegions.transcriptEndRow) {
+          const id = hitTestBlock(lastRowMeta, lastViewportTop, frameIdx - lastRegions.transcriptStartRow);
+          if (id) { transcript = toggleExpand(selectBlockById(transcript, id)); redraw(); }
+        }
+      }
+      return; // swallow every mouse event (release/unknown included)
+    }
     if (approvalResolve) {
       // ↑/↓ (and PgUp/PgDn) scroll the diff without resolving; y/n/Esc resolve.
       const a = key?.name ? keyToAction(key.name) : keyToAction(key?.sequence ?? str ?? "");
@@ -843,13 +899,6 @@ export async function runTuiRepl(session: Session): Promise<void> {
       if (a === "history-down" || a === "scroll-down" || a === "half-down") { approvalScroll += 1; redraw(); return; }
       const r = approvalResolve; approvalResolve = null;
       r(key?.name === "escape" ? "escape" : (str ?? key?.sequence ?? key?.name ?? ""));
-      return;
-    }
-    // Mouse wheel (SGR mode) — scroll the transcript; swallow all other mouse events.
-    const rawSeq = key?.sequence ?? str ?? "";
-    if (rawSeq.startsWith("\x1b[<")) {
-      const m = parseSgrMouse(rawSeq);
-      if (m) dispatch({ type: m.kind === "wheel-up" ? "scroll-up" : "scroll-down", amount: 3 });
       return;
     }
     // Alt/Meta + Enter inserts a newline instead of submitting (multiline compose).

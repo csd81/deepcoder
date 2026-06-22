@@ -8,7 +8,40 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseSgrMouse, MOUSE_ENABLE, MOUSE_DISABLE } from "../../src/ui/mouse.js";
+import { parseSgrMouse, MOUSE_ENABLE, MOUSE_DISABLE, parseMouseEvent } from "../../src/ui/mouse.js";
+
+// ── Phase 10A.10: richer parseMouseEvent (wheel + left click/release) ──
+test("[parseMouseEvent-wheel] wheel up/down carry 1-based row/col and raw", () => {
+  const up = parseMouseEvent("\x1b[<64;10;5M");
+  assert.deepEqual(up, { kind: "wheel-up", col: 10, row: 5, raw: "\x1b[<64;10;5M" });
+  const down = parseMouseEvent("\x1b[<65;1;1M");
+  assert.equal(down?.kind, "wheel-down");
+});
+
+test("[parseMouseEvent-left-click] button 0 with final M is a left click", () => {
+  const ev = parseMouseEvent("\x1b[<0;7;3M");
+  assert.deepEqual(ev, { kind: "left-click", col: 7, row: 3, raw: "\x1b[<0;7;3M" });
+});
+
+test("[parseMouseEvent-left-release] button 0 with final m is a left release", () => {
+  const ev = parseMouseEvent("\x1b[<0;7;3m");
+  assert.equal(ev?.kind, "left-release");
+  assert.equal(ev?.row, 3);
+});
+
+test("[parseMouseEvent-modifiers] a left click with a modifier bit still classifies", () => {
+  assert.equal(parseMouseEvent("\x1b[<16;2;2M")?.kind, "left-click"); // 0 + Ctrl(16)
+});
+
+test("[parseMouseEvent-unsupported] valid sequence, unsupported button => unknown", () => {
+  assert.equal(parseMouseEvent("\x1b[<2;1;1M")?.kind, "unknown"); // right button press
+});
+
+test("[parseMouseEvent-malformed] malformed input returns null", () => {
+  assert.equal(parseMouseEvent("not-a-sequence"), null);
+  assert.equal(parseMouseEvent("\x1b[<64;10M"), null); // missing a coordinate
+  assert.equal(parseMouseEvent(""), null);
+});
 
 test("[mouse-wheel-up] parses a wheel-up SGR escape sequence", () => {
   const ev = parseSgrMouse("\x1b[<64;10;5M");
