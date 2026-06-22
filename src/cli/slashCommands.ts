@@ -34,7 +34,7 @@ import {
   renderGoal,
   type SessionGoal,
 } from "../session/goal.js";
-import { loadSession, type PersistedSession } from "../session/sessionStore.js";
+import { loadSession, forkSession, type PersistedSession } from "../session/sessionStore.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
@@ -293,6 +293,12 @@ export async function handleSlashCommand(
       const { source, text } = loadInstructions(config.workspaceRoot);
       if (source) console.log(chalk.dim(`(${source})\n`) + text);
       else console.log(chalk.dim("No project instructions found (.deepcoder/instructions.md, AGENTS.md, CLAUDE.md)."));
+      return { consumed: true };
+    }
+
+    case "fork": {
+      const newId = await forkSession(config.workspaceRoot, session.store.id);
+      console.log(chalk.dim(`Forked as ${newId}. Use --resume ${newId} to resume the fork.`));
       return { consumed: true };
     }
 

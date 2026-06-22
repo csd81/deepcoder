@@ -7,7 +7,7 @@ import { bwrapAvailable } from "../sandbox/index.js";
 import type { WorkspaceIsolationMode } from "../workspaceIsolation/types.js";
 import { runOneShot, runRepl, runTuiRepl } from "./repl.js";
 import { resolveUiMode } from "../ui/uiMode.js";
-import { listSessions } from "../session/sessionStore.js";
+import { listSessions, forkSession, latestSessionId } from "../session/sessionStore.js";
 import { buildSession, setupIsolation, finalizeIsolation } from "../runtime/sessionFactory.js";
 
 const program = new Command();
@@ -18,6 +18,7 @@ program
   .argument("[prompt...]", "task to run once and exit; omit for interactive mode")
   .option("--mode <mode>", "approval mode: ask | auto | readonly")
   .option("--resume [id]", "resume a saved session (most recent if id omitted)")
+  .option("--fork", "fork the session when resuming (copies to a new id)")
   .option("--list-sessions", "list saved sessions and exit")
   .option("--planning-model <model>", "model used by /plan (default: deepseek-reasoner)")
   .option("--plan-first", "for a one-shot run: plan with the reasoner model first, then edit")
@@ -43,6 +44,7 @@ program
       opts: {
         mode?: string;
         resume?: string | boolean;
+        fork?: boolean;
         listSessions?: boolean;
         planningModel?: string;
         planFirst?: boolean;
@@ -125,7 +127,15 @@ program
       return;
     }
 
-    const session = await buildSession(baseConfig, opts.resume);
+    // Phase fork: if --fork is set, resolve the resume id, fork it, and resume the copy.
+    let resumeArg: string | boolean | undefined = opts.resume;
+    if (opts.resume && opts.fork) {
+      const resolvedId = typeof opts.resume === "string" ? opts.resume : await latestSessionId(baseConfig.workspaceRoot);
+      if (!resolvedId) throw new Error("No saved session to fork/resume.");
+      resumeArg = await forkSession(baseConfig.workspaceRoot, resolvedId);
+    }
+
+    const session = await buildSession(baseConfig, resumeArg);
     await setupIsolation(session);
 
     const prompt = promptParts.join(" ").trim();
