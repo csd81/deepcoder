@@ -70,7 +70,7 @@ cd "$DIR"
 # original directory on exit. Instead, run the TUI, then drop into an interactive
 # shell IN the worktree so you "stay" here to inspect/commit. Exit that shell to
 # return to where you started.
-npm run dev -- --tui --mode auto
+npm run dev -- --yolo
 echo "deepcoder TUI exited — you are now in the worktree: $DIR (branch $BRANCH)"
 echo "commit/inspect here; type 'exit' to return to where you launched dogfood."
 exec "${SHELL:-bash}"
