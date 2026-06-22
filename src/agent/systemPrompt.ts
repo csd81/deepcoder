@@ -45,6 +45,17 @@ export function buildSystemPrompt(opts: {
     `Approval mode: ${opts.mode} (read-only tools always run; mutating/executing tools follow this mode).`,
   ];
 
+  base.push(
+    "",
+    "## DeepSeek-specific guidance",
+    "- Call tools directly. Do NOT describe what you would do — just call the tool.",
+    "- Be extremely concise. No summary of changes already visible in a diff. No 'I've made the following changes:' preamble.",
+    "- When a tool returns an error, read the error and change your approach. Do NOT retry the exact same call.",
+    "- Do exactly what was asked, nothing more. Do not add extra features, refactor unrelated code, or suggest improvements.",
+    "- You have the full conversation history (up to 1M tokens). Use it. Earlier context is NOT lost unless you see [compacted-summary].",
+    "- Write minimal code: no unnecessary comments, no defensive checks for impossible states, no type annotations that TypeScript infers.",
+  );
+
   if (opts.solve) {
     base.push(
       "",
