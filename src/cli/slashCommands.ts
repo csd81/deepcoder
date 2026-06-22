@@ -37,6 +37,7 @@ import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
 import { buildDeterministicPlan } from "../context/contextPlanner.js";
 import { renderExplorerBrief } from "../context/explorerBrief.js";
+import { activityRegistry, runPsSlash, runStopSlash } from "../runtime/activityRegistry.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
 import { runTargetedChecks } from "../checks/targetedCheck.js";
@@ -384,6 +385,14 @@ export async function handleSlashCommand(
       }
       return { consumed: true };
     }
+
+    case "ps":
+      runPsSlash(activityRegistry, arg);
+      return { consumed: true };
+
+    case "stop":
+      runStopSlash(activityRegistry, arg);
+      return { consumed: true };
 
     case "review": {
       if (!arg) {
