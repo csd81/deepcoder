@@ -211,11 +211,16 @@ export interface DelegateAssessConfig {
   enabled: boolean;
 }
 
+export interface DelegateVerifyConfig {
+  enabled: boolean;
+}
+
 export interface DelegateConfig {
   qualityGate: QualityGateOptions;
   acceptanceFirst: AcceptanceFirstOptions;
   autopilot: DelegateAutopilotConfig;
   assess: DelegateAssessConfig;
+  verify?: DelegateVerifyConfig;
 }
 
 export type TestTargetingMode = "off" | "suggest" | "targeted-first" | "targeted-only";

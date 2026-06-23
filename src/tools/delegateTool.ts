@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Tool, ToolContext, ToolInvocation, ToolResult } from "./types.js";
 import { parseArgs } from "./types.js";
 
-const PROFILES = ["reviewer", "researcher", "explorer", "testTriage"] as const;
+const PROFILES = ["reviewer", "researcher", "explorer", "testTriage", "verifier"] as const;
 
 const schema = z.object({
   profile: z.enum(PROFILES).describe("Which read-only subagent to run."),
@@ -18,19 +18,33 @@ const schema = z.object({
  */
 export function renderFindings(findings: unknown[]): string {
   if (findings.length === 0) return "";
+  let confirmed = 0, refuted = 0, unverifiable = 0;
   const lines = findings.map((f, i) => {
     if (typeof f === "object" && f !== null) {
       const obj = f as Record<string, unknown>;
+      const hasVerdict = obj.verdict !== undefined && obj.verdict !== null;
+      const verdict = obj.verdict as string | undefined;
+      const verdictTag = verdict === "refuted" ? " [REFUTED]" : verdict === "unverifiable" ? " [unverified]" : "";
+      if (hasVerdict) {
+        if (verdict === "confirmed") confirmed++;
+        else if (verdict === "refuted") refuted++;
+        else unverifiable++;
+      }
       const severity = obj.severity ? ` [${String(obj.severity)}]` : "";
       const claim = obj.claim ?? JSON.stringify(f);
       const file = obj.file ? ` ${String(obj.file)}` : "";
       const line = typeof obj.line === "number" ? `:${obj.line}` : "";
       const evidence = obj.evidence ? `\n      ${String(obj.evidence)}` : "";
-      return `${i + 1}.${severity}${file}${line} ${String(claim)}${evidence}`;
+      const verifyEvidence = obj.verifyEvidence ? `\n      → verification: ${String(obj.verifyEvidence).slice(0, 300)}` : "";
+      return `${i + 1}.${verdictTag}${severity}${file}${line} ${String(claim)}${evidence}${verifyEvidence}`;
     }
     return `${i + 1}. ${String(f)}`;
   });
-  return "\n\n" + lines.join("\n");
+  const total = confirmed + refuted + unverifiable;
+  const header = total > 0
+    ? `\n(verified: ${confirmed} confirmed, ${refuted} refuted, ${unverifiable} unverifiable)`
+    : "";
+  return "\n\n" + header + "\n" + lines.join("\n");
 }
 
 export const delegateTool: Tool = {

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { displayPath, resolveRealPathInWorkspace, assertSafeId } from "../workspace/paths.js";
 import { isSensitivePath } from "../workspace/sensitive.js";
+import { redactSecrets } from "../workspace/redact.js";
 
 /**
  * Local, git-free undo for agent edits. A checkpoint stores, per agent-touched
@@ -97,6 +98,12 @@ export class CheckpointRecorder {
       this.pending.set(rel, { path: rel, existed: false });
       return;
     }
+    // Secret detection: if the content looks like it contains secrets
+    // (e.g., API keys), skip capturing the pre-image. The file will be
+    // skipped on rollback with a "skipped" entry.
+    if (redactSecrets(content.toString("utf8")) !== content.toString("utf8")) {
+      return;
+    }
     const sha = sha256(content);
     await this.writeBlob(sha, content);
     this.pending.set(rel, { path: rel, existed: true, restoreSha: sha });
@@ -164,14 +171,56 @@ export async function listCheckpoints(root: string): Promise<CheckpointManifest[
   return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+// ── Recovery manifest ──────────────────────────────────────────────────────
+// Written before Phase 2 of a rollback so a crash mid-rollback can be detected
+// and completed on the next call.
+
+const RECOVERY_FILE = "recovery.json";
+
+async function writeRecoveryManifest(root: string, id: string, plan: Array<{ path: string; op: "restore" | "delete" }>): Promise<void> {
+  const dir = path.join(checkpointsDir(root), id);
+  await fs.writeFile(
+    path.join(dir, RECOVERY_FILE),
+    JSON.stringify({ checkpointId: id, files: plan }, null, 2),
+    "utf8",
+  );
+}
+
+async function clearRecoveryManifest(root: string, id: string): Promise<void> {
+  try {
+    await fs.rm(path.join(checkpointsDir(root), id, RECOVERY_FILE), { force: true });
+  } catch {
+    // best-effort
+  }
+}
+
+export async function detectIncompleteRollback(root: string, id: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(checkpointsDir(root), id, RECOVERY_FILE));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Undo a checkpoint. For each file: if the current content still matches the
  * post-run `expectedSha` (or the file is gone), apply the undo — restore the
  * pre-image, or delete a file the agent created. If it differs, the user
  * changed it after the run: refuse unless `force`.
+ *
+ * Crash recovery: before Phase 2 writes a recovery manifest. On a subsequent
+ * call with the same id, the manifest is detected and Phase 2 is resumed.
+ * After Phase 2 completes, the manifest is deleted.
  */
 export async function rollback(root: string, id: string, opts: { force?: boolean } = {}): Promise<RollbackResult> {
   assertSafeId(id);
+
+  // Crash recovery: if a previous rollback was interrupted, resume it.
+  if (await detectIncompleteRollback(root, id)) {
+    return resumeRollback(root, id, opts);
+  }
+
   const raw = await fs.readFile(path.join(checkpointsDir(root), id, "manifest.json"), "utf8");
   const manifest = JSON.parse(raw) as CheckpointManifest;
   const result: RollbackResult = { restored: [], deleted: [], conflicts: [], skipped: [] };
@@ -181,9 +230,6 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
   // files half-rolled-back.
   const plan: Array<{ f: CheckpointFile; abs: string; current: string | null }> = [];
   for (const f of manifest.files) {
-    // Defense-in-depth against a TAMPERED manifest: never restore/delete a
-    // sensitive path. The capture side already excludes these, so a legitimate
-    // checkpoint never contains one — a sensitive entry here is an attack.
     if (isSensitivePath(f.path)) {
       result.skipped.push(f.path);
       continue;
@@ -192,17 +238,15 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
     try {
       abs = resolveRealPathInWorkspace(root, f.path);
     } catch {
-      result.skipped.push(f.path); // would resolve outside the workspace now
+      result.skipped.push(f.path);
       continue;
     }
-    // Re-check the normalized, resolved path so `sub/../.env` or a symlinked
-    // alias can't slip a sensitive target past the raw-string check above.
     if (isSensitivePath(displayPath(root, abs))) {
       result.skipped.push(f.path);
       continue;
     }
     if (f.restoreSha && !/^[a-f0-9]{64}$/.test(f.restoreSha)) {
-      result.skipped.push(f.path); // malformed blob ref — never join it into a path
+      result.skipped.push(f.path);
       continue;
     }
     const current = await shaOfFile(abs);
@@ -210,36 +254,102 @@ export async function rollback(root: string, id: string, opts: { force?: boolean
     plan.push({ f, abs, current });
   }
   if (result.conflicts.length && !opts.force) {
-    return result; // refuse the whole rollback; nothing mutated
+    return result;
   }
 
-  // Phase 2: apply.
+  // Write recovery manifest before Phase 2 — crash recovery point.
+  const recoveryOps = plan
+    .filter((p) => !result.conflicts.includes(p.f.path) || opts.force)
+    .map((p) => ({ path: p.f.path, op: p.f.existed ? "restore" as const : "delete" as const }));
+  await writeRecoveryManifest(root, id, recoveryOps);
+
+  // Phase 2: apply with per-file error handling.
   for (const { f, abs, current } of plan) {
     if (result.conflicts.includes(f.path) && !opts.force) continue;
-    if (f.existed) {
-      if (!f.restoreSha) {
-        result.skipped.push(f.path);
-        continue;
+    try {
+      if (f.existed) {
+        if (!f.restoreSha) {
+          result.skipped.push(f.path);
+          continue;
+        }
+        const content = await fs.readFile(path.join(checkpointsDir(root), "blobs", f.restoreSha));
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await ensureNotDirectory(abs);
+        // Atomic write: temp file + rename prevents partial writes on crash.
+        await atomicWrite(abs, content);
+        result.restored.push(f.path);
+      } else {
+        if (current === null) {
+          result.skipped.push(f.path);
+          continue;
+        }
+        await fs.rm(abs, { force: true, recursive: true });
+        result.deleted.push(f.path);
       }
-      const content = await fs.readFile(path.join(checkpointsDir(root), "blobs", f.restoreSha));
-      await fs.mkdir(path.dirname(abs), { recursive: true });
-      // If the path was replaced by a directory, writeFile would EISDIR-crash
-      // mid-rollback. Remove the directory first so the file can be restored.
-      await ensureNotDirectory(abs);
-      await fs.writeFile(abs, content);
-      result.restored.push(f.path);
-    } else {
-      if (current === null) {
-        result.skipped.push(f.path); // already gone
-        continue;
-      }
-      // recursive: a file replaced by a directory must still be removable
-      // (plain rm throws EISDIR/ERR_FS_EISDIR on a directory).
-      await fs.rm(abs, { force: true, recursive: true });
-      result.deleted.push(f.path);
+    } catch (err) {
+      result.skipped.push(f.path);
     }
   }
+
+  // Recovery manifest cleared — Phase 2 is complete.
+  await clearRecoveryManifest(root, id);
   return result;
+}
+
+/** Resume an interrupted rollback from its recovery manifest. */
+async function resumeRollback(root: string, id: string, _opts: { force?: boolean }): Promise<RollbackResult> {
+  const raw = await fs.readFile(path.join(checkpointsDir(root), id, RECOVERY_FILE), "utf8");
+  const recovery = JSON.parse(raw) as { files: Array<{ path: string; op: "restore" | "delete" }> };
+  const manifest = JSON.parse(
+    await fs.readFile(path.join(checkpointsDir(root), id, "manifest.json"), "utf8"),
+  ) as CheckpointManifest;
+  const result: RollbackResult = { restored: [], deleted: [], conflicts: [], skipped: [] };
+
+  for (const entry of recovery.files) {
+    try {
+      const f = manifest.files.find((mf) => mf.path === entry.path);
+      if (!f) { result.skipped.push(entry.path); continue; }
+      const abs = resolveRealPathInWorkspace(root, f.path);
+      if (entry.op === "restore") {
+        if (!f.restoreSha) { result.skipped.push(entry.path); continue; }
+        const content = await fs.readFile(path.join(checkpointsDir(root), "blobs", f.restoreSha));
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await ensureNotDirectory(abs);
+        await atomicWrite(abs, content);
+        result.restored.push(entry.path);
+      } else {
+        await fs.rm(abs, { force: true, recursive: true });
+        result.deleted.push(entry.path);
+      }
+    } catch {
+      result.skipped.push(entry.path);
+    }
+  }
+
+  await clearRecoveryManifest(root, id);
+  return result;
+}
+
+// ── Pruning ─────────────────────────────────────────────────────────────────
+
+/**
+ * Keep the N most recent checkpoints and remove older ones.
+ * Returns the list of pruned checkpoint IDs.
+ */
+export async function pruneCheckpoints(root: string, keep: number = 10): Promise<string[]> {
+  const all = await listCheckpoints(root);
+  const toRemove = all.slice(keep); // oldest after keep
+  const removed: string[] = [];
+  for (const cp of toRemove) {
+    try {
+      const dir = path.join(checkpointsDir(root), cp.id);
+      await fs.rm(dir, { recursive: true, force: true });
+      removed.push(cp.id);
+    } catch {
+      // skip corrupt entries
+    }
+  }
+  return removed;
 }
 
 async function readFileOrNull(abs: string): Promise<Buffer | null> {

@@ -21,6 +21,7 @@ import { createLspTools } from "../tools/lspTools.js";
 import { createLspManager } from "../lsp/manager.js";
 import type { LspRuntime } from "../lsp/types.js";
 import { defaultRegistry } from "../tools/registry.js";
+import { verifyFindings } from "../delegate/verifyFindings.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
 import { systemMessage, resolveInstructions, type Session } from "../cli/repl.js";
@@ -236,7 +237,25 @@ export function buildDelegateRuntime(session: Session): DelegateRuntime {
         providerPool: session.providerPool,
         signal: signal ?? new AbortController().signal,
       });
-      return { summary: result.summary, findings: result.findings };
+      let findings = result.findings;
+      if (session.config.delegate?.verify?.enabled !== false && findings.length > 0) {
+        try {
+          findings = await verifyFindings(findings, {
+            workspaceRoot: session.config.workspaceRoot,
+            provider: session.provider,
+            parentModel: session.config.model,
+            subagentModel: session.config.subagentModel,
+            modelRouter: session.modelRouter,
+            providerPool: session.providerPool,
+            contextBudgetTokens: session.config.contextBudgetTokens,
+            compactAt: session.config.compactAt,
+            signal: signal ?? new AbortController().signal,
+          });
+        } catch {
+          // fail-safe: on error, findings stay as-is (unverified)
+        }
+      }
+      return { summary: result.summary, findings };
     },
   };
 }

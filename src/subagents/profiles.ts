@@ -77,4 +77,17 @@ export const explorer: SubagentProfile = {
     "risks[], openQuestions[], trace[]. Every file claim must include at least one citation. Be concise and bounded.",
 };
 
-export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer };
+export const verifier: SubagentProfile = {
+  name: "verifier",
+  purpose: "Independently adjudicate claims against the codebase — confirm, refute, or mark unverifiable.",
+  allowedTools: READ_ONLY_TOOLS,
+  maxTurns: 8,
+  contextBudgetTokens: 32000,
+  role: "review",
+  outputGuidance:
+    "You are given a list of claims with file:line citations. Open each location, read the code, and decide: " +
+    "confirmed (claim is accurate), refuted (claim is false), or unverifiable (cannot determine). " +
+    "Return ONLY a JSON object with verdicts. Do NOT hunt for new issues.",
+};
+
+export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, verifier };
