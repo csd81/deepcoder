@@ -55,7 +55,8 @@ export const delegateTool: Tool = {
     "Use this to investigate a specific area without polluting your own context or spending your turn budget. " +
     "Reach for this when a task spans multiple files/subsystems or has independent parts (audits, broad surveys, " +
     "\"check every X\") — delegating one subagent per area keeps your context clean and runs them in parallel, " +
-    "instead of grinding through everything serially. For a single-file or localized change, just edit directly.",
+    "instead of grinding through everything serially. For a single-file or localized change, just edit directly. " +
+    "Once you delegate an investigation, don't also run it yourself — wait for the result, then relay what matters.",
   kind: "read-only",
   schema,
   build(raw: unknown): ToolInvocation {

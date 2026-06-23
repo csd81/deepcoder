@@ -983,7 +983,7 @@ export async function runRepl(session: Session): Promise<void> {
           const approved = await confirm(chalk.bold("Execute this plan?"));
           if (approved) {
             session.planState = approvePlan(session.planState);
-            session.messages.push({ role: "user", content: `Execute this plan:\n${lastAssistant.content}` });
+            session.messages.push({ role: "user", content: `Plan approved — start coding now. Update the todo list as you go.\n\nExecute this plan:\n${lastAssistant.content}` });
             await session.store.save(snapshot(session));
             try {
               await runTask(session);

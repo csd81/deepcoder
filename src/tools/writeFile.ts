@@ -19,7 +19,8 @@ export const writeFileTool: Tool = {
   kind: "mutate",
   description:
     "Create or overwrite a file with the given contents. Use edit_file for partial changes. " +
-    "Overwriting an existing file requires it to have been read first.",
+    "Overwriting an existing file requires it to have been read first. " +
+    "Do not create documentation (*.md) or README files unless the user explicitly asks.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("write_file", schema, raw);

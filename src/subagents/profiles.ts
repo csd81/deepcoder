@@ -16,7 +16,11 @@ export const reviewer: SubagentProfile = {
   role: "review",
   outputGuidance:
     "Each finding is a concrete bug, regression risk, or missing test. Use real severities: " +
-    "critical/high for correctness or security issues, medium for risks, low for nits. Cite file:line in `evidence`.",
+    "critical/high for correctness or security issues, medium for risks, low for nits. Cite file:line in `evidence`. " +
+    "Flag runtime-correctness bugs visible in the code: inverted condition, off-by-one, null/undefined deref, missing await, " +
+    "wrong-variable copy-paste, error swallowed in a catch, a removed guard, a falsy-zero check; also code duplicating an existing " +
+    "helper and dead code. Do NOT flag style, naming, perf, or missing tests unless they cause a concrete failure. " +
+    "Every finding needs a nameable failure scenario.",
 };
 
 export const researcher: SubagentProfile = {
@@ -31,7 +35,9 @@ export const researcher: SubagentProfile = {
     "Answer the question from repository evidence. `summary` is the direct answer. Each finding is a key fact with a " +
     "file:line citation in `evidence`; distinguish facts from inference. Severity means importance, not bugs: " +
     "low = informational, medium = a caveat/design constraint, high = a blocker or serious risk, critical is rare. " +
-    "Put follow-up reads or considerations in `suggestedNextSteps`, phrased as options for a human — never as commands to run.",
+    "Put follow-up reads or considerations in `suggestedNextSteps`, phrased as options for a human — never as commands to run. " +
+    "Search method: batch independent reads/greps in parallel, locate code rather than dumping whole files, and match multiple " +
+    "naming conventions before concluding something is absent.",
 };
 
 export const testTriage: SubagentProfile = {
@@ -74,7 +80,9 @@ export const explorer: SubagentProfile = {
   outputGuidance:
     "Return a JSON ExplorerBrief with fields: summary, relevantFiles (each with path, reason, citations[]), " +
     "likelyFixLocations (each with path, confidence low|medium|high, reason), relevantTests (each with pathOrCommand, reason), " +
-    "risks[], openQuestions[], trace[]. Every file claim must include at least one citation. Be concise and bounded.",
+    "risks[], openQuestions[], trace[]. Every file claim must include at least one citation. Be concise and bounded. " +
+    "Be fast: issue independent searches/reads in parallel, read excerpts not whole files, and stop once the brief is " +
+    "supported by citations rather than exhausting your turns.",
 };
 
 export const verifier: SubagentProfile = {
