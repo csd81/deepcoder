@@ -81,6 +81,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "plan", args: "<task>", description: "Produce a plan with the reasoner model (no tools run)", category: "context" },
   { name: "context-plan", args: "<task>", description: "Build a deterministic context plan from the repo index", category: "context" },
   { name: "explore", args: "<question>", description: "Run a read-only explorer subagent and produce a cited brief", category: "context" },
+  { name: "architect", args: "<task>", description: "Explore then produce a dependency-aware implementation plan (read-only)", category: "context" },
   { name: "memory", args: "[show|remember|forget|inbox|accept|reject]", description: "View or edit project memory", category: "context" },
   { name: "index", args: "[status|rebuild|symbols|references|impact|tests|explain|search]", description: "Inspect the repo index", category: "context" },
 

@@ -21,6 +21,8 @@ import type { HookEvent } from "../hooks/types.js";
 import { buildReproInstruction } from "../agent/systemPrompt.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
 import { renderExplorerBrief } from "../context/explorerBrief.js";
+import { runPlanFlow } from "../subagents/planFlow.js";
+import { renderPlanBrief } from "../context/planBrief.js";
 import { analyzeSession } from "./sessionInsights.js";
 
 /** Build an advisory solve hook for `event`; null if no such hooks are enabled. */
@@ -160,6 +162,44 @@ export async function runSolveCommand(
       stdout.write(chalk.dim(`Preflight: injected ${preflightContextBytes}B brief.\n`));
     } else {
       stdout.write(chalk.dim("Preflight: brief was empty, skipped injection.\n"));
+    }
+  }
+
+  // ---- Phase 2: optional architect plan injection (opt-in via --plan) ----
+  // Runs the read-only explorer→planner flow, persists the plan under plans/,
+  // and injects the rendered plan as advisory context before attempt 1. The
+  // plan NEVER becomes an oracle — the configured check/repro stays the sole
+  // success authority. Failures are swallowed (advisory).
+  if (opts.plan) {
+    stdout.write(chalk.dim("Plan: running architect (explore → plan)…\n"));
+    try {
+      const { plan, planPath, plannerTrace } = await runPlanFlow(opts.task, {
+        workspaceRoot: session.executionRoot ?? session.config.workspaceRoot,
+        provider: session.provider,
+        parentModel: session.config.model,
+        subagentModel: session.config.subagentModel,
+        modelRouter: session.modelRouter,
+        providerPool: session.providerPool,
+        contextBudgetTokens: session.config.contextBudgetTokens,
+        compactAt: session.config.compactAt,
+        signal: controller.signal,
+      });
+      const rendered = renderPlanBrief(plan);
+      if (rendered && rendered !== "(empty plan)") {
+        session.messages.push({
+          role: "system",
+          content: `A read-only architect produced this implementation plan. Follow it, adapting as needed:\n\n${rendered}`,
+        });
+        stdout.write(
+          chalk.dim(`Plan: injected ${Buffer.byteLength(rendered, "utf8")}B plan${planPath ? `, saved to ${planPath}` : ""}.\n`),
+        );
+      } else {
+        stdout.write(chalk.dim("Plan: empty plan, skipped injection.\n"));
+      }
+      // Quarantined metadata — NEVER part of model-visible history beyond the injection above.
+      session.plans.push({ createdAt: new Date().toISOString(), plan, trace: plannerTrace, planPath: planPath || undefined });
+    } catch {
+      stdout.write(chalk.dim("Plan: planning failed, continuing without a plan.\n"));
     }
   }
 

@@ -25,6 +25,7 @@ const TUI_SUSPEND_SLASH = new Set<string>([
   "research",     // read-only subagent: long model call
   "review",       // read-only subagent: long model call
   "explore",      // explorer subagent: long model call (own SIGINT handling)
+  "architect",    // explore→plan subagent flow: long model calls (own SIGINT handling)
   "triage",       // triage subagent: long model call
   "context-plan", // loads the repo index and runs a context build
   "tests",        // runs targeted checks, streams output

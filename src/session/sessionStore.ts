@@ -7,6 +7,7 @@ import type { ApprovalMode } from "../config/config.js";
 import type { CheckpointFile } from "./checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
+import type { PlanRunRecord } from "../context/planBrief.js";
 import type { SessionGoal } from "./goal.js";
 
 export interface PersistedSession {
@@ -29,6 +30,8 @@ export interface PersistedSession {
   reviews?: SubagentRunRecord[];
   /** Explorer brief records — quarantined metadata, NOT part of model context. */
   briefs?: BriefRunRecord[];
+  /** Architect plan records — quarantined metadata, NOT part of model context. */
+  plans?: PlanRunRecord[];
   activatedSkills?: import("../skills/types.js").ActivatedSkillRecord[];
   /** Phase 10C — session usage/cost telemetry. Absent in pre-10C sessions (loads as undefined). */
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
@@ -56,6 +59,7 @@ export interface SessionSnapshot {
   pendingCheckpoint: CheckpointFile[];
   reviews: SubagentRunRecord[];
   briefs: BriefRunRecord[];
+  plans: PlanRunRecord[];
   activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
   webTrace?: import("../web/trace.js").WebTraceRecord[];
@@ -101,6 +105,7 @@ export class SessionStore {
       pendingCheckpoint: snapshot.pendingCheckpoint ?? [],
       reviews: snapshot.reviews ?? [],
       briefs: snapshot.briefs ?? [],
+      plans: snapshot.plans ?? [],
       activatedSkills: snapshot.activatedSkills ?? [],
       telemetry: snapshot.telemetry,
       webTrace: snapshot.webTrace,
@@ -197,6 +202,7 @@ export async function forkSession(root: string, id: string): Promise<string> {
     pendingCheckpoint: [],
     reviews: [],
     briefs: [],
+    plans: [],
     activatedSkills: [],
     telemetry: undefined,
     webTrace: undefined,

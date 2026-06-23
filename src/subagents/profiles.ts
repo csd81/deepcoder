@@ -85,6 +85,35 @@ export const explorer: SubagentProfile = {
     "supported by citations rather than exhausting your turns.",
 };
 
+export const architect: SubagentProfile = {
+  name: "architect",
+  purpose:
+    "Given a task and an explorer brief, produce a concrete, dependency-aware implementation plan. " +
+    "Read-only: do not edit or run anything. Decompose the work into ordered steps with explicit " +
+    "prerequisites. Do not propose steps you cannot ground in the brief or in files you read.",
+  allowedTools: [
+    "read_file",
+    "list_dir",
+    "grep",
+    "glob",
+    "repo_map",
+    "find_symbols",
+    "list_recent_context",
+    "repo_index",
+    "find_references",
+    "impact_graph",
+    "target_tests",
+  ],
+  maxTurns: 10,
+  contextBudgetTokens: 48000,
+  role: "plan",
+  outputGuidance:
+    "Return a single JSON PlanBrief with fields: summary, orderedSteps (each with id, description, " +
+    "filesToTouch[], testsToAddOrRun[], rationale, dependsOn[] of earlier step ids), risks[], " +
+    "assumptions[], openQuestions[]. dependsOn must reference ids of other steps and form a DAG (no cycles). " +
+    "Be concrete and bounded.",
+};
+
 export const verifier: SubagentProfile = {
   name: "verifier",
   purpose: "Independently adjudicate claims against the codebase — confirm, refute, or mark unverifiable.",
@@ -98,4 +127,4 @@ export const verifier: SubagentProfile = {
     "Return ONLY a JSON object with verdicts. Do NOT hunt for new issues.",
 };
 
-export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, verifier };
+export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, architect, verifier };
