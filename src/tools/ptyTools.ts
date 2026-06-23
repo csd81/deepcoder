@@ -42,11 +42,15 @@ function spawnRealShell(shell: string): PtyChild {
   const child = spawn(shell, ["-i"], { stdio: ["pipe", "pipe", "pipe"] });
   return {
     stdin: { write: (s: string) => void child.stdin?.write(s) },
-    stdout: { on: (_ev, cb) => void child.stdout?.on("data", cb) },
-    // forward stderr into the same snapshot stream so the model sees errors
+    stdout: {
+      on: (_ev, cb) => {
+        child.stdout?.on("data", cb);
+        child.stderr?.on("data", cb);
+      },
+    },
+    // forward exit event
     on: (ev, cb) => {
       child.on(ev as "exit", cb as never);
-      if (ev === "data") child.stderr?.on("data", cb as never);
     },
     kill: () => void child.kill(),
   };

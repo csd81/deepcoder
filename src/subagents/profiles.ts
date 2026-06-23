@@ -84,6 +84,17 @@ export const explorer: SubagentProfile = {
     "Be fast: issue independent searches/reads in parallel, read excerpts not whole files, and stop once the brief is " +
     "supported by citations rather than exhausting your turns.",
 };
+
+export const architect: SubagentProfile = {
+  name: "architect",
+  purpose: "Formulate a concrete execution plan based on an explorer brief and codebase reads.",
+  allowedTools: READ_ONLY_TOOLS,
+  maxTurns: 12,
+  contextBudgetTokens: 48000,
+  role: "plan",
+  outputGuidance:
+    "Return a JSON PlanBrief outlining the specific files to edit and steps to take. " +
+    "Be direct and actionable. Rely on the provided context.",
 };
 
 export const verifier: SubagentProfile = {
@@ -99,4 +110,19 @@ export const verifier: SubagentProfile = {
     "Return ONLY a JSON object with verdicts. Do NOT hunt for new issues.",
 };
 
-export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, architect, verifier };
+export const riskAssessor: SubagentProfile = {
+  name: "riskAssessor",
+  purpose: "Evaluate actions against security boundary (HARD BLOCK) and destructive (SOFT BLOCK) rules.",
+  allowedTools: READ_ONLY_TOOLS,
+  maxTurns: 8,
+  contextBudgetTokens: 32000,
+  role: "plan",
+  outputGuidance:
+    "Evaluate proposed agent actions. Actions default ALLOWED.\n" +
+    "HARD BLOCK (deny): security boundaries (data exfiltration, credential leakage, instruction poisoning). Composite actions where any segment is HARD BLOCK, and undecodable payloads.\n" +
+    "SOFT BLOCK (warn): destructive or irreversible (git force-push, curl|bash, cloud mass-delete, permission grants). User intent can clear SOFT BLOCKs.\n" +
+    "Also flag preemptive blocks if there is clear evidence of intent toward a blocked action (e.g. comments/names). " +
+    "Evaluate independently; silence is not consent. Return your evaluation strictly based on these rules."
+};
+
+export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, architect, verifier, riskAssessor };

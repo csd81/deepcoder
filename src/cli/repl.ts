@@ -11,6 +11,7 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext, ToolInvocation, ToolPreview, ToolResult, Todo } from "../tools/types.js";
 import { runAgentLoop, type AgentDeps } from "../agent/agentLoop.js";
 import { runPreToolUseHooks, runAdvisoryHooks, type HookRunContext } from "../hooks/runner.js";
+import { evaluateAction } from "../security/monitor.js";
 import type { HookEvent } from "../hooks/types.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
 import { loadInstructions } from "../context/projectInstructions.js";
@@ -190,12 +191,29 @@ export interface Session {
 function preToolUseHook(session: Session): AgentDeps["onPreToolUse"] {
   const hooks = session.config.hooks;
   const list = hooks?.events?.PreToolUse;
-  if (!hooks?.enabled || !list || list.length === 0) return undefined;
+  const hasHooks = hooks?.enabled && list && list.length > 0;
+  
+  if (!hasHooks && !session.config.security.enabled) return undefined;
+
   const root = session.executionRoot ?? session.config.workspaceRoot;
   return async (toolName, invocation, ctx) => {
+    const input = { tool: toolName, command: invocation.command, affectedPaths: invocation.affectedPaths };
+
+    // 1. In-process security monitor
+    const verdict = evaluateAction(input, session.config.security);
+    for (const w of verdict.warnings) {
+      process.stdout.write(chalk.yellow(`Security Monitor warning: ${w}\n`));
+    }
+    if (verdict.decision === "deny") {
+      process.stdout.write(chalk.red(`Security Monitor blocked action: ${verdict.reason}\n`));
+      return { decision: "deny", reason: verdict.reason };
+    }
+
+    // 2. Legacy pre-tool hooks
+    if (!hasHooks) return { decision: "none" };
     return runPreToolUseHooks(
       list,
-      { tool: toolName, command: invocation.command, affectedPaths: invocation.affectedPaths },
+      input,
       { workspaceRoot: root, sandbox: session.config.sandbox, signal: ctx.signal },
     );
   };
@@ -391,10 +409,15 @@ export interface TaskUi {
   approve: AgentDeps["approve"];
 }
 
-export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
+export async function runTask(session: Session, ui?: TaskUi, externalSignal?: AbortSignal): Promise<void> {
   const controller = new AbortController();
   const onSigint = () => controller.abort();
   process.once("SIGINT", onSigint);
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort);
+  }
 
   // Disable checkpointing during an isolated run: the disposable worktree is
   // itself the undo boundary, and the recorder is keyed to the real root.
@@ -561,6 +584,7 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     completed = true;
   } finally {
     process.removeListener("SIGINT", onSigint);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
     // auto mode: finalize a checkpoint even if the run errored or was aborted,
     // so files the agent already wrote always have a rollback point.
     if (!session.isolation && session.config.checkpoints === "auto" && session.recorder && session.recorder.size > 0) {

@@ -60,7 +60,7 @@ export class EventQueue<T> {
  * The Session is shared across calls → continuous conversation.
  */
 export function createAgentRunner(session: Session): TaskRunner {
-  return function (input: RunTaskInput): AsyncIterable<SdkEvent> {
+  return function (input: RunTaskInput, signal?: AbortSignal): AsyncIterable<SdkEvent> {
     return (async function* () {
       const prompt = input.prompt ?? "";
       if (prompt.trim()) session.messages.push({ role: "user", content: prompt });
@@ -85,9 +85,13 @@ export function createAgentRunner(session: Session): TaskRunner {
         approve: async () => false,
       };
 
-      const run = runTask(session, ui).catch(() => {}).finally(() => q.close());
+      let taskError: unknown = null;
+      const run = runTask(session, ui, signal)
+        .catch((e) => { taskError = e; })
+        .finally(() => q.close());
       for await (const ev of q) yield ev;
       await run;
+      if (taskError) throw taskError;
     })();
   };
 }

@@ -14,6 +14,7 @@ import { DEFAULT_DIAGNOSTICS, type DiagnosticsConfig } from "../diagnostics/type
 import { webConfigFromEnv, type WebConfig } from "./webConfig.js";
 import type { LspConfig } from "../lsp/types.js";
 import { resolveKeybinds, type KeybindsConfig } from "../ui/keybinds.js";
+import type { MonitorConfig } from "../security/monitor.js";
 
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
@@ -163,6 +164,8 @@ export interface Config {
   format: FormatConfig | null;
   /** PR context for injecting the diff into a session's initial messages. */
   prContext?: PrContext;
+  /** Phase 10M - In-process security monitor. */
+  security: MonitorConfig;
 }
 
 /** PR context injected into the session startup (from `--pr` or `/pr`). */
@@ -413,6 +416,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   dependencyHealing?: Partial<DependencyHealingConfig>;
   delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig>; assess?: Partial<DelegateAssessConfig>; verify?: Partial<DelegateVerifyConfig> };
   format?: FormatConfig | null;
+  security?: Partial<MonitorConfig>;
 };
 
 /**
@@ -435,7 +439,7 @@ export function effectiveMaxTurns(opts: { configMaxTurns: number; interactive: b
 }
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
-  const { sandbox: sandboxOverride, workspaceIsolation: wsIsoOverride, delegate: delegateOverride, ...rest } = overrides;
+  const { sandbox: sandboxOverride, workspaceIsolation: wsIsoOverride, delegate: delegateOverride, security: securityOverride, ...rest } = overrides;
   const approval = (process.env.DEEPCODER_APPROVAL_MODE as ApprovalMode) || "ask";
   const workspaceRoot = overrides.workspaceRoot ?? process.cwd();
   const file = loadFileConfig(workspaceRoot);
@@ -745,6 +749,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
 
   const format: FormatConfig | null = file.format ?? null;
 
+  const securityFile = (file as { security?: Partial<MonitorConfig> }).security ?? {};
+  const securityEnv = process.env.DEEPCODER_SECURITY_MONITOR;
+  const security: MonitorConfig = {
+    enabled: securityOverride?.enabled !== undefined 
+      ? securityOverride.enabled 
+      : (securityEnv !== undefined ? ["1", "true", "yes"].includes(securityEnv.toLowerCase()) : (securityFile.enabled ?? false)),
+    mode: securityOverride?.mode ?? securityFile.mode ?? "block",
+  };
+
   return {
     provider,
     apiKey,
@@ -756,6 +769,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     web,
     lsp,
     format,
+    security,
     // Planning/reasoning role defaults to DeepSeek's reasoning model (Pro);
     // other roles use `model` (Flash) via the model router.
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL") ?? "deepseek-v4-pro",
