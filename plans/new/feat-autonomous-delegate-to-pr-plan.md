@@ -37,6 +37,28 @@ returns a **reviewed-ready PR**, doing branch/worktree, implement, validate, and
 entirely on its own, with **zero** manual git or shell glue. Then retire
 `scripts/delegate.sh` + `delegate-finish.sh`.
 
+### Two human crutches this MUST remove (explicit requirements)
+
+Today, even with `delegate.sh`, a human still does two things by hand:
+
+1. **The human authors the red seed.** Wrong — **the worker (DeepSeek) must write its
+   own adversarial/red test.** This is the existing **TDD / acceptance-first** path:
+   `buildPlan(task, { tdd: true })` stamps `tdd.required`; `runWorkerTdd` makes the
+   worker author a failing test per deliverable FIRST, and the `green_confirmed` gate
+   (`validation.ts` Gate 9 + `verifyManifestCoverage` red proof) proves the test was
+   genuinely red on baseline and green after — i.e. the worker self-seeds, and the gate
+   proves the seed wasn't vacuous. No human-written seed anywhere.
+2. **The seed must never touch the main checkout — worktree-first.** The worktree is
+   created FIRST; the worker authors its test **inside that worktree on its branch**.
+   The main checkout is never written to (no `?? test/...`, no `DELEGATE_SEED` copy from
+   the main tree). `runWorker` already owns the isolated worktree, so this falls out for
+   free once seeding moves from "human copies a file in" to "worker writes its test in
+   the worktree."
+
+Net: `delegate auto "<task>"` → worktree-first, worker-authored red test, worker
+implements, gates verify (incl. red→green proof), PR opened iff applyable. The human
+writes neither a seed nor any git.
+
 ## Design — the chain
 
 `deepcoder delegate auto "<task>" [--concurrent] [--no-pr] [--json]`:
