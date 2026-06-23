@@ -2,80 +2,121 @@
 
 ## Source
 
-~800 files from Claude Code's system prompt, covering behavior, tone, tool descriptions, and mid-conversation reminders. Cloned to `/0/deepcode/claude-code-system-prompts/`.
+~800 files extracted from Claude Code's system prompt. ~600 were Claude-specific infrastructure (cloud APIs, Chrome automation, computer use, SDK references, cloud scheduling, cowork, design sync) — not applicable to deepcoder.
 
-## What we can use
+## Scope — what was adapted
 
-### Behavioral rules (directly adaptable)
+**197 adapted files** (the behavioral core) written to `deepcoder-system-prompts/`:
 
-| Claude rule | DeepSeek adaptation | Source file |
+| Category | Count | Purpose |
 |---|---|---|
-| "Don't add features, refactor, or introduce abstractions beyond what the task requires" | Same — DeepSeek over-engineers more than Claude | `system-prompt-doing-tasks-no-unnecessary-additions.md` |
-| "Don't add error handling for scenarios that can't happen" | Same — DeepSeek adds excessive defensive guards | `system-prompt-doing-tasks-no-unnecessary-error-handling.md` |
-| "Avoid backward-compatibility hacks, re-exports, removed-code comments" | Same — DeepSeek leaves compatibility shims | `system-prompt-doing-tasks-no-compatibility-hacks.md` |
-| "Prefer editing existing files to creating new ones" | Same — DeepSeek creates new files unnecessarily | `system-prompt-prefer-editing-existing-files.md` |
-| "Be concise" (6-word directive) | Strengthen: "No preamble. No 'I've made the following changes:'" | `system-prompt-tone-and-style-concise-output-short.md` |
-| "If tests fail, say so with the output; if a step was skipped, say that" | Same — DeepSeek sometimes hedges on failures | `system-prompt-action-safety-and-truthful-reporting.md` |
-| "Match the scope of your actions to what was actually requested" | Same — DeepSeek tends to widen scope | `system-prompt-executing-actions-with-care.md` |
+| `system-prompt-*.md` | 40 | Behavioral rules, tone, safety, focus modes, memory, hooks, compaction |
+| `tool-description-*.md` | 85 | Tool descriptions (25 core + 44 bash variants + 16 misc) |
+| `system-reminder-*.md` | 15 | Mid-conversation reminders (session, plan, hooks, MCP, tokens) |
+| `agent-prompt-*.md` | 41 | Subagent prompts (explore, review, security, delegation, code review) |
+| `skill-*.md` | 13 | Reusable skill definitions (debugging, config, verify, stuck) |
+| `data-*.md` | 3 | Reference data (DeepSeek errors, caching, tool use concepts) |
 
-### Tool description patterns (ready to adopt)
+### Key behavioral rules adapted
 
-| Tool | Claude pattern | DeepSeek adaptation |
+| Claude rule | DeepSeek adaptation | Status |
 |---|---|---|
-| `read_file` | Absolute paths, offset/limit, multimodal (images/PDF), line-numbered output | Adopt verbatim — well-structured |
-| `edit_file` | Exact match, read-first requirement, replaceAll, line-number prefix stripping | Adopt verbatim — clear failure modes |
-| `todo_write` | When-to-use / when-NOT-to-use sections, examples | Adopt verbatim — best todo description in class |
-| `edit_file` | "ALWAYS prefer editing existing files, NEVER write new files unless required" | Strengthen for DeepSeek — it creates files more readily |
+| No unnecessary additions/fixes | Same — DeepSeek over-engineers | ✅ System prompt |
+| No unnecessary error handling | Same — DeepSeek adds defensive guards | ✅ System prompt |
+| No compatibility hacks | Same — DeepSeek leaves shims | ✅ System prompt |
+| Prefer editing existing files | Same — DeepSeek creates files readily | ✅ System prompt |
+| Be concise | Strengthen: no preamble | ✅ System prompt |
+| Truthful failure reporting | Same — DeepSeek hedges | ✅ System prompt |
+| Scope matching | Same — DeepSeek widens scope | ✅ System prompt |
 
-### New rules specifically for DeepSeek
-
-Claude doesn't need these. DeepSeek V4 Flash/Pro does:
+### DeepSeek-specific rules added
 
 ```
-- Do NOT describe what you will do — call the tool directly. No "I'll read the file now" preamble.
-- When a tool returns an error, read the message and change your approach. Do NOT retry the exact same call.
-- Call independent tools in PARALLEL in a single response. Do not serialize reads, greps, or globs.
-- Keep generated code minimal. No comments explaining obvious code. No type annotations TypeScript infers.
-- Do exactly what was asked. Do not add extra features, refactor unrelated code, or improve style.
-- No try/catch for operations that cannot fail (reading a file you just wrote, parsing a constant).
+- Call tools directly — no "I'll read the file now" preamble
+- Tool error? Read the message and change approach. Do NOT retry same call
+- Call independent tools in PARALLEL — don't serialize reads/greps
+- Minimal code: no comments explaining obvious code, no inferred types
+- Do exactly what was asked — no extra features, refactors, or style fixes
+- No try/catch for operations that cannot fail
 ```
 
-## Integration plan
+---
 
-### 1. Extract Claude patterns into a reference document
+## Infrastructure gaps — prompts that need new code
 
-Save the curated patterns to `docs/claude-prompt-patterns.md` for reference — what Claude does, what DeepSeek needs differently.
+Some adapted prompts reference features that don't exist in deepcoder yet.
+Each gap needs either a plan or direct implementation.
 
-### 2. Update system prompt
+### 1. ✅ Already wired (infra exists)
 
-Incorporate the DeepSeek-adapted rules into `src/agent/systemPrompt.ts`:
+| Prompt(s) | Infrastructure |
+|---|---|
+| `system-prompt-*.md` (behavior, tone, safety, conciseness) | `src/agent/systemPrompt.ts` — system prompt builder |
+| `tool-description-*.md` (read, edit, write, grep, glob, etc.) | `src/tools/*.ts` — tool descriptions |
+| `system-prompt-memory-*.md` | `src/memory/store.ts` — `/memory remember/forget/inbox` |
+| `system-prompt-hooks-configuration.md` | `src/hooks/` — Phase 7B lifecycle hooks |
+| `system-prompt-context-compaction-summary.md` | `src/context/compaction.ts` — compaction |
+| `system-reminder-plan-mode-*.md` | `src/cli/slashCommands.ts` — `/plan` |
+| `system-prompt-agent-memory-instructions.md` | `src/memory/store.ts` |
+| `skill-*.md` (debugging, config, verify, stuck) | `src/skills/` — Phase 7C skills system |
+| `agent-prompt-verifier-*.md` | `src/delegate/verifyFindings.ts` — ✅ Implemented |
+| `system-prompt-autonomous-delegation-*.md` | `src/delegate/assess.ts` — ✅ Implemented |
 
-- Add "no unnecessary additions" rule (Scopre creep is DeepSeek's #1 issue)
-- Add "no unnecessary error handling" rule 
-- Add "prefer editing existing files" rule
-- Add DeepSeek-specific conciseness directive (stronger than Claude's)
-- Keep existing safety rules (they're already good)
+### 2. 🔧 Need feature implementation (planned elsewhere)
 
-### 3. Update tool descriptions
+| Prompt(s) | Depends on | Status |
+|---|---|---|
+| `system-prompt-learning-mode.md` | `/learn` mode | `feat-learn-mode-plan.md` in `plans/new/` |
+| `system-prompt-insights-*.md` (9 files) | `/insights` session analysis | `feat-session-insights-plan.md` in `plans/new/` |
+| `system-prompt-skillify-current-session.md` | `/skillify` | `feat-skillify-plan.md` in `plans/new/` |
+| `system-prompt-model-escalation.md` | Auto Flash→Pro escalation | `feat-model-escalation-plan.md` in `plans/new/` |
+| `system-reminder-token-usage.md` | Token budget tracking | `src/providers/usage.ts` — partial, needs UI |
+| `tool-description-lsp.md` | LSP integration | `feat-lsp-integration-plan.md` (in plans/providers/) |
 
-Rewrite descriptions in `src/tools/` to include:
-- Behavioral guardrails (when to use, when NOT to use)
-- Cross-references to alternative tools
-- Explicit failure modes
-- DeepSeek-specific notes ("do not retry the same call")
+### 3. 🏗️ Need new infrastructure (not yet planned)
 
-### 4. Archive source for future reference
+| Prompt(s) | What's needed |
+|---|---|
+| `agent-prompt-security-monitor-*.md` (4 files) | **Security monitor** — a read-only subagent that evaluates tool actions against block/allow rules. Could be wired as a pre-tool hook that flags risks before execution. New profile + hook integration. |
+| `agent-prompt-code-review-*.md` (9 part files) | **Code review subagent** — deepcoder has `/review` but it's a basic read-only profile; these prompts define multi-angle review with 3-state verification. Needs enhanced review profile. |
+| `agent-prompt-agent-creation-architect.md` | **Custom agent creator** — `/agent-create` command that generates custom agent definitions from natural language descriptions. |
+| `agent-prompt-batch-slash-command.md` | **`/batch`** — parallel task decomposition and fan-out. Needs orchestrator integration. |
+| `agent-prompt-session-search.md` | **Session search** — search past session transcripts by content. Needs session transcript indexing. |
+| `agent-prompt-simplify-slash-command.md` | **`/simplify`** — code simplification review with 4 parallel review agents. |
+| `system-prompt-coordinator-mode-orchestration.md` | **Coordinator mode** — multi-agent orchestration where one agent coordinates worker agents. Deepcoder has delegation but not coordinator/worker pattern. |
+| `system-prompt-remote-planning-session.md` | **Remote planning** — plan on one machine, execute on another. Requires server infrastructure. |
+| `tool-description-enterworktree.md`, `tool-description-exitworktree.md` | **Worktree tool** — deepcoder has workspace isolation (Phase 7D) but no model-callable `enter_worktree`/`exit_worktree` tools. |
+| `system-reminder-cross-session-*.md` (6 files) | **Cross-session messaging** — peer agents communicating. Not relevant for single-session CLI. |
+| `tool-description-croncreate.md`, `tool-description-pushnotification.md` | **Scheduling + notifications** — cloud cron and push. Not relevant for local CLI. |
+| `tool-description-computer-*.md`, `tool-description-chrome-*.md` | **Computer use + browser** — GUI automation. Not in scope. |
 
-Keep the cloned prompts at `claude-code-system-prompts/` as a reference corpus. Individual files can be consulted when designing new features or debugging model behavior.
+### 4. ⏭️ Planned but prompt reference deferred
 
-## Verification
+| Feature | Plan has moved | Notes |
+|---|---|---|
+| Background subagents | Plan was in `plans/new/` (deleted/moved) | `agent-prompt-background-*.md` references this |
+| Plan mode enhancement | `feat-plan-mode-plan.md` was in `plans/new/` | `agent-prompt-plan-mode-enhanced.md` |
+| Batch/orchestration | `feat-master-delegation-workflow.md` was in `plans/new/` | `agent-prompt-batch-slash-command.md` |
 
-1. Compare before/after: same prompt produces more concise output, fewer preamble paragraphs, no defensive code.
-2. Run smoke suite — no regressions from prompt changes.
-3. Manual test: "fix this typo: 'teh' → 'the'" — should produce a single edit call with no explanatory text.
+---
+
+## Status summary
+
+| Category | Total | ✅ Adaptable now | 🔧 Needs planned feature | 🏗️ Needs new infra | ⏭️ Deferred |
+|---|---|---|---|---|---|
+| System prompts | 40 | 28 | 8 | 4 | 0 |
+| Tool descriptions | 85 | 83 | 1 | 1 | 0 |
+| System reminders | 15 | 12 | 1 | 2 | 0 |
+| Agent prompts | 41 | 10 | 0 | 12 | 19 |
+| Skills | 13 | 13 | 0 | 0 | 0 |
+| Data | 3 | 3 | 0 | 0 | 0 |
+| **Total** | **197** | **149** | **10** | **19** | **19** |
+
+149 of 197 files are directly usable with existing deepcoder infrastructure.
+10 need features already planned. 19 need new infrastructure (12 worth building, 7 not in scope). 19 are deferred (plans moved elsewhere).
 
 ## Files
 
-- **New:** `docs/claude-prompt-patterns.md` (reference)
-- **Edit:** `src/agent/systemPrompt.ts` (DeepSeek behavioral rules)
-- **Edit:** `src/tools/*.ts` (tool descriptions)
+- `deepcoder-system-prompts/` — 197 adapted prompt files
+- `docs/claude-prompt-patterns.md` — reference doc mapping Claude→DeepSeek patterns
+- This plan — tracks infrastructure gaps
