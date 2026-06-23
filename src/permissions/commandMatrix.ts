@@ -55,6 +55,9 @@ const READ_ONLY_GIT = new Set(["status", "diff", "log", "show"]);
 /** git flags that make a read-only subcommand write a file. */
 const GIT_WRITE_FLAGS = [/^--output(=|$)/, /^-o$/];
 
+/** git flags that can execute repo-configured commands (external diff, textconv). */
+const GIT_EXEC_FLAGS = [/^--ext-diff$/, /^--textconv$/];
+
 /** Tokens that are never auto-runnable when they lead a segment (by basename). */
 const DANGEROUS_COMMANDS = new Set([
   "rm",
@@ -117,6 +120,7 @@ export type Hazard =
   | "recursive_flag"
   | "preprocessor_flag"
   | "git_write_flag"
+  | "git_exec_flag"
   | "unknown_segment";
 
 export interface Segment {
@@ -235,6 +239,7 @@ function inspectSegmentTokens(seg: Segment, hazards: Set<Hazard>): void {
       // check write flags across all git operands
       for (const a of seg.argv.slice(2)) {
         if (GIT_WRITE_FLAGS.some((re) => re.test(a))) hazards.add("git_write_flag");
+        if (GIT_EXEC_FLAGS.some((re) => re.test(a))) hazards.add("git_exec_flag");
       }
     }
   }
@@ -269,6 +274,15 @@ function inspectSegmentTokens(seg: Segment, hazards: Set<Hazard>): void {
 function addOperandHazards(value: string, hazards: Set<Hazard>): void {
   if (!value) return;
   if (value === "/dev/null") return;
+  // Git object spec (e.g. HEAD:.env, main:sub/dir/file): check the path
+  // portion after `:` for sensitive paths and parent escapes.
+  const colonIdx = value.indexOf(":");
+  if (colonIdx > 0 && colonIdx < value.length - 1) {
+    const gitPath = value.slice(colonIdx + 1);
+    if (gitPath.startsWith("/")) hazards.add("absolute_operand");
+    if (gitPath.split("/").includes("..")) hazards.add("parent_escape");
+    if (isSensitivePath(gitPath)) hazards.add("sensitive_operand");
+  }
   if (value.startsWith("/")) {
     hazards.add("absolute_operand");
     return;
@@ -329,6 +343,7 @@ export function classifyMatrix(matrix: CommandMatrix): ApprovalDecision {
     "sensitive_operand",
     "recursive_flag",
     "git_write_flag",
+    "git_exec_flag",
     "unknown_segment",
     "parse_error",
   ];

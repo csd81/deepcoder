@@ -58,12 +58,16 @@ export function runBoundedProcess(input: BoundedProcessInput): Promise<BoundedPr
     if (linePendingOverflow) {
       const nl = chunk.indexOf("\n");
       if (nl !== -1) {
+        // Overflow cleared: process remainder after newline normally.
         linePending = chunk.slice(nl + 1);
         linePendingOverflow = false;
+        // Fall through to flush lines from the overflow remainder.
+      } else {
+        return;
       }
-      return;
+    } else {
+      linePending += chunk;
     }
-    linePending += chunk;
     if (linePending.length > LINE_PENDING_MAX) {
       input.onData?.(redactSecrets(linePending.slice(0, LINE_PENDING_MAX)));
       linePending = "";

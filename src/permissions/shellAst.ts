@@ -362,6 +362,24 @@ function parseWord(
       normalized += "$";
       containsExpansion = true;
       i++;
+      // ANSI-C quoting: $'...' — treat as expansion (escape sequences
+      // can produce any content including absolute/sensitive paths).
+      if (i < input.length && input[i] === "'") {
+        raw += "'";
+        i++;
+        while (i < input.length && input[i] !== "'") {
+          raw += input[i];
+          // Normalize escape sequences: \n, \t, \xHH, \0OOO, etc.
+          // For safety, just use the raw content as-is (already marked expansion).
+          normalized += input[i];
+          i++;
+        }
+        if (i < input.length) {
+          raw += "'";
+          i++; // skip closing quote
+        }
+        continue;
+      }
       // Check for $((...)), $(...), ${...}
       if (i < input.length && input[i] === "(") {
         raw += "(";

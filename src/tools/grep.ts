@@ -5,7 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { Tool, ToolInvocation, ToolResult } from "./types.js";
 import { parseArgs } from "./types.js";
-import { resolveReadPathInWorkspace, displayPath } from "../workspace/paths.js";
+import { resolveReadPathInWorkspace, resolveInWorkspace, displayPath } from "../workspace/paths.js";
 import { isSensitivePath, SENSITIVE_GLOB_EXCLUDES } from "../workspace/sensitive.js";
 import { boundLines } from "./outputBound.js";
 
@@ -67,16 +67,23 @@ Usage:
         if (args.glob) rgArgs.push("--glob", args.glob);
         for (const ex of SENSITIVE_GLOB_EXCLUDES) rgArgs.push("--glob", ex);
         rgArgs.push(args.pattern, abs);
+        const rootAbs = resolveInWorkspace(ctx.workspaceRoot, ".");
         try {
           const { stdout } = await execFileAsync("rg", rgArgs, {
+            cwd: rootAbs,
             signal: ctx.signal,
             maxBuffer: 8 * 1024 * 1024,
           });
           const trimmed = stdout.trim();
           if (!trimmed) return { output: "(no matches)" };
+          // Make paths workspace-relative: strip absolute root prefix from rg output
+          const relRoot = rootAbs.endsWith("/") ? rootAbs : rootAbs + "/";
+          const relativized = trimmed.split("\n").map((line) =>
+            line.startsWith(relRoot) ? line.slice(relRoot.length) : line,
+          );
           // Cap to match the fallback's bound so a hot pattern can't flood the
           // model context; mark truncation explicitly.
-          return { output: boundLines(trimmed.split("\n"), MAX_MATCH_LINES, "matches").join("\n") };
+          return { output: boundLines(relativized, MAX_MATCH_LINES, "matches").join("\n") };
         } catch (err: unknown) {
           const e = err as { code?: number | string; stderr?: string };
           // rg exits 1 with no output when there are no matches.
