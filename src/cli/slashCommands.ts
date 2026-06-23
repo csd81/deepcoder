@@ -69,6 +69,7 @@ import type { SandboxMode } from "../sandbox/types.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { confirm } from "../permissions/prompt.js";
 import { runSolveCommand } from "./solveRunner.js";
+import { parseRefactorArgs, buildRefactorPrompt } from "./refactor.js";
 import { runUserCommand } from "./runUserCommand.js";
 import { stdout } from "node:process";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
@@ -1294,6 +1295,29 @@ export async function handleSlashCommand(
       await runSolveCommand(
         session,
         { task, checkName, maxAttempts: config.solveMaxAttempts },
+        runAgent,
+      );
+      await save();
+      return { consumed: true };
+    }
+
+    case "refactor": {
+      // Thin wrapper over the solve loop: parse like /solve, seed a steering
+      // prompt pointing at the impact tools + atomic apply_patch, then reuse
+      // runSolveCommand (which owns preflight + the SolveDeps wiring).
+      const parsed = parseRefactorArgs(arg);
+      if (!parsed.ok) {
+        console.log(chalk.dim(parsed.usage));
+        return { consumed: true };
+      }
+      if (!runAgent) {
+        console.log(chalk.red("Refactor is unavailable in this context."));
+        return { consumed: true };
+      }
+      session.messages.push({ role: "system", content: buildRefactorPrompt(parsed.description) });
+      await runSolveCommand(
+        session,
+        { task: `Refactor: ${parsed.description}`, checkName: parsed.checkName, maxAttempts: config.solveMaxAttempts },
         runAgent,
       );
       await save();

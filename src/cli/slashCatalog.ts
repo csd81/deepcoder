@@ -88,6 +88,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "checks", description: "List configured verification checks", category: "checks" },
   { name: "check", args: "<name>", description: "Run a configured check (gated, bounded, quarantined)", category: "checks" },
   { name: "solve", args: "<check> <task>", description: "Edit, run check, retry until it passes or budget runs out", category: "checks" },
+  { name: "refactor", args: "<check> <description>", description: "Cross-file refactor: gather impact, edit atomically, verify against a check", category: "checks" },
   { name: "triage", args: "<failure|--file <log>|--run <id>|--scope <scope>>", description: "Diagnose a failure (read-only)", category: "checks" },
   { name: "tests", args: "[target|plan|run-targeted]", description: "Automatic minimal test targeting", category: "checks" },
 
