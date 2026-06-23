@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadConfig, type ApprovalMode } from "../config/config.js";
-import type { SandboxMode } from "../sandbox/types.js";
+import { loadConfig, type ApprovalMode, VALID_APPROVAL_MODES } from "../config/config.js";
+import { type SandboxMode, VALID_SANDBOX_MODES } from "../sandbox/types.js";
 import { bwrapAvailable } from "../sandbox/index.js";
-import type { WorkspaceIsolationMode } from "../workspaceIsolation/types.js";
+import { type WorkspaceIsolationMode, VALID_ISOLATION_MODES } from "../workspaceIsolation/types.js";
 import { runOneShot, runRepl, runTuiRepl } from "./repl.js";
 import { resolveUiMode } from "../ui/uiMode.js";
 import { listSessions, forkSession, latestSessionId } from "../session/sessionStore.js";
@@ -18,7 +18,7 @@ program
   .name("deepcoder")
   .description("A small, model-agnostic agentic coding CLI (DeepSeek).")
   .argument("[prompt...]", "task to run once and exit; omit for interactive mode")
-  .option("--mode <mode>", "approval mode: ask | auto | readonly")
+  .option("--mode <mode>", "approval mode: ask | auto | readonly | yolo")
   .option("--resume [id]", "resume a saved session (most recent if id omitted)")
   .option("--fork", "fork the session when resuming (copies to a new id)")
   .option("--list-sessions", "list saved sessions and exit")
@@ -74,6 +74,19 @@ program
         print?: boolean;
       },
     ) => {
+    // Validate CLI enum values before passing to loadConfig
+    if (opts.mode && !(VALID_APPROVAL_MODES as readonly string[]).includes(opts.mode)) {
+      console.error(chalk.red(`Invalid approval mode "${opts.mode}". Use one of: ${VALID_APPROVAL_MODES.join(" | ")}`));
+      process.exit(1);
+    }
+    if (opts.sandbox && !(VALID_SANDBOX_MODES as readonly string[]).includes(opts.sandbox)) {
+      console.error(chalk.red(`Invalid sandbox mode "${opts.sandbox}". Use one of: ${VALID_SANDBOX_MODES.join(" | ")}`));
+      process.exit(1);
+    }
+    if (opts.workspaceIsolation && !(VALID_ISOLATION_MODES as readonly string[]).includes(opts.workspaceIsolation)) {
+      console.error(chalk.red(`Invalid workspace isolation mode "${opts.workspaceIsolation}". Use one of: ${VALID_ISOLATION_MODES.join(" | ")}`));
+      process.exit(1);
+    }
     const baseConfig = loadConfig({
       ...(opts.mode ? { approvalMode: opts.mode as ApprovalMode } : {}),
       ...(opts.planningModel ? { reasonerModel: opts.planningModel } : {}),

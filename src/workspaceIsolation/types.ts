@@ -7,6 +7,7 @@
 // to the isolated worktree.
 
 export type WorkspaceIsolationMode = "off" | "patch" | "keep";
+export const VALID_ISOLATION_MODES: readonly WorkspaceIsolationMode[] = ["off", "patch", "keep"];
 export type WorkspaceIsolationBackend = "auto" | "git-worktree" | "copy";
 
 export interface WorkspaceIsolationConfig {

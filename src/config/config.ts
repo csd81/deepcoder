@@ -21,6 +21,7 @@ const SANDBOX_MODES: SandboxMode[] = [
 const WS_ISOLATION_MODES: WorkspaceIsolationMode[] = ["off", "patch", "keep"];
 
 export type ApprovalMode = "ask" | "auto" | "readonly" | "yolo";
+export const VALID_APPROVAL_MODES: readonly ApprovalMode[] = ["ask", "auto", "readonly", "yolo"];
 export type CheckpointMode = "off" | "manual" | "auto";
 
 /** Phase 8E semantic-search settings (opt-in; default disabled). */

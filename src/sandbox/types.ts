@@ -13,6 +13,10 @@ export type SandboxMode =
   | "podman"
   | "runsc";
 
+export const VALID_SANDBOX_MODES: readonly SandboxMode[] = [
+  "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
+];
+
 /** What to do when the requested backend is unavailable at run time. */
 export type SandboxFallback = "ask" | "local" | "fail";
 

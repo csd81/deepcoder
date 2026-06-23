@@ -73,9 +73,9 @@ test("an invalid DEEPCODER_CHECKPOINTS value falls back to off, not the raw stri
   const prev = process.env.DEEPCODER_CHECKPOINTS;
   try {
     process.env.DEEPCODER_CHECKPOINTS = "yes-please";
-    assert.equal(loadConfig().checkpoints, "off");
+    assert.equal(loadConfig({ apiKey: "fixture" }).checkpoints, "off");
     process.env.DEEPCODER_CHECKPOINTS = "auto";
-    assert.equal(loadConfig().checkpoints, "auto");
+    assert.equal(loadConfig({ apiKey: "fixture" }).checkpoints, "auto");
   } finally {
     if (prev === undefined) delete process.env.DEEPCODER_CHECKPOINTS;
     else process.env.DEEPCODER_CHECKPOINTS = prev;

@@ -48,6 +48,8 @@ async function sessionWith(
     approvalMode: "auto",
     checks,
     solveMaxAttempts: 1,
+    containment: { enabled: false },
+    sandbox: { mode: "off" as const },
     context: { preflight } as import("../../src/config/config.js").ContextConfig,
   });
   return {
@@ -98,6 +100,8 @@ test("preflight with empty explorer output does not crash", async () => {
     approvalMode: "auto",
     checks: { test: { command: "node -e \"process.exit(0)\"" } },
     solveMaxAttempts: 1,
+    containment: { enabled: false },
+    sandbox: { mode: "off" as const },
     context: { preflight: true } as import("../../src/config/config.js").ContextConfig,
   });
   const s: Session = {
