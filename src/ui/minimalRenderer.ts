@@ -1,4 +1,5 @@
 import { renderRaw } from "./rawMode.js";
+import { charWidth, displayWidth } from "./charWidth.js";
 
 /**
  * Phase 10A — minimal TUI renderer (pure frame builder + key mapping).
@@ -178,21 +179,23 @@ export function keyToAction(key: string): KeyAction {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** SGR (color) escape sequence matcher — these are zero-width on screen. */
-const SGR = /\x1b\[[0-9;]*m/g;
-
 /**
  * Visible column count of a string, ignoring SGR color codes (which take no
- * screen space). Still a simple per-codepoint count (no grapheme/CJK awareness).
+ * screen space). CJK / fullwidth / emoji count as two columns, combining and
+ * zero-width marks as none — see {@link displayWidth}.
  */
 export function visibleWidth(s: string): number {
-  return s.replace(SGR, "").length;
+  return displayWidth(s);
 }
 
 /**
  * Truncate a string to at most `maxLen` VISIBLE columns, preserving any SGR
  * color codes and appending a reset if the string was cut while styled. Lines
  * that already fit (by visible width) are returned unchanged.
+ *
+ * Width is measured in display columns: a wide (CJK/emoji) character that would
+ * straddle the limit is dropped whole rather than overflowing or being split,
+ * and surrogate pairs are never cut in half.
  */
 export function truncate(s: string, maxLen: number): string {
   if (visibleWidth(s) <= maxLen) return s;
@@ -201,17 +204,20 @@ export function truncate(s: string, maxLen: number): string {
   let i = 0;
   let sawEscape = false;
   while (i < s.length && count < maxLen) {
-    const rest = s.slice(i);
-    const m = /^\x1b\[[0-9;]*m/.exec(rest);
+    const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i));
     if (m) {
       out += m[0];
       i += m[0].length;
       sawEscape = true;
       continue;
     }
-    out += s[i];
-    i += 1;
-    count += 1;
+    const cp = s.codePointAt(i)!;
+    const ch = String.fromCodePoint(cp);
+    const w = charWidth(cp);
+    if (count + w > maxLen) break; // a wide char would overflow — stop before it
+    out += ch;
+    i += ch.length; // advance past the whole code point (surrogate-pair safe)
+    count += w;
   }
   return sawEscape ? out + "\x1b[0m" : out;
 }
