@@ -17,6 +17,13 @@ export function buildSystemPrompt(opts: {
    * hardcode the list into the prompt body.
    */
   toolNames?: string[];
+  /**
+   * Operator-configured verification check commands (`config.checks[*].command`).
+   * When present, they're surfaced so the model runs them VERBATIM to verify its
+   * work — in headless mode these exact commands are auto-approved (the only way
+   * the model can close its own verify loop without a TTY).
+   */
+  checkCommands?: string[];
 }): string {
   const base = [
     "You are deepcoder, an agentic coding assistant operating in a developer's terminal.",
@@ -77,6 +84,18 @@ export function buildSystemPrompt(opts: {
       "Solve mode: a verification check runs AUTOMATICALLY after each of your turns.",
       "- Do NOT run the project's tests or that verification check yourself (no pytest/npm test/etc.). The harness owns verification.",
       "- Just make the smallest edit that should fix the issue and end your turn; you'll be given the check result and can revise.",
+    );
+  }
+
+  // Surface operator-configured checks so the model verifies its work by running
+  // these EXACT commands (auto-approved even headless). Not in solve mode — there
+  // the harness runs the check itself.
+  if (!opts.solve && opts.checkCommands && opts.checkCommands.length > 0) {
+    base.push(
+      "",
+      "## Verifying your work",
+      "Before finishing, verify by running one of these configured checks with run_bash (run the command EXACTLY as written — these are pre-approved):",
+      ...opts.checkCommands.map((c) => `- \`${c}\``),
     );
   }
 

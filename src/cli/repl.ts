@@ -21,6 +21,7 @@ import {
   type InstructionGraph,
 } from "../context/instructionGraph.js";
 import { promptForApproval, confirm } from "../permissions/prompt.js";
+import { isConfiguredCheckCommand } from "../permissions/headlessCheck.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { runBashTool } from "../tools/runBash.js";
 import { parseBangCommand, decideBang } from "./bangCommand.js";
@@ -328,6 +329,7 @@ export function systemMessage(
       memory,
       skillsCatalog,
       toolNames,
+      checkCommands: Object.values(config.checks).map((c) => c.command),
     }),
   };
 }
@@ -477,7 +479,18 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     contextBudgetTokens,
     compactAt: session.config.compactAt,
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
-    approve: ui?.approve ?? ((inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview)),
+    approve: (inv: ToolInvocation, preview?: ToolPreview) => {
+      // Headless verify loop: with no TTY the prompt auto-DENIES, which blocks
+      // the model from running its own checks. Auto-approve EXACTLY an
+      // operator-configured check command (config.checks) so the model can
+      // close its verify loop. Still gated by the command classifier (a denied
+      // command never reaches here) and limited to no-TTY runs.
+      if (!stdin.isTTY && isConfiguredCheckCommand(inv.command, session.config.checks)) {
+        renderer.emit({ type: "notice", message: `Auto-approved configured check (headless): ${inv.describe()}` });
+        return Promise.resolve(true);
+      }
+      return (ui?.approve ?? promptForApproval)(inv, preview);
+    },
     onPreToolUse: preToolUseHook(session),
     onPostTool: postToolHook(session),
     jitContext: jitContext(session),
