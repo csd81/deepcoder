@@ -18,6 +18,7 @@ import { runPostWriteDiagnostics } from "../diagnostics/runner.js";
 import { formatFile, shouldFormat } from "../tools/formatOnEdit.js";
 import type { FormatConfig } from "../config/fileConfig.js";
 import { isRateLimit, isAuthError, isModelError, backoffMs, abortableSleep } from "./retry.js";
+import { formatTokenUsageReminder, shouldEmitTokenUsageReminder } from "./tokenUsageReminder.js";
 
 export interface AgentDeps {
   provider: ModelProvider;
@@ -154,6 +155,8 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
   let lastInvalidSignature: string | null = null;
   // The read-budget focus nudge is a one-shot: it fires at most once per run.
   let nudged = false;
+  // One-shot token-usage system reminder (mirrors the read-budget nudge).
+  let tokenReminded = false;
   // Cumulative UNCAPPED tool-output bytes the agent has read this run. Tracked
   // separately from stored bytes because results are capped before storage
   // (capToolResult) — the nudge is about read *volume*, not what we kept.
@@ -206,6 +209,22 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
 
     const response = await getResponseWithRetry(turnDeps, withEphemeralContext(messages, ctx, deps));
     deps.onUsage?.(response.usage);
+
+    // One-shot token-usage system reminder: fire when the provider-reported
+    // promptTokens first crosses compactAt × contextBudgetTokens.
+    if (!tokenReminded && response.usage?.promptTokens !== undefined) {
+      if (shouldEmitTokenUsageReminder(response.usage.promptTokens, deps.contextBudgetTokens, deps.compactAt)) {
+        tokenReminded = true;
+        messages.push({
+          role: "system",
+          content: formatTokenUsageReminder(response.usage.promptTokens, deps.contextBudgetTokens),
+        });
+        deps.onNotice?.(
+          `Token-usage reminder: ${response.usage.promptTokens} of ${deps.contextBudgetTokens} tokens used.`,
+        );
+        await deps.onPersist?.();
+      }
+    }
 
     messages.push({
       role: "assistant",
