@@ -1,6 +1,15 @@
 import type { AgentMessage } from "../providers/types.js";
 import type { Todo } from "../tools/types.js";
 import { estimateMessages } from "./tokenBudget.js";
+import { boundLines } from "../tools/outputBound.js";
+
+/**
+ * Max file entries listed in a compaction summary. The summary lands in the kept
+ * prefix and is re-billed every later turn, so an unbounded list (a session can
+ * touch hundreds of files) is dead weight. Edited files are listed first, so the
+ * cap preferentially keeps the files the model actually changed.
+ */
+const MAX_SUMMARY_FILES = 40;
 
 export interface CompactOptions {
   budgetTokens: number;
@@ -124,9 +133,13 @@ export function buildStructuredSummary(
   if (readSet.size === 0 && writeTracker.size === 0) {
     lines.push("(none)");
   } else {
-    for (const p of [...written].sort()) lines.push(`- ${p} (edited)`);
-    for (const p of [...onlyRead].sort()) lines.push(`- ${p} (read)`);
-    for (const p of [...onlyWritten].sort()) if (!written.has(p)) lines.push(`- ${p} (created)`);
+    // Edited first (most important), then read, then created — boundLines caps
+    // the combined list with an explicit "(N of M files shown; truncated)".
+    const fileLines: string[] = [];
+    for (const p of [...written].sort()) fileLines.push(`- ${p} (edited)`);
+    for (const p of [...onlyRead].sort()) fileLines.push(`- ${p} (read)`);
+    for (const p of [...onlyWritten].sort()) if (!written.has(p)) fileLines.push(`- ${p} (created)`);
+    lines.push(...boundLines(fileLines, MAX_SUMMARY_FILES, "files"));
   }
   lines.push("");
   lines.push("## Unresolved items");
