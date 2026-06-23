@@ -64,7 +64,11 @@ import { createNamedTheme, listThemeNames, isValidThemeName, type ThemeName } fr
 import { buildBlockPreview } from "../ui/blockPreview.js";
 import { createSearchState, updateSearch, moveSearchSelection, selectedMatch, type TranscriptSearchState } from "../ui/transcriptSearch.js";
 import { formatTranscriptBlockMarkdown, selectedBlock } from "../ui/transcriptExport.js";
-import { safeExportFilename } from "../ui/exportWriter.js";
+import { safeExportFilename, writeExport } from "../ui/exportWriter.js";
+import { runSubagent } from "../subagents/runner.js";
+import { researcher, reviewer } from "../subagents/profiles.js";
+import { newSessionId } from "../session/sessionStore.js";
+import { BackgroundManager, parseAmpCommand, type AmpCommand, type BackgroundJob } from "../subagents/background.js";
 import { copyToClipboard } from "../clipboard/clipboard.js";
 import { MOUSE_ENABLE, MOUSE_DISABLE, mouseStatusNotice, parseMouseEvent, splitMouseFromChunk } from "../ui/mouse.js";
 import { computeFrameRegions, hitTestBlock, type RenderedTranscriptRow } from "../ui/transcriptHitTest.js";
@@ -666,6 +670,59 @@ async function executeBang(session: Session, command: string, signal: AbortSigna
   return { output: res.output, isError: res.isError };
 }
 
+/**
+ * Build a BackgroundManager wired to `runSubagent` (read-only) + `writeExport`.
+ * `onSettled` is UI-specific (the TUI repaints a notice; the plain REPL prints
+ * a line) — everything else is shared between both REPLs.
+ */
+function createBackgroundManager(session: Session, onSettled: (job: BackgroundJob) => void): BackgroundManager {
+  const root = () => session.executionRoot ?? session.config.workspaceRoot;
+  return new BackgroundManager({
+    run: (type, prompt, signal) =>
+      runSubagent(type === "research" ? researcher : reviewer, prompt, {
+        workspaceRoot: root(),
+        provider: session.provider,
+        parentModel: session.config.model,
+        subagentModel: session.config.subagentModel,
+        modelRouter: session.modelRouter,
+        providerPool: session.providerPool,
+        contextBudgetTokens: session.config.contextBudgetTokens,
+        compactAt: session.config.compactAt,
+        signal,
+      }),
+    persist: (type, id, md) => writeExport(root(), safeExportFilename(`bg-${type}`, new Date(), id), md),
+    onSettled,
+    newId: () => newSessionId().split("-").pop() ?? newSessionId(),
+  });
+}
+
+/**
+ * Handle a parsed `&` command against the manager. `emit` renders a one-shot
+ * notice (UI-specific). Shared by both REPLs so the dispatch logic lives once.
+ */
+function handleAmpCommand(amp: AmpCommand, background: BackgroundManager, emit: (message: string) => void): void {
+  if (amp.cmd === "usage") {
+    emit("Usage: &research <question> | &review <scope> | &status");
+  } else if (amp.cmd === "unknown") {
+    emit("Unknown background command. Try &research, &review, or &status.");
+  } else if (amp.cmd === "status") {
+    const jobs = background.list();
+    const body = jobs.length
+      ? jobs
+          .map((j) => `  ${j.status === "running" ? "⋯" : j.status === "completed" ? "✓" : "✗"} ${j.type} ${j.id}${j.status !== "running" && j.result ? ` — ${j.result}` : ""}`)
+          .join("\n")
+      : "  (no background jobs)";
+    emit(`Background jobs:\n${body}`);
+  } else {
+    try {
+      const job = background.spawn(amp.type, amp.prompt);
+      emit(`background ${amp.type} started (${job.id}) — keep working; you'll be notified when it finishes.`);
+    } catch (e) {
+      emit(`Cannot start background ${amp.type}: ${(e as Error).message}`);
+    }
+  }
+}
+
 export async function runRepl(session: Session): Promise<void> {
   session.interactive = true; // human present → generous turn cap (see effectiveMaxTurns)
   attachFileWatcher(session); // interactive only — stopped on exit below
@@ -682,6 +739,13 @@ export async function runRepl(session: Session): Promise<void> {
 
   let sideState: SideState | null = null;
   const rl = readline.createInterface({ input: stdin, output: stdout });
+  // Background subagents: detached, advisory; prints a line when each settles.
+  const background = createBackgroundManager(session, (job) => {
+    const msg = job.status === "completed"
+      ? `✓ background ${job.type} ${job.id} done: ${job.result}${job.exportPath ? ` · saved to ${job.exportPath}` : ""}`
+      : `✗ background ${job.type} ${job.id} failed: ${job.result}`;
+    stdout.write("\n" + (job.status === "completed" ? chalk.green(msg) : chalk.red(msg)) + "\n");
+  });
   try {
     while (true) {
       const input = (await rl.question(chalk.cyan("\ndeepcoder> "))).trim();
@@ -774,6 +838,15 @@ export async function runRepl(session: Session): Promise<void> {
         session.readTracker = savedRead;
         session.writeTracker = savedWrite;
         continue;
+      }
+
+      // ── Background subagents: `&research` / `&review` / `&status` ──
+      {
+        const amp = parseAmpCommand(input);
+        if (amp !== null) {
+          handleAmpCommand(amp, background, (msg) => stdout.write(chalk.dim(msg) + "\n"));
+          continue;
+        }
       }
 
       // Phase 10R: `!cmd` shell-escape — runs a real shell command, never the model.
@@ -927,6 +1000,18 @@ export async function runTuiRepl(session: Session): Promise<void> {
   let dirty = false;
   let busy = false;
   let queue: InputQueue = createInputQueue();
+
+  // Background (fire-and-forget) subagents: `&research` / `&review` run detached
+  // and repaint a notice + a saved export when they settle, without blocking the
+  // session. Read-only; results are advisory and never injected into model context.
+  const background = createBackgroundManager(session, (job) => {
+    const msg = job.status === "completed"
+      ? `✓ background ${job.type} ${job.id} done: ${job.result}${job.exportPath ? ` · saved to ${job.exportPath}` : ""}`
+      : `✗ background ${job.type} ${job.id} failed: ${job.result}`;
+    transcript = applyEvent(transcript, { type: "notice", message: msg });
+    stickBottom();
+    redraw();
+  });
   let sideState: SideState | null = null;
   let approvalResolve: ((k: string) => void) | null = null;
   let pendingApproval: { description: string; diff?: string } | null = null;
@@ -1461,6 +1546,21 @@ export async function runTuiRepl(session: Session): Promise<void> {
       }
       await drainQueue();
       return;
+    }
+
+    // ── Background subagents: `&research` / `&review` / `&status` ──
+    // Handled BEFORE the busy-enqueue check so a background job can be launched
+    // even while the agent is busy (the whole point: the session is not blocked).
+    {
+      const amp = parseAmpCommand(line);
+      if (amp !== null) {
+        handleAmpCommand(amp, background, (msg) => {
+          transcript = applyEvent(transcript, { type: "notice", message: msg });
+          stickBottom();
+          redraw();
+        });
+        return;
+      }
     }
 
     // Enqueue if the agent is busy (type-ahead).
