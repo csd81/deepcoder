@@ -29,22 +29,25 @@ test("default: containment ON → sandbox is fail-closed bubblewrap/no-mounts", 
   });
 });
 
-test("QUARANTINE: --no-contain is IGNORED by default (containment stays ON)", () => {
+test("--no-contain is HONORED: explicit opt-out disables containment (sandbox falls back to fast)", () => {
   withEnv(KEY, () => {
     const c = loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } });
-    assert.equal(c.containment.enabled, true); // disabling is quarantined
-    assert.equal(c.sandbox.mode, "bubblewrap");
+    assert.equal(c.containment.enabled, false); // explicit opt-out is respected
+    assert.equal(c.sandbox.mode, "fast");
   });
 });
 
-test("QUARANTINE: env DEEPCODER_CONTAIN=0 is IGNORED by default", () => {
+test("env DEEPCODER_CONTAIN=0 is HONORED: disables containment", () => {
   withEnv({ ...KEY, DEEPCODER_CONTAIN: "0" }, () => {
-    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).containment.enabled, true);
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).containment.enabled, false);
   });
 });
 
-test("DEEPCODER_ALLOW_UNCONTAINED=1 re-enables --no-contain (the bypass hatch)", () => {
+test("DEEPCODER_ALLOW_UNCONTAINED is now a no-op: opt-out works with or without it", () => {
+  // The quarantine env-var gate is gone. Setting it changes nothing — the explicit
+  // --no-contain is what disables containment, and absent any opt-out the default is ON.
   withEnv({ ...KEY, DEEPCODER_ALLOW_UNCONTAINED: "1" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).containment.enabled, true, "no opt-out → still ON");
     const c = loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } });
     assert.equal(c.containment.enabled, false);
     assert.equal(c.sandbox.mode, "fast");
@@ -57,10 +60,8 @@ test("env DEEPCODER_CONTAIN=1 enables it", () => {
   });
 });
 
-test("CLI override wins over env (flag false beats DEEPCODER_CONTAIN=1) — only with the bypass hatch open", () => {
-  // The CLI-beats-env precedence for DISABLING containment only matters when the
-  // quarantine bypass is open; otherwise --no-contain is ignored (covered above).
-  withEnv({ ...KEY, DEEPCODER_CONTAIN: "1", DEEPCODER_ALLOW_UNCONTAINED: "1" }, () => {
+test("CLI override wins over env (flag false beats DEEPCODER_CONTAIN=1)", () => {
+  withEnv({ ...KEY, DEEPCODER_CONTAIN: "1" }, () => {
     assert.equal(loadConfig({ workspaceRoot: "/tmp", containment: { enabled: false } }).containment.enabled, false);
   });
 });

@@ -94,7 +94,7 @@ task_text="$(cat "$taskfile")"
 # human-gated step (verify-then-force, then commit + merge by hand). A delegation
 # never integrates itself.
 export DEEPCODER_PROVIDER="$P" DEEPCODER_MODEL="$M" DEEPCODER_BASE_URL="$U" \
-       DEEPCODER_API_KEY="$K" DEEPCODER_ALLOW_UNCONTAINED=1
+       DEEPCODER_API_KEY="$K"
 export WT="$DIR" ATT="$attempts" LOG="$log" TASKTEXT="$task_text"
 
 nohup bash -c '

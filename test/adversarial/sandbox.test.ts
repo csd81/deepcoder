@@ -172,12 +172,10 @@ test("run_bash: a failing sandboxed command returns an error result, not a crash
 test("config precedence: env DEEPCODER_SANDBOX overrides file/default; CLI override wins over env", () => {
   const prev = process.env.DEEPCODER_SANDBOX;
   const prevKey = process.env.DEEPCODER_API_KEY;
-  const prevAllow = process.env.DEEPCODER_ALLOW_UNCONTAINED;
   process.env.DEEPCODER_SANDBOX = "off";
   process.env.DEEPCODER_API_KEY = "k"; // loadConfig requires a key before it returns
-  // Containment (default-on, non-bypassable) would rewrite the mode to bubblewrap;
-  // the bypass hatch lets us observe raw sandbox-mode precedence.
-  process.env.DEEPCODER_ALLOW_UNCONTAINED = "1";
+  // Containment (default-on) would rewrite the mode to bubblewrap; the explicit
+  // --no-contain opt-out lets us observe raw sandbox-mode precedence.
   try {
     const fromEnv = loadConfig({ apiKey: "k", workspaceRoot: "/tmp", containment: { enabled: false } });
     assert.equal(fromEnv.sandbox.mode, "off");
@@ -190,7 +188,5 @@ test("config precedence: env DEEPCODER_SANDBOX overrides file/default; CLI overr
     else process.env.DEEPCODER_SANDBOX = prev;
     if (prevKey === undefined) delete process.env.DEEPCODER_API_KEY;
     else process.env.DEEPCODER_API_KEY = prevKey;
-    if (prevAllow === undefined) delete process.env.DEEPCODER_ALLOW_UNCONTAINED;
-    else process.env.DEEPCODER_ALLOW_UNCONTAINED = prevAllow;
   }
 });

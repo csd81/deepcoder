@@ -34,7 +34,7 @@ program
   .option("--preflight", "run context preflight (plan + explorer) before solve attempt 1")
   .option("--sandbox <mode>", "sandbox risky commands: off | fast | bubblewrap | local")
   .option("--contain", "hard workspace containment: no file/shell access escapes the workspace (DEFAULT ON; requires bubblewrap)")
-  .option("--no-contain", "[disabled for now] would disable containment; gated behind DEEPCODER_ALLOW_UNCONTAINED=1")
+  .option("--no-contain", "disable workspace containment (runs without bubblewrap; ignored under --yolo)")
   .option("--yolo", "approve ALL actions within the workspace — no prompts; forces containment ON and disables the MCP-execute + interactive-shell escape hatches")
   .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
   .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
@@ -102,14 +102,6 @@ program
           }
         : {}),
     });
-    // Quarantine notice: --no-contain / --sandbox off|local are disabled for now
-    // (gated behind DEEPCODER_ALLOW_UNCONTAINED=1). Tell the user they were ignored.
-    const uncontainedAllowed = ["1", "true", "yes"].includes((process.env.DEEPCODER_ALLOW_UNCONTAINED ?? "").toLowerCase());
-    if (!uncontainedAllowed && (opts.contain === false || opts.sandbox === "off" || opts.sandbox === "local")) {
-      console.error(chalk.yellow(
-        "Note: --no-contain / --sandbox off|local are disabled for now — workspace containment is enforced.",
-      ));
-    }
     // Phase 10S — fail closed early: containment is meaningless without bubblewrap.
     if (baseConfig.containment.enabled && !bwrapAvailable()) {
       console.error(chalk.red(

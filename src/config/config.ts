@@ -437,14 +437,12 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...(overrides.containment ?? {}), // CLI wins
   };
 
-  // Quarantine (temporary): disabling containment (`--no-contain` / DEEPCODER_CONTAIN=0
-  // / config) and the uncontained sandbox modes (`off`/`local`) are turned off for now
-  // — the code stays, gated behind DEEPCODER_ALLOW_UNCONTAINED=1 (used by the
-  // delegate/dogfood harnesses, which symlink node_modules outside the worktree).
-  // Unless explicitly allowed, containment is forced ON (which also rewrites any
-  // off/local sandbox to fail-closed bubblewrap via applyContainment below).
-  const uncontainedAllowed = ["1", "true", "yes"].includes((process.env.DEEPCODER_ALLOW_UNCONTAINED ?? "").toLowerCase());
-  if (!uncontainedAllowed) containment.enabled = true;
+  // Containment defaults ON (fail-closed), but an EXPLICIT opt-out is honored:
+  // `--no-contain`, `DEEPCODER_CONTAIN=0`, or a config-file setting all disable it
+  // (resolved by precedence above). yolo still forces it back ON below — there the
+  // sandbox is the only safety net, so the opt-out must not win. Boot still
+  // fail-fails if containment is ON but bwrap is missing (see cli/main.ts), so the
+  // default never silently degrades to uncontained.
 
   // Phase 10T — yolo couples three settings: it auto-approves everything (handled
   // in checkPermission), so it MUST keep the sandbox as the only safety net —

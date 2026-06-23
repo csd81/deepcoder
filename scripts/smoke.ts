@@ -29,7 +29,10 @@ export type Executor = (c: SmokeCase, timeout: number) => Promise<{ exitCode: nu
  * No API key needed, no network.
  */
 export async function defaultExecutor(c: SmokeCase, timeout: number): Promise<{ exitCode: number | null; signal?: string; stderr?: string }> {
-  const args = ["--import", "tsx", "src/cli/main.ts", "--mode", c.mode ?? "auto"];
+  // --no-contain: smoke is a faux-provider boot/plumbing check, not a sandbox
+  // integration test. Containment needs bubblewrap, which CI runners lack — so we
+  // opt out explicitly rather than hard-failing on a missing bwrap.
+  const args = ["--import", "tsx", "src/cli/main.ts", "--mode", c.mode ?? "auto", "--no-contain"];
   if (c.prompt) args.push(c.prompt);
   try {
     await exec("node", args, {
