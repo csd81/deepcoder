@@ -5,7 +5,7 @@ import type { SubagentProfile } from "./types.js";
  * read-only: its `allowedTools` are native read-only/context tools — no
  * run_bash, edit_file, write_file, checkpoint, or MCP tools.
  */
-const READ_ONLY_TOOLS = ["read_file", "grep", "glob", "list_dir", "repo_map", "find_symbols", "list_recent_context"];
+export const READ_ONLY_TOOLS = ["read_file", "grep", "glob", "list_dir", "repo_map", "find_symbols", "list_recent_context"];
 
 export const reviewer: SubagentProfile = {
   name: "reviewer",
