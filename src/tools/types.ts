@@ -74,6 +74,12 @@ export interface ToolContext {
    */
   delegate?: DelegateRuntime;
   /**
+   * Runtime for the autonomous delegate-to-PR chain (delegate tool auto mode).
+   * When absent, auto mode reports "unavailable". Present in full sessions (CLI)
+   * but explicitly omitted inside subagent contexts to prevent nesting.
+   */
+  delegateAuto?: DelegateAutoRuntime;
+  /**
    * Runtime for model-callable worktree isolation (enter/exit). When absent, the
    * tools report "Workspace isolation is unavailable here." Present in full
    * sessions (CLI) but omitted in contexts that don't support worktree isolation.
@@ -103,6 +109,18 @@ export interface DelegateRuntime {
     task: string,
     signal?: AbortSignal,
   ): Promise<{ summary: string; findings: unknown[] }>;
+}
+
+/**
+ * Autonomous delegate-to-PR runtime injected into ToolContext for the
+ * model-callable delegate tool's auto mode. Closes over the session so the
+ * tool never imports runDelegateAuto directly. Always omitted inside subagent
+ * contexts to prevent nesting (defense in depth, together with the explicit
+ * depth guard in build()).
+ */
+export interface DelegateAutoRuntime {
+  runAuto(task: string, opts?: { concurrent?: boolean; noPr?: boolean; base?: string }):
+    Promise<{ exitCode: number; planId: string | null; prUrls: string[] }>;
 }
 
 /** What a tool will do, computed before execution for approval prompts. */
