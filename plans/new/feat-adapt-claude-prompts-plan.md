@@ -85,7 +85,13 @@ Each gap needs either a plan or direct implementation.
 > (`tool-description-lsp.md`; plan at `plans/lsp/feat-lsp-integration-plan.md`), and
 > model escalation (`src/models/escalation.ts`; plan at `plans/new/feat-model-escalation-plan.md`).
 
-### 3. 🏗️ Need new infrastructure (not yet planned)
+### 3. 🏗️ Need new infrastructure
+
+The 9 "worth building" items below each now have a draft implementation plan in `plans/new/`:
+`feat-worktree-tools-plan.md`, `feat-simplify-command-plan.md`, `feat-agent-create-plan.md`,
+`feat-security-monitor-plan.md`, `feat-code-review-subagent-plan.md`, `feat-session-search-plan.md`,
+`feat-batch-command-plan.md`, `feat-coordinator-mode-plan.md`, `feat-remote-planning-plan.md`.
+(The remaining cross-session / cron-push / computer-browser items stay out of scope.)
 
 | Prompt(s) | What's needed |
 |---|---|
@@ -95,8 +101,8 @@ Each gap needs either a plan or direct implementation.
 | `agent-prompt-batch-slash-command.md` | **`/batch`** — PARTIAL. Internal worker batching exists (`orchestrator.ts:364` `buildRunnableBatches`); no user-facing `/batch` command/fan-out yet. |
 | `agent-prompt-session-search.md` | **Session search** — PARTIAL. In-session transcript search exists (`transcriptSearch.ts`, Ctrl+F at `repl.ts:1139`); no cross-session / persistent transcript index. |
 | `agent-prompt-simplify-slash-command.md` | **`/simplify`** — NOT STARTED. Code simplification review with 4 parallel review agents. |
-| `system-prompt-coordinator-mode-orchestration.md` | **Coordinator mode** — PARTIAL. `/delegate` (`slashCommands.ts:1494`) + `/worker` (`slashCommands.ts:3838`) dispatch workers via `orchestrator.ts`/`workerRunner.ts`; this is task-decomposition/TDD-gated dispatch, not a symmetric coordinator/worker peer pattern. |
-| `system-prompt-remote-planning-session.md` | **Remote planning** — plan on one machine, execute on another. `--serve` stdio JSON-RPC mode now exists (HEAD `84b6823`) as a building block; full remote-planning flow not built. |
+| _(no dedicated source prompt; closest is `agent-prompt-batch-slash-command.md`)_ | **Coordinator mode** — PARTIAL. `/delegate` (`slashCommands.ts:1494`) + `/worker` (`slashCommands.ts:3838`) dispatch workers via `orchestrator.ts`/`workerRunner.ts`; this is task-decomposition/TDD-gated dispatch, not a symmetric coordinator/worker peer pattern. Plan: `plans/new/feat-coordinator-mode-plan.md`. |
+| _(no dedicated source prompt; tracked conceptually)_ | **Remote planning** — plan on one machine, execute on another. `--serve` stdio JSON-RPC mode now exists (HEAD `84b6823`) as a building block; full remote-planning flow not built. Plan: `plans/new/feat-remote-planning-plan.md`. |
 | `tool-description-enterworktree.md`, `tool-description-exitworktree.md` | **Worktree tool** — NOT STARTED as model tools. `/isolation` slash command (`slashCommands.ts:1237`) manages workspace isolation CLI-side; no model-callable `enter_worktree`/`exit_worktree`. |
 | `system-reminder-cross-session-*.md` (6 files) | **Cross-session messaging** — peer agents communicating. Not relevant for single-session CLI. |
 | `tool-description-croncreate.md`, `tool-description-pushnotification.md` | **Scheduling + notifications** — cloud cron and push. Not relevant for local CLI. |
