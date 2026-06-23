@@ -20,8 +20,8 @@ test("delegate tool is read-only", () => {
   assert.equal(delegateTool.kind, "read-only");
 });
 
-test("build rejects an unknown profile", () => {
-  assert.throws(() => delegateTool.build({ profile: "nope", task: "x" }));
+test("build accepts any string profile (validation at execution)", () => {
+  assert.doesNotThrow(() => delegateTool.build({ profile: "nope", task: "x" }));
 });
 
 test("execute calls the injected delegate runtime with the profile + task and returns its summary", async () => {

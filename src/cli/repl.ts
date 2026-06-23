@@ -145,6 +145,8 @@ export interface Session {
   recorder?: CheckpointRecorder;
   /** Subagent run records — persisted for audit, NEVER sent to the model. */
   reviews: SubagentRunRecord[];
+  /** Discovered and merged subagent profiles (built-in + custom disk defs). */
+  profiles: Record<string, import("../subagents/types.js").SubagentProfile>;
   /** Explorer brief records — quarantined metadata, NEVER sent to the model. */
   briefs: BriefRunRecord[];
   /** Architect plan records — quarantined metadata, NEVER sent to the model. */

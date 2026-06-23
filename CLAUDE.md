@@ -92,6 +92,8 @@ When delegating a slice to a DeepSeek worker (deepcoder-as-subagent), follow `do
 3. Cap `--solve-attempts 3`.
 4. **Verify-then-force in house** — a green `--check phase` is necessary, not sufficient. Re-apply to a clean baseline and prove scope + anchors + red-on-baseline + green-on-full `test:phase` yourself.
 
+**Opt-in PR review** (`DELEGATE_OPEN_PR=1 scripts/delegate.sh …`): on a passing check the worker commits + pushes its branch and opens a PR (via `scripts/delegate-finish.sh`) so you review a PR instead of landing by hand. It never merges (the PR is the gate) and the PR body carries the verify-then-force checklist; the opt-in is the explicit push authorization. Default stays "leave UNCOMMITTED, land by hand."
+
 ## Workflow conventions
 
 - Push only when the human explicitly asks.

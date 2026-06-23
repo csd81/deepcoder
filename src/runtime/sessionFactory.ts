@@ -42,6 +42,7 @@ import { ModelRouter } from "../models/router.js";
 import { ProviderPool } from "../models/providerPool.js";
 import { runSubagent } from "../subagents/runner.js";
 import { PROFILES } from "../subagents/profiles.js";
+import { discoverCustomProfiles, mergeProfiles } from "../subagents/customProfiles.js";
 import type { DelegateRuntime, WorktreeRuntime } from "../tools/types.js";
 
 /** Connect configured MCP servers and register their tools. Returns undefined
@@ -222,7 +223,7 @@ async function composePluginSkillsInto(
 export function buildDelegateRuntime(session: Session): DelegateRuntime {
   return {
     async run(profileName, task, signal) {
-      const profileDef = PROFILES[profileName];
+      const profileDef = session.profiles[profileName];
       if (!profileDef) {
         throw new Error(`Unknown subagent profile: ${profileName}`);
       }
@@ -363,6 +364,9 @@ export async function buildSession(
     skillsCatalog = buildSkillCatalog(discovered, config.skills.catalogMaxChars);
   }
 
+  const customProfs = await discoverCustomProfiles(config.workspaceRoot);
+  const mergedProfiles = mergeProfiles(PROFILES, customProfs);
+
   if (resume) {
     const id =
       typeof resume === "string" ? resume : await latestSessionId(config.workspaceRoot);
@@ -404,6 +408,7 @@ export async function buildSession(
       readTracker: new Set(saved.readTracker),
       writeTracker: new Set(saved.writeTracker ?? []),
       reviews: saved.reviews ?? [],
+      profiles: mergedProfiles,
       briefs: saved.briefs ?? [],
       plans: saved.plans ?? [],
       activatedSkills: saved.activatedSkills ?? [],
@@ -440,6 +445,7 @@ export async function buildSession(
     readTracker: new Set<string>(),
     writeTracker: new Set<string>(),
     reviews: [],
+    profiles: mergedProfiles,
     briefs: [],
     plans: [],
     activatedSkills: [],
