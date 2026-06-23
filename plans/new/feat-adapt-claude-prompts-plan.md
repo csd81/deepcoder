@@ -47,6 +47,13 @@
 Some adapted prompts reference features that don't exist in deepcoder yet.
 Each gap needs either a plan or direct implementation.
 
+> **Reconciled against codebase 2026-06-23.** Since this plan was written, `/learn`,
+> `/insights`, `/skillify`, and LSP tools all shipped and are wired at runtime — they
+> moved from "planned" to "wired". Four Section-3 items advanced to PARTIAL. The
+> "deferred" plans were **relocated** (not deleted) when `plans/new/` was reorganized
+> into topic dirs (commit `b739212`). Status counts below were recomputed and now
+> sum consistently to 197.
+
 ### 1. ✅ Already wired (infra exists)
 
 | Prompt(s) | Infrastructure |
@@ -61,59 +68,72 @@ Each gap needs either a plan or direct implementation.
 | `skill-*.md` (debugging, config, verify, stuck) | `src/skills/` — Phase 7C skills system |
 | `agent-prompt-verifier-*.md` | `src/delegate/verifyFindings.ts` — ✅ Implemented |
 | `system-prompt-autonomous-delegation-*.md` | `src/delegate/assess.ts` — ✅ Implemented |
+| `system-prompt-learning-mode*.md` | `src/cli/learnMode.ts` — `/learn` (`slashCommands.ts:289`) ✅ Shipped |
+| `system-prompt-insights-*.md` (9 files) | `src/cli/sessionInsights.ts` — `/insights` (`slashCommands.ts:2841`) ✅ Shipped |
+| `system-prompt-skillify-current-session.md` | `src/cli/skillify.ts` — `/skillify` (`slashCommands.ts:1146`) ✅ Shipped |
+| `tool-description-lsp.md` | `src/tools/lspTools.ts` (`lsp_definition/diagnostics/references`, registered `sessionFactory.ts:306`) + `find_references/find_symbols` ✅ Shipped |
+| `system-prompt-model-escalation.md` | `src/models/escalation.ts` — automatic Flash→Pro escalation, reuses ModelRouter (commit d240ddf, wired in `agentLoop.ts`/`repl.ts`) ✅ Shipped |
 
 ### 2. 🔧 Need feature implementation (planned elsewhere)
 
 | Prompt(s) | Depends on | Status |
 |---|---|---|
-| `system-prompt-learning-mode.md` | `/learn` mode | `feat-learn-mode-plan.md` in `plans/new/` |
-| `system-prompt-insights-*.md` (9 files) | `/insights` session analysis | `feat-session-insights-plan.md` in `plans/new/` |
-| `system-prompt-skillify-current-session.md` | `/skillify` | `feat-skillify-plan.md` in `plans/new/` |
-| `system-prompt-model-escalation.md` | Auto Flash→Pro escalation | `feat-model-escalation-plan.md` in `plans/new/` |
-| `system-reminder-token-usage.md` | Token budget tracking | `src/providers/usage.ts` — partial, needs UI |
-| `tool-description-lsp.md` | LSP integration | `feat-lsp-integration-plan.md` (in plans/providers/) |
+| `system-reminder-token-usage.md` | Token budget tracking | **PARTIAL** — `src/providers/usage.ts` + `/usage` `/cost` `/telemetry` commands exist; reminder-surfacing UI not confirmed wired |
+
+> Shipped since last edit (moved to Section 1): `/learn`, `/insights`, `/skillify`
+> (plans now under `plans/cli/` and `plans/new/feat-skillify-plan.md`), LSP
+> (`tool-description-lsp.md`; plan at `plans/lsp/feat-lsp-integration-plan.md`), and
+> model escalation (`src/models/escalation.ts`; plan at `plans/new/feat-model-escalation-plan.md`).
 
 ### 3. 🏗️ Need new infrastructure (not yet planned)
 
 | Prompt(s) | What's needed |
 |---|---|
-| `agent-prompt-security-monitor-*.md` (4 files) | **Security monitor** — a read-only subagent that evaluates tool actions against block/allow rules. Could be wired as a pre-tool hook that flags risks before execution. New profile + hook integration. |
-| `agent-prompt-code-review-*.md` (9 part files) | **Code review subagent** — deepcoder has `/review` but it's a basic read-only profile; these prompts define multi-angle review with 3-state verification. Needs enhanced review profile. |
-| `agent-prompt-agent-creation-architect.md` | **Custom agent creator** — `/agent-create` command that generates custom agent definitions from natural language descriptions. |
-| `agent-prompt-batch-slash-command.md` | **`/batch`** — parallel task decomposition and fan-out. Needs orchestrator integration. |
-| `agent-prompt-session-search.md` | **Session search** — search past session transcripts by content. Needs session transcript indexing. |
-| `agent-prompt-simplify-slash-command.md` | **`/simplify`** — code simplification review with 4 parallel review agents. |
-| `system-prompt-coordinator-mode-orchestration.md` | **Coordinator mode** — multi-agent orchestration where one agent coordinates worker agents. Deepcoder has delegation but not coordinator/worker pattern. |
-| `system-prompt-remote-planning-session.md` | **Remote planning** — plan on one machine, execute on another. Requires server infrastructure. |
-| `tool-description-enterworktree.md`, `tool-description-exitworktree.md` | **Worktree tool** — deepcoder has workspace isolation (Phase 7D) but no model-callable `enter_worktree`/`exit_worktree` tools. |
+| `agent-prompt-security-monitor-*.md` (4 files) | **Security monitor** — NOT STARTED. A read-only subagent that evaluates tool actions against block/allow rules. PreToolUse hook types exist (`hooks/types.ts`) but no security profile / risk-assessment impl. New profile + hook integration. |
+| `agent-prompt-code-review-*.md` (9 part files) | **Code review subagent** — PARTIAL. Basic reviewer profile exists (`profiles.ts:10`) behind `/review`; these prompts define multi-angle review with 3-state verification, not yet built on top. |
+| `agent-prompt-agent-creation-architect.md` | **Custom agent creator** — NOT STARTED. `/agent-create` command that generates custom agent definitions from natural language descriptions. |
+| `agent-prompt-batch-slash-command.md` | **`/batch`** — PARTIAL. Internal worker batching exists (`orchestrator.ts:364` `buildRunnableBatches`); no user-facing `/batch` command/fan-out yet. |
+| `agent-prompt-session-search.md` | **Session search** — PARTIAL. In-session transcript search exists (`transcriptSearch.ts`, Ctrl+F at `repl.ts:1139`); no cross-session / persistent transcript index. |
+| `agent-prompt-simplify-slash-command.md` | **`/simplify`** — NOT STARTED. Code simplification review with 4 parallel review agents. |
+| `system-prompt-coordinator-mode-orchestration.md` | **Coordinator mode** — PARTIAL. `/delegate` (`slashCommands.ts:1494`) + `/worker` (`slashCommands.ts:3838`) dispatch workers via `orchestrator.ts`/`workerRunner.ts`; this is task-decomposition/TDD-gated dispatch, not a symmetric coordinator/worker peer pattern. |
+| `system-prompt-remote-planning-session.md` | **Remote planning** — plan on one machine, execute on another. `--serve` stdio JSON-RPC mode now exists (HEAD `84b6823`) as a building block; full remote-planning flow not built. |
+| `tool-description-enterworktree.md`, `tool-description-exitworktree.md` | **Worktree tool** — NOT STARTED as model tools. `/isolation` slash command (`slashCommands.ts:1237`) manages workspace isolation CLI-side; no model-callable `enter_worktree`/`exit_worktree`. |
 | `system-reminder-cross-session-*.md` (6 files) | **Cross-session messaging** — peer agents communicating. Not relevant for single-session CLI. |
 | `tool-description-croncreate.md`, `tool-description-pushnotification.md` | **Scheduling + notifications** — cloud cron and push. Not relevant for local CLI. |
 | `tool-description-computer-*.md`, `tool-description-chrome-*.md` | **Computer use + browser** — GUI automation. Not in scope. |
 
 ### 4. ⏭️ Planned but prompt reference deferred
 
-| Feature | Plan has moved | Notes |
+Plans below were **relocated** (not deleted) when `plans/new/` was reorganized into topic dirs.
+
+| Feature | Plan location (current) | Notes |
 |---|---|---|
-| Background subagents | Plan was in `plans/new/` (deleted/moved) | `agent-prompt-background-*.md` references this |
-| Plan mode enhancement | `feat-plan-mode-plan.md` was in `plans/new/` | `agent-prompt-plan-mode-enhanced.md` |
-| Batch/orchestration | `feat-master-delegation-workflow.md` was in `plans/new/` | `agent-prompt-batch-slash-command.md` |
+| Background subagents | `plans/subagents/feat-background-subagents-plan.md` | `agent-prompt-background-*.md` references this |
+| Plan mode enhancement | `plans/cli/feat-plan-mode-plan.md` | `agent-prompt-plan-mode-enhanced.md` |
+| Batch/orchestration | `plans/delegation/feat-master-delegation-workflow.md` | `agent-prompt-batch-slash-command.md` |
 
 ---
 
 ## Status summary
 
-| Category | Total | ✅ Adaptable now | 🔧 Needs planned feature | 🏗️ Needs new infra | ⏭️ Deferred |
+Recomputed during the 2026-06-23 reconciliation; each row sums to its category total.
+
+| Category | Total | ✅ Wired now | 🔧 Needs planned feature | 🏗️ Needs new infra | ⏭️ Deferred |
 |---|---|---|---|---|---|
-| System prompts | 40 | 28 | 8 | 4 | 0 |
-| Tool descriptions | 85 | 83 | 1 | 1 | 0 |
+| System prompts | 40 | 38 | 0 | 2 | 0 |
+| Tool descriptions | 85 | 84 | 0 | 1 | 0 |
 | System reminders | 15 | 12 | 1 | 2 | 0 |
 | Agent prompts | 41 | 10 | 0 | 12 | 19 |
 | Skills | 13 | 13 | 0 | 0 | 0 |
 | Data | 3 | 3 | 0 | 0 | 0 |
-| **Total** | **197** | **149** | **10** | **19** | **19** |
+| **Total** | **197** | **160** | **1** | **17** | **19** |
 
-149 of 197 files are directly usable with existing deepcoder infrastructure.
-10 need features already planned. 19 need new infrastructure (12 worth building, 7 not in scope). 19 are deferred (plans moved elsewhere).
+160 of 197 files are now usable with existing deepcoder infrastructure (up from 149 —
+`/learn`, `/insights` (9 files), `/skillify`, LSP, and automatic Flash→Pro model
+escalation shipped). Only 1 awaits a planned feature (the token-usage reminder UI).
+17 need new infrastructure (4 of those now PARTIAL: code-review, `/batch`,
+session-search, coordinator mode). 19 remain deferred (plans relocated into topic
+dirs, not deleted).
 
 ## Files
 

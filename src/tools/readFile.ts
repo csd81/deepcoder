@@ -29,7 +29,7 @@ Usage:
 - If unsure of the path, use glob to find files by pattern.
 - Call this tool in parallel when you need multiple files.
 - Avoid tiny 30-line slices — read a larger window in one call.
-- This tool cannot read binary files or files over 1 MB.`,
+- This tool cannot read binary files or files over 1 MB, and cannot read directories — use list_dir for those. An empty file returns a notice, not content.`,
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("read_file", schema, raw);

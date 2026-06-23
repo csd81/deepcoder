@@ -49,7 +49,7 @@ export function createWebSearchTool(options: CreateWebSearchOptions): Tool {
   const tool: Tool = {
     name: "web_search",
     kind: "read-only",
-    description: "Search the web for information.",
+    description: "Search the web for information. Include the current year/date in queries when seeking recent information.",
     schema,
 
     build(rawArgs: unknown): ToolInvocation {

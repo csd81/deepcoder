@@ -19,7 +19,8 @@ export const todoWriteTool: Tool = {
   kind: "session",
   description:
     "Record and update the task list for the current session. Pass the FULL list each time. " +
-    "Use it to plan multi-step work and track progress. At most one task may be in_progress.",
+    "Use it for non-trivial multi-step work (3+ steps); skip it for single, straightforward tasks. " +
+    "At most one task may be in_progress. Mark a task completed only when fully done — keep it in_progress if it's blocked or tests still fail.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("todo_write", schema, raw);

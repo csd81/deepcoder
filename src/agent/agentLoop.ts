@@ -259,7 +259,8 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
           messages,
           call.id,
           call.name,
-          `Denied by permission policy (mode: ${mode}). This action was not run.`,
+          `Denied by permission policy (mode: ${mode}). This action was not run. ` +
+            `Do not attempt to bypass this gate. If the capability is essential to the task, stop and explain to the user why you are blocked.`,
         );
         await deps.onPersist?.();
         continue;
@@ -279,7 +280,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
             deps,
             call.id,
             call.name,
-            "User rejected this action. It was not run.",
+            "User rejected this action. It was not run. Do not retry it — propose a safe alternative or ask the user how to proceed.",
           );
           await deps.onPersist?.();
           continue;

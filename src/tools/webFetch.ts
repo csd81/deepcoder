@@ -54,7 +54,9 @@ export function createWebFetchTool(options: CreateWebFetchOptions): Tool {
   const tool: Tool = {
     name: "web_fetch",
     kind: "read-only",
-    description: "Fetch a URL and return its text content (redacted).",
+    description:
+      "Fetch a URL and return its text content (redacted). Fails on authenticated or private URLs; " +
+      "for GitHub URLs prefer the gh CLI via run_bash.",
     schema,
 
     build(rawArgs: unknown): ToolInvocation {

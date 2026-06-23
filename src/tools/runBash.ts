@@ -17,10 +17,11 @@ export const runBashTool: Tool = {
     `Run a bash command from the workspace root. Do NOT use for file operations (read, write, edit) — use the dedicated tools instead.
 
 Usage:
-- The command runs from the workspace root. Use workdir instead of cd <dir> && <cmd>.
+- The command runs from the workspace root. Use workdir instead of cd <dir> && <cmd>; never prepend cd to git commands (the compound can trigger a permission prompt).
 - Dangerous commands (rm, sudo, chmod, redirects outside workspace) may be blocked by the permission policy.
-- For git operations: stage explicit paths, never git add -A. Review changes before committing.
+- For git operations: stage explicit paths, never git add -A. Review changes before committing. Prefer a new commit over amending; never skip hooks (--no-verify) or signing, and avoid destructive ops (reset --hard, push --force) unless the user asks.
 - Prefer read_file/grep over cat/grep in bash — the tool versions are more reliable.
+- Quote file paths that contain spaces. For independent commands, issue several run_bash calls in one message instead of chaining with &&.
 - Combined stdout/stderr are returned.`,
   schema,
   build(raw): ToolInvocation {

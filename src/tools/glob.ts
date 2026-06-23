@@ -19,7 +19,8 @@ export const globTool: Tool = {
   name: "glob",
   kind: "read-only",
   description:
-    "Find files matching a glob pattern (supports *, **, ?). Returns matching paths.",
+    "Find files matching a glob pattern (supports *, **, ?). Returns matching paths. " +
+    "To search file contents (not names) use grep; for open-ended searches needing several glob/grep rounds, use delegate.",
   schema,
   build(raw): ToolInvocation {
     const args = parseArgs("glob", schema, raw);

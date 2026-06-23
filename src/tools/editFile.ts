@@ -27,6 +27,7 @@ Usage:
 - edit FAILS if old_string is not found. Copy the exact text from the read output.
 - edit FAILS if old_string matches multiple times. Either provide more context to make it unique, or use replace_all: true.
 - old_string must match the ACTUAL file content, not the read_file line-numbered output (strip line prefixes).
+- Keep old_string minimal — just enough lines to be unique; excess surrounding context wastes tokens.
 - Use replace_all for renaming a symbol across the file.`,
   schema,
   build(raw): ToolInvocation {
