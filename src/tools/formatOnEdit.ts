@@ -45,9 +45,8 @@ export async function formatFile(
 ): Promise<FormatFileResult> {
   const command = `${config.command} ${shellQuote(file)}`;
 
-  // Classifier gate: only allow "allow" commands. "ask" or "deny" are refused.
   if (classifyCommand(command) !== "allow") {
-    return { formatted: false, error: "not allowed by command classifier" };
+    return { formatted: false, error: "denied by command classifier" };
   }
 
   // Apply sandbox wrapping if configured.

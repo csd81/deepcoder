@@ -84,7 +84,7 @@ test("formatFile with exit 1 returns formatted: false + error", async () => {
   try {
     await writeFile(path.join(dir, "test.txt"), "hello", "utf8");
     const result = await formatFile("test.txt", {
-      command: "ls /doesnotexist", // always exits 1/2
+      command: "ls doesnotexist", // always exits 1/2
     }, {
       workspaceRoot: dir,
       signal: new AbortController().signal,
