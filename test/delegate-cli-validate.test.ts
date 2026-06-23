@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Command } from "commander";
 // [DCV] red anchor on baseline: the module does not exist yet.
-import { runDelegateValidate, registerDelegateCommand } from "../src/cli/delegateCli.js";
+import {
+  runDelegateValidate,
+  runDelegateRun,
+  runDelegateApply,
+  registerDelegateCommand,
+} from "../src/cli/delegateCli.js";
 import type { WorkerValidation } from "../src/delegate/types.js";
 
 function fakeValidation(applyable: boolean): WorkerValidation {
@@ -50,13 +55,47 @@ test("[DCV-3] runDelegateValidate exits 2 when the plan is not found", async () 
   assert.equal(res.results.length, 0);
 });
 
-// [DCV-4] WIRED: registerDelegateCommand adds a `delegate validate` subcommand to a
+// [DCV-4] WIRED: registerDelegateCommand adds the headless subcommands to a
 // commander program (anchors the CLI wiring; main.ts calls this).
-test("[DCV-4] registerDelegateCommand registers `delegate validate`", () => {
+test("[DCV-4] registerDelegateCommand registers validate/run/apply", () => {
   const program = new Command();
   registerDelegateCommand(program, { root: "/root" });
   const delegate = program.commands.find((c) => c.name() === "delegate");
   assert.ok(delegate, "delegate command registered");
-  const validate = delegate!.commands.find((c) => c.name() === "validate");
-  assert.ok(validate, "delegate validate subcommand registered");
+  for (const sub of ["validate", "run", "apply"]) {
+    assert.ok(delegate!.commands.find((c) => c.name() === sub), `delegate ${sub} registered`);
+  }
+});
+
+// [DCV-5] run: exit 0 only when every ran worker passed and there are no conflicts.
+test("[DCV-5] runDelegateRun exits non-zero on a failed worker or a conflict", async () => {
+  const plan = { id: "p1", workers: [{ id: "w1" }] };
+  const pass = await runDelegateRun("/root", "p1", undefined, {}, {
+    loadPlan: async () => plan as any,
+    runRunnable: async () => ({ ran: [{ workerId: "w1", passed: true, changedFiles: ["src/a.ts"] }], skipped: [], conflicts: [] }),
+  });
+  assert.equal(pass.exitCode, 0);
+
+  const fail = await runDelegateRun("/root", "p1", undefined, {}, {
+    loadPlan: async () => plan as any,
+    runRunnable: async () => ({ ran: [{ workerId: "w1", passed: false, changedFiles: [] }], skipped: [], conflicts: [] }),
+  });
+  assert.equal(fail.exitCode, 1);
+});
+
+// [DCV-6] run: unknown plan → exit 2.
+test("[DCV-6] runDelegateRun exits 2 when the plan is missing", async () => {
+  const res = await runDelegateRun("/root", "nope", undefined, {}, {
+    loadPlan: async () => null,
+    runRunnable: async () => ({ ran: [], skipped: [], conflicts: [] }),
+  });
+  assert.equal(res.exitCode, 2);
+});
+
+// [DCV-7] apply: exit 0 iff applyWorker reports ok.
+test("[DCV-7] runDelegateApply maps applyWorker.ok to the exit code", async () => {
+  const ok = await runDelegateApply("/root", "p1", "w1", {}, { apply: async () => ({ ok: true, message: "applied" }) });
+  assert.equal(ok.exitCode, 0);
+  const bad = await runDelegateApply("/root", "p1", "w1", {}, { apply: async () => ({ ok: false, message: "not applyable" }) });
+  assert.equal(bad.exitCode, 1);
 });
