@@ -15,6 +15,8 @@ import { loadAndValidateWorker } from "../delegate/validation.js";
 import { loadPlan } from "../delegate/store.js";
 import { runRunnable, runRunnableConcurrent, type OrchestrationResult } from "../delegate/orchestrator.js";
 import { applyWorker, type ApplyResult } from "../delegate/apply.js";
+import { buildPlan } from "../delegate/planner.js";
+import { savePlan } from "../delegate/store.js";
 import { loadConfig } from "../config/config.js";
 import type { DelegationPlan, WorkerValidation } from "../delegate/types.js";
 
@@ -64,6 +66,55 @@ export async function runDelegateValidate(
 
   const allApplyable = results.every((r) => r.validation.applyable);
   return { exitCode: allApplyable ? 0 : 1, results };
+}
+
+/* ------------------------------------------------------------------ */
+/*  delegate plan — headless plan creation (heuristic, no model)        */
+/* ------------------------------------------------------------------ */
+
+export interface DelegatePlanResult {
+  exitCode: number;
+  planId: string | null;
+}
+
+interface PlanDeps {
+  buildPlan?: typeof buildPlan;
+  savePlan?: (root: string, plan: DelegationPlan) => Promise<void>;
+}
+
+/**
+ * Build a DelegationPlan from a free-text task and persist it, returning the new
+ * plan id. Uses the deterministic heuristic planner (no model), so the headless
+ * chain `delegate plan → run → validate → apply` needs no live provider to wire
+ * the plan. Checks default to the configured set so workers get a `checkName`.
+ */
+export async function runDelegatePlan(
+  root: string,
+  task: string,
+  opts: { maxWorkers?: number; tdd?: boolean; acceptanceFirst?: boolean } = {},
+  deps: PlanDeps = {},
+): Promise<DelegatePlanResult> {
+  if (!task.trim()) return { exitCode: 2, planId: null };
+  const buildPlanFn = deps.buildPlan ?? buildPlan;
+  const savePlanFn = deps.savePlan ?? savePlan;
+
+  let checkNames: string[] = [];
+  if (!deps.buildPlan) {
+    try {
+      checkNames = Object.keys(loadConfig().checks ?? {});
+    } catch {
+      checkNames = [];
+    }
+  }
+
+  const plan = buildPlanFn(task, {
+    checkNames,
+    maxWorkers: opts.maxWorkers,
+    tdd: opts.tdd,
+    acceptanceFirst: opts.acceptanceFirst,
+  });
+  await savePlanFn(root, plan);
+  return { exitCode: 0, planId: plan.id };
 }
 
 /* ------------------------------------------------------------------ */
@@ -210,6 +261,26 @@ export function registerDelegateCommand(program: Command, deps: { root?: string 
         process.stdout.write(formatValidateSummary(res.results) + "\n");
       }
       process.exit(res.exitCode);
+    });
+
+  delegate
+    .command("plan <task...>")
+    .description("build + persist a DelegationPlan from a task (heuristic, no model); prints the plan id")
+    .option("--max-workers <n>", "max worker tasks (1-5, default 5)", (v) => parseInt(v, 10))
+    .option("--tdd", "stamp every worker TDD-required")
+    .option("--acceptance-first", "TDD + require a production change (reject test-only fixes)")
+    .action(async (taskParts: string[], o: { maxWorkers?: number; tdd?: boolean; acceptanceFirst?: boolean }) => {
+      const res = await runDelegatePlan(root, taskParts.join(" "), {
+        maxWorkers: o.maxWorkers,
+        tdd: o.tdd,
+        acceptanceFirst: o.acceptanceFirst,
+      });
+      if (res.exitCode !== 0) {
+        process.stderr.write("delegate plan: empty task\n");
+        process.exit(res.exitCode);
+      }
+      process.stdout.write(`${res.planId}\n`);
+      process.exit(0);
     });
 
   delegate

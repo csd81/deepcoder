@@ -6,6 +6,7 @@ import {
   runDelegateValidate,
   runDelegateRun,
   runDelegateApply,
+  runDelegatePlan,
   registerDelegateCommand,
 } from "../src/cli/delegateCli.js";
 import type { WorkerValidation } from "../src/delegate/types.js";
@@ -62,7 +63,7 @@ test("[DCV-4] registerDelegateCommand registers validate/run/apply", () => {
   registerDelegateCommand(program, { root: "/root" });
   const delegate = program.commands.find((c) => c.name() === "delegate");
   assert.ok(delegate, "delegate command registered");
-  for (const sub of ["validate", "run", "apply"]) {
+  for (const sub of ["plan", "validate", "run", "apply"]) {
     assert.ok(delegate!.commands.find((c) => c.name() === sub), `delegate ${sub} registered`);
   }
 });
@@ -90,6 +91,29 @@ test("[DCV-6] runDelegateRun exits 2 when the plan is missing", async () => {
     runRunnable: async () => ({ ran: [], skipped: [], conflicts: [] }),
   });
   assert.equal(res.exitCode, 2);
+});
+
+// [DCV-8] plan: builds a plan from a task and persists it, returning its id.
+test("[DCV-8] runDelegatePlan builds + saves a plan and returns its id", async () => {
+  let saved: any = null;
+  const res = await runDelegatePlan("/root", "fix the parser", {}, {
+    buildPlan: () => ({ id: "p-123", workers: [{ id: "w1" }] }) as any,
+    savePlan: async (_root, plan) => { saved = plan; },
+  });
+  assert.equal(res.exitCode, 0);
+  assert.equal(res.planId, "p-123");
+  assert.equal(saved?.id, "p-123", "savePlan received the built plan");
+});
+
+// [DCV-9] plan: empty task → exit 2, nothing saved.
+test("[DCV-9] runDelegatePlan rejects an empty task", async () => {
+  let savedCount = 0;
+  const res = await runDelegatePlan("/root", "   ", {}, {
+    buildPlan: () => ({ id: "x", workers: [] }) as any,
+    savePlan: async () => { savedCount++; },
+  });
+  assert.equal(res.exitCode, 2);
+  assert.equal(savedCount, 0);
 });
 
 // [DCV-7] apply: exit 0 iff applyWorker reports ok.
