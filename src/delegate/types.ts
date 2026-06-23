@@ -533,4 +533,66 @@ export interface WorkerValidationEvidence {
   path?: string;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Coordinator Mode Types                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Condensed state of a single coordinator round, presented to the coordinator
+ * model turn. Redacted — no raw diffs, no secrets, bounded length.
+ */
+export interface RoundDigest {
+  round: number;
+  workers: {
+    id: string;
+    status: string;
+    passed: boolean;
+    changedFiles: string[];
+    checkSummary?: string;
+  }[];
+  conflicts: { a: string; b: string; paths: string[] }[];
+  appliedThisRound: string[];
+  blockedThisRound: string[];
+  skippedThisRound: string[];
+}
+
+/**
+ * Decision emitted by the coordinator model turn between rounds.
+ * - `nextWorkers` are appended to the plan for future rounds.
+ * - `integrate` lists worker IDs whose patches should be applied this round.
+ * - `done` signals early termination.
+ */
+export interface CoordinatorDecision {
+  nextWorkers: WorkerTask[];
+  integrate: string[];
+  done?: boolean;
+  coordinatorNote?: string;
+}
+
+/**
+ * Tracks metrics and results for a single coordinator round.
+ */
+export interface CoordinatorRound {
+  round: number;
+  plannedWorkerIds: string[];
+  ran: { workerId: string; passed: boolean; changedFiles: string[] }[];
+  integrated: string[];
+  deferred: string[];
+  coordinatorNote?: string;
+}
+
+/**
+ * Accumulated state of a coordinator session across all rounds.
+ */
+export interface CoordinatorSession {
+  planId: string;
+  strategy: "coordinate";
+  startedAt: string;
+  finishedAt?: string;
+  rounds: CoordinatorRound[];
+  appliedWorkers: string[];
+  blockedWorkers: string[];
+  summary: string;
+}
+
 

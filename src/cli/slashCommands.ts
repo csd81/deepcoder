@@ -103,6 +103,7 @@ import { readTddRecord } from "../delegate/tddArtifacts.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
 import { autoApplyIfEligible } from "../delegate/autoApply.js";
 import { runAutopilot, readAutopilotArtifact } from "../delegate/autopilot.js";
+import { runCoordinator } from "../delegate/coordinator.js";
 import { classifyTask, routeFor } from "../delegate/taskClassifier.js";
 import { runRunnable, runRunnableConcurrent, detectFileConflicts } from "../delegate/orchestrator.js";
 import { getDelegationReviewOverview, getWorkerReviewDetail, previewApplyGates } from "../delegate/reviewBrowser.js";
@@ -1696,6 +1697,10 @@ ${desc}
       return { consumed: true };
     }
 
+    case "coordinate":
+      // Alias: /coordinate <task> → /delegate coordinate <task>
+      return await handleSlashCommand(`/delegate coordinate ${arg}`, session, save, runAgent);
+
     case "delegate": {
       const [sub, ...subArgs] = arg.split(/\s+/);
       const subArg = subArgs.join(" ").trim();
@@ -2716,6 +2721,107 @@ ${desc}
         } catch (err) {
           process.removeListener("SIGINT", onSigint);
           console.log(chalk.red(`Autopilot error: ${(err as Error).message}`));
+        }
+        return { consumed: true };
+      }
+
+      if (sub === "coordinate") {
+        const isDryRun = subArgs.includes("--dry-run");
+        const hasAutoApply = subArgs.includes("--auto-apply");
+        const mcIdx = subArgs.indexOf("--max-concurrency");
+        const mrIdx = subArgs.indexOf("--max-rounds");
+        const rawMc = mcIdx !== -1 ? Number(subArgs[mcIdx + 1]) : NaN;
+        const rawMr = mrIdx !== -1 ? Number(subArgs[mrIdx + 1]) : NaN;
+
+        // Parse task from remaining args (strip flags).
+        const flagTokens = new Set(["--dry-run", "--auto-apply", "--max-concurrency", "--max-rounds"]);
+        const taskTokens = subArgs.filter((a, i) => {
+          if (flagTokens.has(a)) return false;
+          if (mcIdx !== -1 && i === mcIdx + 1) return false;
+          if (mrIdx !== -1 && i === mrIdx + 1) return false;
+          return true;
+        });
+        const task = taskTokens.join(" ").trim();
+
+        if (!task) {
+          console.log(chalk.dim("usage: /delegate coordinate [--dry-run] [--auto-apply] [--max-rounds N] [--max-concurrency N] <task>"));
+          return { consumed: true };
+        }
+
+        // Nested delegation guard.
+        const depth = delegateDepthFromEnv(process.env);
+        if (depth > 0) {
+          console.log(chalk.red(`Refusing nested delegation: this process is itself a delegated worker (depth ${depth}).`));
+          return { consumed: true };
+        }
+
+        console.log(chalk.yellow("\nBuilding coordinator seed plan…"));
+        const plan = buildPlan(task, {
+          checkNames: Object.keys(config.checks),
+          acceptanceFirst: false,
+        });
+
+        const maxConcurrency = Number.isFinite(rawMc) ? Math.max(1, Math.min(8, Math.trunc(rawMc))) : 2;
+        const maxRounds = Number.isFinite(rawMr) ? Math.max(1, Math.min(10, Math.trunc(rawMr))) : 3;
+
+        if (isDryRun) {
+          console.log(chalk.bold("\nDry-Run Coordinator Plan:"));
+          console.log(chalk.dim(`  id: ${plan.id}`));
+          console.log(chalk.dim(`  workers: ${plan.workers.length}`));
+          for (const w of plan.workers) {
+            const deps = w.dependsOn.length ? ` (after ${w.dependsOn.join(", ")})` : "";
+            console.log(`    ${chalk.cyan(w.id)}: ${w.title.slice(0, 60)}${deps}`);
+          }
+          return { consumed: true };
+        }
+
+        if (hasAutoApply) {
+          console.log(chalk.yellow("⚠  --auto-apply is set. Workers in integrate will be applied with gated review."));
+        }
+
+        console.log(chalk.yellow(`Running coordinator mode…`));
+        console.log(chalk.dim(`  rounds: ${maxRounds} · maxConcurrency: ${maxConcurrency} · autoApply: ${hasAutoApply}`));
+
+        const controller = new AbortController();
+        const onSigint = () => controller.abort();
+        process.once("SIGINT", onSigint);
+        try {
+          const result = await runCoordinator({
+            realRoot: root,
+            plan,
+            maxRounds,
+            maxConcurrency,
+            autoApply: hasAutoApply,
+            signal: controller.signal,
+            seams: undefined,
+            qualityGateRequired: config.delegate?.qualityGate?.enabled ?? false,
+            confirm: hasAutoApply ? async (prompt: string) => {
+              const { confirm: ask } = await import("../permissions/prompt.js");
+              return await ask(prompt);
+            } : undefined,
+          });
+          process.removeListener("SIGINT", onSigint);
+
+          console.log("");
+          if (result.status === "done") {
+            console.log(chalk.green(`✓ Coordinator done. ${result.summary}`));
+          } else if (result.status === "completed") {
+            console.log(chalk.green(`✓ Coordinator completed. ${result.summary}`));
+          } else if (result.status === "blocked") {
+            console.log(chalk.yellow(`△ Coordinator blocked. ${result.summary}`));
+          } else {
+            console.log(chalk.red(`✗ Coordinator failed. ${result.summary}`));
+          }
+          if (result.appliedWorkers.length > 0) {
+            console.log(chalk.green(`  applied: ${result.appliedWorkers.join(", ")}`));
+          }
+          if (result.blockedWorkers.length > 0) {
+            console.log(chalk.yellow(`  blocked: ${result.blockedWorkers.join(", ")}`));
+          }
+          console.log(chalk.dim(`Artifact: .deepcoder/delegations/${result.planId}/coordinator.json`));
+        } catch (err) {
+          process.removeListener("SIGINT", onSigint);
+          console.log(chalk.red(`Coordinator error: ${(err as Error).message}`));
         }
         return { consumed: true };
       }
