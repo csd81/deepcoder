@@ -48,9 +48,11 @@ import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
+import { runPlanFlow } from "../subagents/planFlow.js";
 import { detectTestFramework, detectPkgManager, detectLinter, detectLanguage, buildStarterMd, type ProjectProfile } from "./initProject.js";
 import { buildDeterministicPlan } from "../context/contextPlanner.js";
 import { renderExplorerBrief } from "../context/explorerBrief.js";
+import { renderPlanBrief } from "../context/planBrief.js";
 import { activityRegistry, runPsSlash, runStopSlash } from "../runtime/activityRegistry.js";
 import { runCheck, CheckRefusedError } from "../checks/runner.js";
 import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
@@ -600,7 +602,7 @@ export async function handleSlashCommand(
       await new SessionStore(config.workspaceRoot, newId).save({
         provider: s.provider ?? "", baseUrl: s.baseUrl ?? "", model: s.model, mode: s.mode,
         messages: s.messages, todos: s.todos ?? [], readTracker: new Set(s.readTracker ?? []),
-        writeTracker: new Set(s.writeTracker ?? []), pendingCheckpoint: [], reviews: [], briefs: [],
+        writeTracker: new Set(s.writeTracker ?? []), pendingCheckpoint: [], reviews: [], briefs: [], plans: [],
         activatedSkills: [], telemetry: s.telemetry, webTrace: s.webTrace, goal: s.goal, title: s.title,
       });
       console.log(chalk.dim(`Imported as ${newId}. Use --resume ${newId} to open it.`));
@@ -727,6 +729,47 @@ export async function handleSlashCommand(
         console.log(chalk.dim("  (advisory — verify by reading files before editing)"));
         // Save to quarantined session metadata — NEVER into model-visible history.
         session.briefs.push({ createdAt: new Date().toISOString(), brief, trace });
+        await save();
+      } finally {
+        process.removeListener("SIGINT", onSigint);
+      }
+      return { consumed: true };
+    }
+
+    case "architect": {
+      if (!arg) {
+        console.log(
+          chalk.dim(
+            "usage: /architect <task>  — explore the repo, then produce a dependency-aware implementation plan (read-only)",
+          ),
+        );
+        return { consumed: true };
+      }
+      const controller = new AbortController();
+      const onSigint = () => controller.abort();
+      process.once("SIGINT", onSigint);
+      console.log(chalk.dim("Running architect subagent (explore → plan, read-only)…"));
+      try {
+        const { plan, planPath, explorerTrace, plannerTrace } = await runPlanFlow(arg, {
+          workspaceRoot: session.config.workspaceRoot,
+          provider: session.provider,
+          parentModel: session.config.model,
+          subagentModel: session.config.subagentModel,
+          modelRouter: session.modelRouter,
+          providerPool: session.providerPool,
+          contextBudgetTokens: session.config.contextBudgetTokens,
+          compactAt: session.config.compactAt,
+          signal: controller.signal,
+        });
+        console.log("\n" + chalk.bold("Implementation plan:"));
+        console.log(renderPlanBrief(plan));
+        const toolCalls = explorerTrace.toolsCalled.length + plannerTrace.toolsCalled.length;
+        const turns = explorerTrace.turns + plannerTrace.turns;
+        console.log(chalk.dim(`  · ${toolCalls} tool calls · ${turns} turns · ${plannerTrace.model}`));
+        if (planPath) console.log(chalk.dim(`  · saved to ${planPath}`));
+        console.log(chalk.dim("  (advisory — verify by reading files before editing)"));
+        // Save to quarantined session metadata — NEVER into model-visible history.
+        session.plans.push({ createdAt: new Date().toISOString(), plan, trace: plannerTrace, planPath: planPath || undefined });
         await save();
       } finally {
         process.removeListener("SIGINT", onSigint);

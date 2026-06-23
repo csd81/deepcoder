@@ -38,6 +38,7 @@ import type { LspRuntime } from "../lsp/types.js";
 import { CheckpointRecorder, pruneCheckpoints } from "../session/checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
+import type { PlanRunRecord } from "../context/planBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
 import { buildDelegateRuntime, attachFileWatcher } from "../runtime/sessionFactory.js";
@@ -145,6 +146,8 @@ export interface Session {
   reviews: SubagentRunRecord[];
   /** Explorer brief records — quarantined metadata, NEVER sent to the model. */
   briefs: BriefRunRecord[];
+  /** Architect plan records — quarantined metadata, NEVER sent to the model. */
+  plans: PlanRunRecord[];
   activatedSkills: import("../skills/types.js").ActivatedSkillRecord[];
   /** Phase 10E — auditable web trace (search/fetch citations). Absent until first web call. */
   webTrace?: WebTraceRecord[];
@@ -375,6 +378,7 @@ function snapshot(session: Session): SessionSnapshot {
     pendingCheckpoint: session.recorder?.serialize() ?? [],
     reviews: session.reviews,
     briefs: session.briefs,
+    plans: session.plans,
     activatedSkills: session.activatedSkills,
     webTrace: session.webTrace,
     title: session.title,
