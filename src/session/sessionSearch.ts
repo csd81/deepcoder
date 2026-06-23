@@ -75,7 +75,7 @@ export function scoreSession(
 
   return {
     id: s.id,
-    title: s.title,
+    title: s.title ? redactSecrets(s.title) : s.title,
     updatedAt: s.updatedAt,
     score,
     snippet,
@@ -98,18 +98,38 @@ export async function searchSessions(
     return [];
   }
 
+  let resolvedRoot: string;
+  try {
+    resolvedRoot = await fs.realpath(workspaceRoot);
+  } catch {
+    return [];
+  }
+
   const limit = opts?.limit ?? 20;
   const hits: SessionHit[] = [];
 
   for (const f of files) {
+    const fullPath = path.join(dir, f);
+    let resolved: string;
+    try {
+      resolved = await fs.realpath(fullPath);
+    } catch {
+      continue; // broken symlink or missing file
+    }
+    if (!resolved.startsWith(resolvedRoot + path.sep) && resolved !== resolvedRoot) {
+      continue; // symlink escape
+    }
+
     let s: PersistedSession;
     try {
-      s = JSON.parse(await fs.readFile(path.join(dir, f), "utf8")) as PersistedSession;
+      s = JSON.parse(await fs.readFile(fullPath, "utf8")) as PersistedSession;
     } catch {
       continue; // skip corrupt files
     }
 
     if (s.archived && !opts?.includeArchived) continue;
+
+    if (!Array.isArray(s.messages)) continue;
 
     const hit = scoreSession(s, query);
     if (hit) hits.push(hit);
