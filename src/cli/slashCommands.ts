@@ -96,6 +96,7 @@ import { readTddRecord } from "../delegate/tddArtifacts.js";
 import { applyWorker, discardWorker } from "../delegate/apply.js";
 import { autoApplyIfEligible } from "../delegate/autoApply.js";
 import { runAutopilot, readAutopilotArtifact } from "../delegate/autopilot.js";
+import { classifyTask, routeFor } from "../delegate/taskClassifier.js";
 import { runRunnable, runRunnableConcurrent, detectFileConflicts } from "../delegate/orchestrator.js";
 import { getDelegationReviewOverview, getWorkerReviewDetail, previewApplyGates } from "../delegate/reviewBrowser.js";
 import { renderReviewOverview, renderWorkerReview, renderPatchStat, renderGatePreview } from "../delegate/reviewRender.js";
@@ -1420,6 +1421,30 @@ export async function handleSlashCommand(
       // built without a delegate section degrades to off rather than crashing.
       const acceptanceFirstEnabled = config.delegate?.acceptanceFirst?.enabled ?? false;
       const root = config.workspaceRoot;
+
+      // `/delegate full <task>` — classify the task, then RE-DISPATCH to the
+      // existing command best suited to it. Adds routing only: no new
+      // orchestration, review, apply, or merge (the model won't self-route to
+      // delegation, so this is the missing front-end). Mutating categories go to
+      // `/delegate autopilot`, which stays verify-first + human-gated by default.
+      if (sub === "full") {
+        if (!subArg) {
+          console.log(chalk.dim("usage: /delegate full <task>  — classify the task and route it to the right strategy"));
+          return { consumed: true };
+        }
+        console.log(chalk.bold("\nAnalyzing task…"));
+        const classified = await classifyTask(subArg, {
+          provider: session.provider,
+          model: session.config.subagentModel ?? session.config.model,
+        });
+        console.log(chalk.dim(`Category: ${classified.category} — ${classified.reason}`));
+        if (classified.suggestedFiles?.length) {
+          console.log(chalk.dim(`Files: ${classified.suggestedFiles.join(", ")}`));
+        }
+        const route = routeFor(classified.category, subArg);
+        console.log(chalk.dim(`→ routing to ${route.command.split(" ").slice(0, 2).join(" ")} …`));
+        return await handleSlashCommand(route.command, session, save, runAgent);
+      }
 
       if (sub === "plan") {
         if (!subArg) {

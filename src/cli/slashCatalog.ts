@@ -89,7 +89,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "tests", args: "[target|plan|run-targeted]", description: "Automatic minimal test targeting", category: "checks" },
 
   // delegate
-  { name: "delegate", args: "[plan|run|status|review|review-ui|apply|discard]", description: "Plan and run delegated workers", category: "delegate" },
+  { name: "delegate", args: "[full|plan|run|status|review|review-ui|apply|discard|autopilot]", description: "Plan and run delegated workers (full = classify + route)", category: "delegate" },
   { name: "review", args: "<scope>", description: "Run a read-only reviewer subagent over files/topic", category: "delegate" },
   { name: "research", args: "<question>", description: "Run a read-only researcher subagent to explain the codebase", category: "delegate" },
 
