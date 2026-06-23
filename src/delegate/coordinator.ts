@@ -249,7 +249,7 @@ export async function runCoordinator(input: CoordinatorInput): Promise<Coordinat
         provider: "",
         maxConcurrency,
         stopOnFirstFailure: true,
-      } as Record<string, unknown>);
+      });
     } catch (err) {
       return {
         planId: plan.id,

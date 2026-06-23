@@ -143,16 +143,28 @@ await t.test("[SLICE-coordinator-run] runCoordinator is exported", () => {
   assert.equal(typeof runCoordinator, "function", "runCoordinator must be a function");
 });
 
-await t.test("[SLICE-slash-coordinate] /delegate coordinate handles command", async () => {
-  const mockSession: any = { config: { workspaceRoot: "/mock" } };
+await t.test("[SLICE-slash-coordinate] /delegate coordinate is dispatched by the slash switch", async () => {
+  // Correct signature: handleSlashCommand(input, session, save, runAgent?).
+  // An EMPTY task makes the coordinate case print its OWN usage line + return
+  // consumed:true BEFORE building a plan or spawning any worker. We assert on the
+  // coordinate-specific usage text (`--max-rounds`) rather than just `consumed`,
+  // because the /delegate case consumes ANY subcommand generically — only the
+  // wired coordinate case emits that usage, so this fails if the case is removed.
+  const session: any = { config: { workspaceRoot: "/mock", checks: {} } };
+  const out: string[] = [];
+  const orig = console.log;
+  console.log = (...a: unknown[]) => { out.push(a.map(String).join(" ")); };
+  let res;
   try {
-    const res = await handleSlashCommand(mockSession, "/delegate coordinate test");
-    assert.ok(res.consumed, "/delegate coordinate should be consumed");
-  } catch (e: any) {
-    if (e.message.includes("not implemented") || e.message.includes("module not found") || e.code === "ERR_MODULE_NOT_FOUND") {
-      throw e;
-    }
+    res = await handleSlashCommand("/delegate coordinate", session, async () => {});
+  } finally {
+    console.log = orig;
   }
+  assert.ok(res.consumed, "/delegate coordinate must be consumed by the slash switch");
+  assert.ok(
+    out.join("\n").includes("--max-rounds"),
+    "coordinate-specific usage proves the `case \"coordinate\"` is actually wired",
+  );
 });
 
 await t.test("[coordinator] multi-round: round 1 runs seed workers, round 2 runs only newly added workers", async () => {
