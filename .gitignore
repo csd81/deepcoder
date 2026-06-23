@@ -17,3 +17,6 @@ __pycache__/
 .DS_Store
 # swebench writes build logs here
 logs/
+
+# Accidental source archive — never commit
+src.zip
