@@ -53,6 +53,18 @@ export function parseFrontmatter(content: string): { frontmatter: SkillFrontmatt
           .map((s) => s.trim().replace(/^["']|["']$/g, ""))
           .filter(Boolean);
         break;
+      case "role":
+        fm.role = val;
+        break;
+      case "maxTurns":
+        fm.maxTurns = parseInt(val, 10);
+        break;
+      case "contextBudgetTokens":
+        fm.contextBudgetTokens = parseInt(val, 10);
+        break;
+      case "webOptIn":
+        fm.webOptIn = val === "true";
+        break;
     }
   }
   return { frontmatter: fm, body: m[2] ?? "" };

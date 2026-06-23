@@ -1289,6 +1289,95 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "agent-create": {
+      const match = /^([^\s]+)\s+(.+)$/.exec(arg.trim());
+      if (!match) {
+        console.log(chalk.red("Usage: /agent-create <name> <description>"));
+        return { consumed: true };
+      }
+      const name = match[1];
+      const desc = match[2];
+      try {
+        assertSafeId(name);
+      } catch (err) {
+        console.log(chalk.red(`Invalid name: ${(err as Error).message}`));
+        return { consumed: true };
+      }
+
+      console.log(chalk.dim(`Drafting subagent profile "${name}"...`));
+      
+      const architectPrompt = `You are an AI agent architect. Translate user requirements into agent specifications.
+- Extract core intent: identify fundamental purpose, responsibilities, success criteria.
+- Design expert persona: create compelling domain expert identity that guides decision-making.
+- Architect comprehensive instructions: behavioral boundaries, methodologies, edge cases, output format expectations.
+- Create identifier: lowercase, hyphens, 2-4 words, descriptive.
+- Output must be valid JSON: {"identifier": "...", "whenToUse": "Use this agent when...", "systemPrompt": "..."}.
+- Include example usage in whenToUse showing the Agent tool being triggered.
+
+User description:
+${desc}
+`;
+
+      const res = await session.provider.chat({
+        messages: [{ role: "user", content: architectPrompt }],
+        tools: [],
+        model: config.model,
+      });
+
+      let draft;
+      try {
+        const text = res.text.trim();
+        const json = text.startsWith("\`\`\`") ? text.replace(/^\`\`\`(?:json)?\s*\n?/, "").replace(/\n?\`\`\`\s*$/, "") : text;
+        draft = JSON.parse(json);
+      } catch (err) {
+        console.log(chalk.red(`Failed to parse agent draft: ${(err as Error).message}`));
+        return { consumed: true };
+      }
+
+      if (!draft.identifier || !draft.whenToUse || !draft.systemPrompt) {
+        console.log(chalk.red("Invalid draft returned by model."));
+        return { consumed: true };
+      }
+
+      const { READ_ONLY_TOOLS } = await import("../subagents/profiles.js");
+
+      const content = [
+        "---",
+        `name: ${name}`,
+        `description: ${draft.whenToUse}`,
+        `role: review`,
+        `maxTurns: 12`,
+        `contextBudgetTokens: 48000`,
+        `webOptIn: false`,
+        `allowedTools:`,
+        ...READ_ONLY_TOOLS.map(t => `  - ${t}`),
+        "---",
+        "",
+        draft.systemPrompt
+      ].join("\n");
+      
+      console.log(chalk.bold(`\nPreview of ${name}.md:`));
+      console.log(chalk.dim(content));
+      
+      const { confirm } = await import("../permissions/prompt.js");
+      const ok = await confirm("Write this agent profile?");
+      if (!ok) {
+        console.log(chalk.dim("Cancelled."));
+        return { consumed: true };
+      }
+      
+      const dir = path.join(config.workspaceRoot, ".agents", "agents");
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, `${name}.md`), content, "utf8");
+      
+      const { discoverCustomProfiles, mergeProfiles } = await import("../subagents/customProfiles.js");
+      const { PROFILES } = await import("../subagents/profiles.js");
+      session.profiles = mergeProfiles(PROFILES, await discoverCustomProfiles(config.workspaceRoot));
+      
+      console.log(chalk.green(`Agent "${name}" created. Run with /${name} <task>, or use the delegate tool.`));
+      return { consumed: true };
+    }
+
     case "hooks": {
       const h = config.hooks;
       const sub = arg.trim().toLowerCase();
@@ -2977,6 +3066,10 @@ export async function handleSlashCommand(
     }
 
     default: {
+      if (session.profiles && session.profiles[cmd]) {
+        await runSubagentCommand(session, save, session.profiles[cmd], arg);
+        return { consumed: true };
+      }
       // Git workflow commands (/log, /commit, /branch, …) dispatch here.
       if (isGitCommand(cmd)) { await handleGit(cmd, session, arg); return { consumed: true }; }
       // Last-resort: check user-defined commands before reporting unknown.

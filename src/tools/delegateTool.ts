@@ -5,7 +5,7 @@ import { parseArgs } from "./types.js";
 const PROFILES = ["reviewer", "researcher", "explorer", "testTriage", "verifier"] as const;
 
 const schema = z.object({
-  profile: z.enum(PROFILES).describe("Which read-only subagent to run."),
+  profile: z.string().describe(`Which read-only subagent to run. Built-ins: ${PROFILES.join(", ")}, plus any custom disk-loaded agents.`),
   task: z.string().min(1).describe("The focused task/question for the subagent."),
 });
 

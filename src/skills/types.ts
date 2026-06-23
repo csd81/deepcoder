@@ -10,6 +10,10 @@ export interface SkillFrontmatter {
   disableModelInvocation?: boolean;
   userInvocable?: boolean;
   allowedTools?: string[];
+  role?: string;
+  maxTurns?: number;
+  contextBudgetTokens?: number;
+  webOptIn?: boolean;
 }
 
 export interface SkillSummary {
