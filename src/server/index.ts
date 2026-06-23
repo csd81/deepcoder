@@ -10,6 +10,8 @@ export type { StdioServer, StdioServerOptions } from "./stdioServer.js";
 export { createStdioTransport } from "./stdioTransport.js";
 export type { StdioTransport, StdioTransportDeps } from "./stdioTransport.js";
 
+export { createAgentRunner, uiEventToSdkEvent, EventQueue } from "./agentRunner.js";
+
 export {
   requireServerToken,
   resolveBindHost,

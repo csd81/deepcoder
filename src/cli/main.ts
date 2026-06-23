@@ -11,6 +11,9 @@ import { listSessions, forkSession, latestSessionId } from "../session/sessionSt
 import { buildSession, setupIsolation, finalizeIsolation } from "../runtime/sessionFactory.js";
 import { fetchPr, getPrDiff } from "./prFetch.js";
 import { Git } from "../workspace/git.js";
+import { DeepcoderClient } from "../sdk/client.js";
+import { createStdioTransport } from "../server/index.js";
+import { createAgentRunner } from "../server/agentRunner.js";
 
 const program = new Command();
 
@@ -44,6 +47,7 @@ program
   .option("--pr <number>", "fetch a GitHub PR (by number) and start a session with its diff")
   .option("--remote <name>", "remote name for --pr (default: origin)")
   .option("-p, --print", "one-shot: print only the raw assistant reply (no chrome) and exit")
+  .option("--serve", "run a persistent JSON-RPC stdio server (newline-delimited): one live session, multi-turn, streams events to stdout. For testing/integration.")
   .action(
     async (
       promptParts: string[],
@@ -72,6 +76,7 @@ program
         pr?: string;
         remote?: string;
         print?: boolean;
+        serve?: boolean;
       },
     ) => {
     // Validate CLI enum values before passing to loadConfig
@@ -164,6 +169,20 @@ program
       session.title = opts.title;
     }
     await setupIsolation(session);
+
+    // Persistent stdio server: one live in-memory session, multi-turn. Read
+    // newline-delimited JSON-RPC from stdin, stream events/results to stdout.
+    if (opts.serve) {
+      const client = new DeepcoderClient({ runner: createAgentRunner(session) });
+      const transport = createStdioTransport({ client, write: (line) => process.stdout.write(line) });
+      process.stdin.setEncoding("utf8");
+      await new Promise<void>((resolve) => {
+        process.stdin.on("data", (c: string) => { void transport.push(c); });
+        process.stdin.on("end", () => { void transport.end().finally(resolve); });
+        process.stdin.on("close", () => resolve());
+      });
+      return;
+    }
 
     const prompt = promptParts.join(" ").trim();
     try {
