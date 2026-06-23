@@ -123,6 +123,31 @@ A clean win shows `check phase: passed (exit 0)` and `solved in N attempt(s)`. T
 worker's changes sit UNCOMMITTED in `../deleg-feat-XX` — verify in-house (section 5),
 then commit + merge by hand. The delegation will not land anything on its own.
 
+### 4b. Opt-in: open a PR for review instead of landing by hand
+
+Set `DELEGATE_OPEN_PR=1` and, **on a passing check only**, the worker commits its
+changes on the branch, pushes, and opens a PR (via `scripts/delegate-finish.sh`) so
+you review a PR instead of doing the commit + merge by hand:
+
+```bash
+DELEGATE_OPEN_PR=1 scripts/delegate.sh deepseek /tmp/task-XX.txt feat-XX
+# → on pass: commits + pushes feat-XX, opens a PR (base: $PR_BASE, default master)
+# → PR url written to /tmp/deleg-feat-XX.log.pr
+```
+
+This stays inside the invariants:
+- **Opt-in == the explicit "push only when the human asks."** Default is unchanged
+  (leave UNCOMMITTED; land by hand). A failing check never commits/pushes/PRs.
+- **It NEVER merges.** `gh pr create` only — the PR is the review gate. The PR body
+  carries the section-5 verify-then-force checklist + the task contract, so the
+  green check is presented as *necessary, not sufficient*.
+- Preflighted before the (expensive) worker run: needs an authenticated `gh` and an
+  `origin` remote, else it fails fast. `PR_BASE=<branch>` overrides the PR base.
+- The verify-then-force in section 5 still applies — it just moves onto the PR
+  (scope, non-vacuous, wiring, `test:phase` green) before you click merge.
+- To open a PR for a worker that already finished without the flag, run
+  `scripts/delegate-finish.sh` from inside its worktree.
+
 ## 5. Verify-then-force IN-HOUSE (the default — never trust the green)
 
 A green `--check phase` is necessary, not sufficient (a worker can add unused/dead code, or gut
