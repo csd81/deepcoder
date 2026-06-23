@@ -94,6 +94,9 @@ When delegating a slice to a DeepSeek worker (deepcoder-as-subagent), follow `do
 
 **Opt-in PR review** (`DELEGATE_OPEN_PR=1 scripts/delegate.sh …`): on a passing check the worker commits + pushes its branch and opens a PR (via `scripts/delegate-finish.sh`) so you review a PR instead of landing by hand. It never merges (the PR is the gate) and the PR body carries the verify-then-force checklist; the opt-in is the explicit push authorization. Default stays "leave UNCOMMITTED, land by hand."
 
+**Headless delegation CLI (preferred; retires `delegate.sh`).** `deepcoder delegate <plan|run|validate|apply>` drives the built-in pipeline without a TTY, so delegation runs through the **real** verification (the 9 gates + red/green proof in `src/delegate/`), not just a `--check phase` pass. Full chain (no live model needed to wire the plan):
+`deepcoder delegate plan "<task>"` → prints a plan id → `delegate run <plan>` (workers run in isolated worktrees, nothing applied) → `delegate validate <plan> [worker] --json` (exit 0 iff applyable) → `delegate apply <plan> <worker>` (re-validates, refuses if not applyable). `scripts/delegate.sh` is the legacy `--solve --check phase` launcher (no gates) and is being retired in favor of this — see `plans/new/feat-headless-delegate-cli-plan.md`.
+
 ## Workflow conventions
 
 - Push only when the human explicitly asks.
