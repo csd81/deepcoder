@@ -59,9 +59,9 @@ export interface CoordinatorResult {
 }
 
 export interface CoordinatorSeams {
-  runWorkers?: (plan: DelegationPlan, opts: Record<string, unknown>) => Promise<OrchestrationResult>;
-  validateWorker?: (root: string, planId: string, workerId: string, opts?: Record<string, unknown>) => Promise<WorkerValidation>;
-  applyWorker?: (root: string, planId: string, workerId: string, opts?: Record<string, unknown>) => Promise<ApplyResult>;
+  runWorkers?: typeof defaultRunWorkers;
+  validateWorker?: typeof defaultValidateWorker;
+  applyWorker?: typeof defaultApplyWorker;
   coordinatorTurn: (digest: RoundDigest) => Promise<CoordinatorDecision>;
 }
 
@@ -335,6 +335,7 @@ export async function runCoordinator(input: CoordinatorInput): Promise<Coordinat
     // ── 5. Integrate — apply each worker in decision.integrate ──────
     const integrationPaths = new Set<string>();
     for (const integrateId of decision.integrate) {
+      if (roundBlocked.includes(integrateId)) continue;
       // Only integrate workers that actually ran and passed.
       const ranInfo = runResult.ran.find((r) => r.workerId === integrateId);
       if (!ranInfo || !ranInfo.passed) {
@@ -454,8 +455,10 @@ export async function runCoordinator(input: CoordinatorInput): Promise<Coordinat
       : "No workers applied.",
   });
 
+  const hasPlanned = plan.workers.some((w) => w.status === "planned");
+  const hasFailed = plan.workers.some((w) => w.status === "failed");
   const status: CoordinatorResult["status"] =
-    allBlocked.length > 0 && allApplied.length === 0 ? "blocked" : "completed";
+    allBlocked.length > 0 || hasPlanned || hasFailed ? "blocked" : "completed";
 
   return {
     planId: plan.id,
