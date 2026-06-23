@@ -22,6 +22,8 @@ import {
 } from "../context/instructionGraph.js";
 import { promptForApproval, confirm } from "../permissions/prompt.js";
 import { isConfiguredCheckCommand } from "../permissions/headlessCheck.js";
+import { decideStartEscalation, escalationRole, type EscalationState } from "../models/escalation.js";
+import { classifyComplexity } from "../models/taskRouter.js";
 import { classifyCommand } from "../permissions/commandClassifier.js";
 import { runBashTool } from "../tools/runBash.js";
 import { parseBangCommand, decideBang } from "./bangCommand.js";
@@ -165,6 +167,8 @@ export interface Session {
   planState?: PlanModeState;
   /** Learn mode state — toggled via /learn. When active, explains each tool call. */
   learnState?: LearnState;
+  /** Auto model-escalation state (Flash→Pro). Re-decided per user turn. */
+  escalation?: EscalationState;
   /** Human-readable session label, set via /title or --title. */
   title?: string;
   /** When true, renderers strip ANSI escape codes from all output. */
@@ -433,8 +437,20 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
   // correctly (the load-time value is fixed at the original provider). An explicit
   // DEEPCODER_CONTEXT_BUDGET_TOKENS pin always wins.
   let contextBudgetTokens = session.config.contextBudgetTokens;
+  // Auto model-escalation: re-decide per user turn from the latest prompt's
+  // complexity, deferring to a manual `/model edit` override. A `hard` task
+  // resolves the stronger "plan" role (Pro) for the whole turn; otherwise "edit".
+  const hasManualEditOverride = session.modelRouter?.sessionOverrides?.roles?.edit !== undefined;
+  const latestUserPrompt = [...session.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  session.escalation = decideStartEscalation(
+    classifyComplexity({ role: "edit", prompt: latestUserPrompt }).complexity,
+    hasManualEditOverride,
+  );
+  if (session.escalation.escalated) {
+    renderer.emit({ type: "notice", message: `⚡ Escalated to the reasoner model (high-complexity task)` });
+  }
   if (session.modelRouter && session.providerPool) {
-    const route = session.modelRouter.resolve("edit");
+    const route = session.modelRouter.resolve(escalationRole(session.escalation));
     model = route.model;
     const sameBackend =
       route.provider === session.config.provider &&
@@ -523,6 +539,15 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
       }
     },
     onNotice: (m) => renderer.emit({ type: "notice", message: m }),
+    // Auto-escalation on a repeated tool error: switch to the reasoner model for
+    // the rest of the run. Defers to a manual override and only fires once.
+    onRepeatedToolError: () => {
+      if (hasManualEditOverride || session.escalation?.escalated) return undefined;
+      session.escalation = { escalated: true, reason: "repeated-error" };
+      const m = session.modelRouter?.resolve("plan").model ?? session.config.reasonerModel ?? session.config.model;
+      renderer.emit({ type: "notice", message: `⚡ Escalated to ${m} (repeated tool error)` });
+      return m;
+    },
   };
 
   let completed = false;

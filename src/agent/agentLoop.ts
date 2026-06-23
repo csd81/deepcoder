@@ -82,6 +82,13 @@ export interface AgentDeps {
    */
   delegationHint?(): string[];
   /**
+   * Model-escalation hook. Called when the SAME tool produces the SAME error
+   * twice in a row. Returns a stronger model id to switch to for the rest of
+   * the run (sticky), or undefined to stay put (e.g. already escalated, or a
+   * manual `/model` override is in force). Undefined hook = no escalation.
+   */
+  onRepeatedToolError?(): string | undefined;
+  /**
    * Phase 7I — post-write diagnostics config. DEFAULT DISABLED. When enabled,
    * after a successful mutating tool (edit_file/write_file) the agent runs
    * matching diagnostic commands and feeds bounded output back to the model
@@ -151,6 +158,11 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
   // separately from stored bytes because results are capped before storage
   // (capToolResult) — the nudge is about read *volume*, not what we kept.
   let readBytes = 0;
+  // Model-escalation: the model id used this turn (starts at deps.model; may be
+  // bumped to a stronger model on a repeated tool error, then stays — sticky).
+  let curModel = deps.model;
+  // Signature of the previous tool error, to detect the SAME error twice in a row.
+  let lastToolErrorSig: string | null = null;
 
   for (let turn = 0; turn < maxTurns; turn++) {
     if (ctx.signal.aborted) {
@@ -176,15 +188,21 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
     // provider without streamChat) emits no deltas even when the callback exists,
     // and that final text must still reach the renderer.
     let streamedDelta = false;
-    const turnDeps: AgentDeps = deps.onAssistantTextDelta
-      ? {
-          ...deps,
-          onAssistantTextDelta: (chunk: string) => {
-            streamedDelta = true;
-            deps.onAssistantTextDelta!(chunk);
-          },
-        }
-      : deps;
+    // turnDeps carries the current (possibly escalated) model. When no
+    // escalation has occurred, curModel === deps.model so this is byte-identical
+    // to using deps directly.
+    const turnDeps: AgentDeps = {
+      ...deps,
+      model: curModel,
+      ...(deps.onAssistantTextDelta
+        ? {
+            onAssistantTextDelta: (chunk: string) => {
+              streamedDelta = true;
+              deps.onAssistantTextDelta!(chunk);
+            },
+          }
+        : {}),
+    };
 
     const response = await getResponseWithRetry(turnDeps, withEphemeralContext(messages, ctx, deps));
     deps.onUsage?.(response.usage);
@@ -309,6 +327,21 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         result = { output: `Tool ${call.name} failed: ${(err as Error).message ?? String(err)}`, isError: true };
       }
       deps.onToolResult?.(call.name, result);
+      // Model escalation: the SAME tool failing the SAME way twice in a row is a
+      // signal Flash is stuck — switch to a stronger model for the rest of the
+      // run. A success or a different error resets the streak.
+      if (result.isError) {
+        const sig = `${call.name}:${result.output.slice(0, 80)}`;
+        if (sig === lastToolErrorSig) {
+          const escalated = deps.onRepeatedToolError?.();
+          if (escalated) curModel = escalated;
+          lastToolErrorSig = null; // fire once per streak
+        } else {
+          lastToolErrorSig = sig;
+        }
+      } else {
+        lastToolErrorSig = null;
+      }
       readBytes += result.output.length;
       pushToolResult(messages, call.id, call.name, result.output);
       await deps.onPersist?.();

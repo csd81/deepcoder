@@ -1,164 +1,134 @@
 # Feature — Automatic model escalation (Flash → Pro)
 
+> **Revised after codebase review.** The original draft (a) had a real bug in
+> `classifyComplexity` — `a ? 1 : 0 + b` parses as `a ? 1 : (0 + b)`, so the
+> score never reaches 2 and it ALWAYS returns `"flash"` (its own test would
+> fail); (b) reinvented model selection in a new `src/models/escalation.ts`
+> when a full `ModelRouter` already exists; and (c) leaned on a noisy
+> "vague-response" heuristic. This revision reuses the existing routing stack,
+> drops the bug, and replaces per-turn flapping with sticky escalation.
+
 ## Context
 
-Deepcoder defaults to DeepSeek V4 Flash — fast, cheap, good enough for 90% of tasks. But Flash struggles on complex refactoring, cross-file changes, architecture decisions, and security review. Pro is stronger but slower and more expensive. Currently the user must manually switch with `/model edit deepseek-v4-pro`.
+Deepcoder defaults to DeepSeek V4 Flash — fast, cheap, fine for ~90% of tasks.
+Pro (`deepseek-v4-pro`) is stronger on complex refactors, cross-file changes, and
+security review but slower/costlier. Today the user switches manually with
+`/model edit deepseek-v4-pro`. Goal: start on Flash, detect when a task needs
+Pro, and escalate automatically — without the user thinking about it.
 
-An automatic escalation mechanism would: start every task on Flash, detect when Flash is hitting its limits, and escalate that turn to Pro. The user never thinks about model selection.
+## Reuse what already exists (do NOT reinvent)
 
-## Model
+- **`ModelRouter`** (`src/models/router.ts`): `resolve(role)` → `{model, provider,
+  baseUrl, …}`. Roles incl. `"edit"` (defaults to `config.model` = Flash) and
+  `"plan"` (defaults to `config.reasonerModel` = **Pro**) — so "escalate to Pro"
+  is literally *resolve a stronger role*, not a new model string. Precedence:
+  **session override > env > file > default** (`router.ts:65-86`).
+- **Session overrides** (`src/models/sessionOverrides.ts`): `/model edit …` sets
+  `modelRouter.sessionOverrides.roles.edit` — the highest-precedence layer. This
+  IS the manual lock; escalation must DEFER to it.
+- **`ProviderPool.providerFor(route)`** — already used by `runTask` (`repl.ts:425-432`)
+  to swap provider/model per resolved route.
+- **`src/models/taskRouter.ts`** complexity classifier:
+  `classifyComplexity(input) → { complexity, risk, reason }` (complexity ∈
+  `simple|normal|hard`), keyword-based (`refactor`, `security`, `architecture`,
+  `migration`, `multi-file`, `permission`, …) + multi-file/mutating rules. Use
+  this — do NOT write a new (buggy) one. (Note: it takes a task/input object,
+  not a bare string — pass the prompt in the shape it expects.)
+- **`retry.ts`** (`isRateLimit`/`isAuthError`/`isModelError`) for error signals.
 
-- Every agent turn starts on **Flash** (default)
-- On any of these signals, the **next turn** escalates to **Pro**:
-  - The same tool error repeats twice (model retries the same failing call)
-  - The model produces a vague/incomplete response (measured by tool call count or response length)
-  - The task is classified as high-complexity (multi-file, architectural, security-sensitive)
-  - The user explicitly invokes `/plan` or `/refactor`
-- Once escalated, the Pro model handles that turn, then falls back to Flash for the next turn
-- Escalation is per-turn, not per-session — each turn re-evaluates
-- The user can lock to Pro with `/model edit deepseek-v4-pro` (manual override)
+## Model (escalation policy)
+
+Each task starts on the resolved `"edit"` route (Flash by default). Escalate to
+the `"plan"`/reasoner route (Pro) on these signals, and once escalated **stay on
+Pro for the rest of the task** (sticky — no per-turn flapping):
+
+| Signal | When | Source |
+|---|---|---|
+| **high-complexity** | at task start, `classifyComplexity(prompt)` is `hard` | `taskRouter.ts` (reuse) |
+| **repeated-error** | the SAME tool produces the SAME error signature twice in a row | agent loop, reuse the existing `lastInvalidSignature` machinery in `agentLoop.ts` |
+| **explicit** | the turn came from `/plan` (already routes to the reasoner) | existing |
+
+Dropped from the draft:
+- **vague-response** — too noisy (`response.text.length < 50` + an undefined
+  `lastUserMessageImpliedAction`); a short answer is often correct. Omit.
+- **per-turn fallback to Flash** — replaced by stickiness. Flapping re-pays the
+  detection cost every turn and produces noisy "escalated/returned" notices.
+
+**Manual lock wins:** if `sessionOverrides.roles.edit` is set (user ran `/model
+edit …`), escalation is a no-op — never override an explicit choice.
 
 ## Design
 
-### 1. Escalation signals (`src/models/escalation.ts`)
-
+### 1. Escalation state (small, on the Session — no new model module)
 ```ts
-export type EscalationReason =
-  | "repeated-error"      // same tool error twice
-  | "vague-response"      // response too short or no tool calls when expected
-  | "high-complexity"     // task classified as complex
-  | "user-escalation"     // explicit /plan or /refactor
-  | "manual-lock";        // user set model to Pro manually
+// src/models/escalation.ts — STATE + PURE decision only; routing stays in ModelRouter.
+export type EscalationReason = "high-complexity" | "repeated-error" | null;
+export interface EscalationState { escalated: boolean; reason: EscalationReason; }
+export function initEscalation(): EscalationState { return { escalated: false, reason: null }; }
+```
+Add `escalation?: EscalationState` to `Session`.
 
-export interface EscalationState {
-  /** Current model for this turn: "flash" | "pro" */
-  current: "flash" | "pro";
-  /** Why we escalated (null when on Flash) */
-  reason: EscalationReason | null;
-  /** How many consecutive turns on Flash before escalation */
-  flashTurns: number;
-  /** Track last tool call signature + error for repeat detection */
-  lastError: { tool: string; signature: string } | null;
-  errorCount: number;
+### 2. Decision (pure, reuses taskRouter)
+```ts
+// At task start (in runTask, before the loop):
+import { classifyComplexity } from "../models/taskRouter.js";
+if (!manualEditOverride(session.modelRouter) &&
+    classifyComplexity(taskInputFor(latestUserPrompt)).complexity === "hard") {
+  session.escalation = { escalated: true, reason: "high-complexity" };
 }
 ```
+`manualEditOverride(router)` = `router.sessionOverrides.roles.edit !== undefined`.
 
-### 2. Detection logic
-
-**Repeated error detection** (in agent loop, after a tool error):
-
+### 3. Per-turn model selection (in the agent loop, via the router)
+The loop already resolves the edit route once in `runTask` (`repl.ts:425`). Make
+the chosen ROLE depend on escalation, and re-resolve per turn so a mid-task
+escalation (repeated-error) takes effect next turn:
 ```ts
-// After a tool execution fails with an error:
-if (invocation.kind === "execute" || invocation.kind === "mutate") {
-  const sig = `${call.name}:${result.output.slice(0, 100)}`;
-  if (sig === lastError?.signature) {
-    // Same error repeated → escalate
-    escalation.errorCount++;
-    if (escalation.errorCount >= 2 && escalation.current === "flash") {
-      escalateToPro(escalation, "repeated-error");
-    }
-  } else {
-    escalation.lastError = { tool: call.name, signature: sig };
-    escalation.errorCount = 0;
-  }
-}
+const role = session.escalation?.escalated ? "plan" : "edit";
+const route = session.modelRouter.resolve(role);
+// model = route.model; provider = pool.providerFor(route)  (existing pattern)
 ```
+Thread the resolved `{model, provider}` into the turn's `getResponse` (the loop
+already supports a per-turn `turnDeps` override at `agentLoop.ts` — pass the
+escalated model/provider there rather than adding a bespoke `modelOverride`).
 
-**Vague response detection** (after model response, before tool processing):
+### 4. Repeated-error → escalate (reuse existing signature tracking)
+`agentLoop.ts` already tracks `lastInvalidSignature` to stop on repeated invalid
+calls. Extend that same comparison: on the 2nd identical `{tool}:{error-prefix}`
+in a row, set `session.escalation = { escalated: true, reason: "repeated-error" }`
+(takes effect next turn). No new error-tracking structure.
 
-```ts
-// A response that has no tool calls AND is very short likely means Flash is confused
-if (response.toolCalls.length === 0 && response.text.length < 50) {
-  // But only escalate if we expected tool calls (user asked for action)
-  if (lastUserMessageImpliedAction) {
-    tryEscalate(escalation, session, "vague-response");
-  }
-}
-```
-
-**High-complexity classification** (at task submission):
-
-```ts
-const COMPLEX_KEYWORDS = [
-  "refactor", "redesign", "architecture", "migrate", "restructure",
-  "multi-file", "cross-cutting", "security review", "audit",
-  "design pattern", "extract module", "decouple",
-];
-
-function classifyComplexity(prompt: string): "flash" | "pro" {
-  const lower = prompt.toLowerCase();
-  const complexityScore = COMPLEX_KEYWORDS.some((k) => lower.includes(k)) ? 1 : 0
-    + (prompt.split(" ").length > 50 ? 1 : 0);
-
-  return complexityScore >= 2 ? "pro" : "flash";
-}
-```
-
-### 3. Per-turn model switching
-
-In the agent loop, before each model call:
-
-```ts
-// Determine which model to use for THIS turn
-let turnModel = "deepseek-v4-flash";
-if (escalation.current === "pro") {
-  turnModel = "deepseek-v4-pro";
-  // After this turn, drop back to Flash unless still escalated
-  // (escalation persists only if the reason is still active)
-}
-```
-
-In `getResponse`:
-
-```ts
-const response = await getResponse(deps, sent, turnModel);
-```
-
-Add `modelOverride?: string` to `getResponse` that overrides the session's default model for one call.
-
-### 4. User visibility
-
-When escalation happens, show a notice:
-
-```
-⚡ Escalated to DeepSeek V4 Pro (repeated error — tool edit_file failed twice)
-⚡ Escalated to DeepSeek V4 Pro (high-complexity task — refactoring detected)
-```
-
-When the turn completes and drops back to Flash:
-
-```
-↕ Returned to DeepSeek V4 Flash
-```
-
-### 5. Manual override
-
-Existing `/model edit deepseek-v4-pro` locks to Pro. When locked, escalation is skipped and no notices are shown.
+### 5. User visibility
+One notice when escalation first flips on (not every turn, since it's sticky):
+`⚡ Escalated to Pro (high-complexity task)` / `⚡ Escalated to Pro (Flash hit a repeated error)`.
+Surface current model in `/model` output (it already prints resolved routes).
 
 ## Files
-
-- **New:** `src/models/escalation.ts`, `test/escalation.test.ts`.
-- **Edit:** `src/agent/agentLoop.ts` (wire escalation signals, pass model override to getResponse), `src/cli/slashCommands.ts` (show escalation status in `/model`).
+- **New:** `src/models/escalation.ts` (state + pure decision helpers), `test/escalation.test.ts`.
+- **Edit:** `src/cli/repl.ts` (`Session.escalation`; set it at task start; pick role per turn via the router), `src/agent/agentLoop.ts` (repeated-error → escalate, reusing `lastInvalidSignature`), `src/cli/slashCommands.ts` (show escalation in `/model`).
+- **Reuse (no change):** `ModelRouter` (`src/models/router.ts`), `ProviderPool`, `classifyComplexity` (`src/models/taskRouter.ts`), `retry.ts`.
 
 ## Tests
-
-- `classifyComplexity("fix typo in main.ts")` → `"flash"`.
-- `classifyComplexity("refactor the auth module to use dependency injection")` → `"pro"`.
-- Repeated identical tool error → escalation fires after the second occurrence.
-- After escalation, the next turn uses Pro model.
-- After a successful Pro turn, falls back to Flash.
-- Manual model lock overrides escalation.
+- `classifyComplexity` is reused — assert its existing behavior covers our cases (`"refactor the auth module…"` → `hard`; `"fix typo in main.ts"` → `simple`). (Do NOT re-implement it.)
+- Task-start escalation: a `hard` prompt sets `escalation.escalated` → the loop resolves the `"plan"` route.
+- Sticky: once escalated, every subsequent turn stays on Pro (no flip back to `"edit"`).
+- Repeated identical tool error → escalates on the 2nd occurrence; a different error resets.
+- **Manual lock precedence:** `/model edit deepseek-v4-pro` (or any explicit edit override) → escalation is a no-op (does not re-resolve to a different role).
+- Default simple task → never escalates (`resolve("edit")` throughout).
 
 ## Verification
-
 1. `npm run typecheck` clean; `npm run test:phase` green.
-2. Manual: give a task Flash struggles with (complex refactor) → auto-escalates to Pro, shows notice, completes correctly.
-3. Manual: give a simple task → stays on Flash, no overhead.
-4. Check logs: escalation events recorded for debugging.
+2. Manual: a complex refactor prompt → one `⚡ Escalated to Pro` notice, stays on Pro, completes.
+3. Manual: a simple task → stays on Flash, no notice, no extra cost.
+4. `/model` shows the active (possibly escalated) edit-route model.
 
 ## Safety
+- Escalation only changes the resolved model **role** — never touches permission gates, sandbox, or containment.
+- Defers to an explicit `/model edit` override (user choice always wins).
+- Sticky-per-task (not per-turn) avoids flapping; bounded to one escalation direction (Flash→Pro), so worst case is "the whole task runs on Pro".
+- Conservative triggers (reused `hard` classification + a 2nd identical error) — bias toward staying on Flash.
 
-- Escalation only affects model choice — never bypasses permission gates.
-- Falls back to Flash after each Pro turn — no runaway cost.
-- User can always manually lock to either model.
-- Escalation signals are conservative — better to stay on Flash than to over-escalate.
+## Out of scope
+- No new model-selection engine — all routing flows through the existing `ModelRouter`.
+- No de-escalation Pro→Flash mid-task (sticky is simpler and avoids flapping).
+- No cost/budget-based escalation (could layer on `budget` later).
