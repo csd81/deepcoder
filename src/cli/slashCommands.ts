@@ -47,6 +47,8 @@ import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
 import { reviewer, researcher, testTriage, simplifier } from "../subagents/profiles.js";
+import { runMultiAngleReview } from "../delegate/multiAngleReview.js";
+import { verifyFindings } from "../delegate/verifyFindings.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
 import { runPlanFlow } from "../subagents/planFlow.js";
 import { detectTestFramework, detectPkgManager, detectLinter, detectLanguage, buildStarterMd, type ProjectProfile } from "./initProject.js";
@@ -670,11 +672,30 @@ export async function handleSlashCommand(
     }
 
     case "review": {
-      if (!arg) {
-        console.log(chalk.dim("usage: /review <scope>  — run a read-only reviewer subagent over the given files/topic"));
+      let effort: "low" | "high" = "high";
+      let scopeArg = arg;
+      if (/(?:^|\s)--low\b/.test(arg)) {
+        effort = "low";
+        scopeArg = arg.replace(/(?:^|\s)--low\b/, "").trim();
+      } else if (/(?:^|\s)--effort\s+low\b/.test(arg)) {
+        effort = "low";
+        scopeArg = arg.replace(/(?:^|\s)--effort\s+low\b/, "").trim();
+      } else if (/(?:^|\s)--effort\s+high\b/.test(arg)) {
+        effort = "high";
+        scopeArg = arg.replace(/(?:^|\s)--effort\s+high\b/, "").trim();
+      }
+
+      if (!scopeArg) {
+        console.log(chalk.dim("usage: /review [--effort low|high] <scope>  — run a read-only reviewer subagent over the given files/topic"));
         return { consumed: true };
       }
-      await runSubagentCommand(session, save, reviewer, `Review this scope for bugs, regressions, and missing tests: ${arg}`);
+      
+      const task = `Review this scope for bugs, regressions, and missing tests: ${scopeArg}`;
+      if (effort === "low") {
+        await runSubagentCommand(session, save, reviewer, task);
+      } else {
+        await runMultiAngleReviewCommand(session, save, task);
+      }
       return { consumed: true };
     }
 
@@ -2869,7 +2890,7 @@ export async function handleSlashCommand(
           "/compact         compact conversation history now",
           "/plan <task>     produce a plan with the reasoner model (no tools run)",
           "/mcp [reload]    list configured MCP servers and tools",
-          "/review <scope>  run a read-only reviewer subagent over files/topic",
+          "/review [--effort low|high] <scope>  run a read-only reviewer subagent over files/topic",
           "/research <q>    run a read-only researcher subagent to explain the codebase",
           "/triage <fail>   diagnose a failure (also: --file <log>, --run <check-run-id>, --scope <scope>)",
           "/sandbox [m]     show sandbox status; set off|fast|local|bubblewrap | network on|off",
@@ -3259,6 +3280,44 @@ async function runSubagentCommand(
     });
     renderSubagentResult(result, trace);
     // Untrusted, model-authored output → quarantined metadata only, never assistant history.
+    session.reviews.push({ createdAt: new Date().toISOString(), result, trace });
+    await save();
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+  }
+}
+
+async function runMultiAngleReviewCommand(
+  session: Session,
+  save: () => Promise<void>,
+  task: string,
+): Promise<void> {
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.once("SIGINT", onSigint);
+  console.log(chalk.dim(`Running multi-angle reviewer subagent (high-effort)…`));
+  try {
+    const opts = {
+      workspaceRoot: session.config.workspaceRoot,
+      provider: session.provider,
+      parentModel: session.config.model,
+      subagentModel: session.config.subagentModel,
+      contextBudgetTokens: session.config.contextBudgetTokens,
+      compactAt: session.config.compactAt,
+      signal: controller.signal,
+    };
+    
+    const deps = {
+      runSubagent,
+      verifyFindings,
+      opts
+    };
+    
+    const result = await runMultiAngleReview(task, "high", deps);
+    
+    const trace = { turns: 0, model: session.config.subagentModel || session.config.model, toolsCalled: [] };
+    
+    renderSubagentResult(result, trace);
     session.reviews.push({ createdAt: new Date().toISOString(), result, trace });
     await save();
   } finally {

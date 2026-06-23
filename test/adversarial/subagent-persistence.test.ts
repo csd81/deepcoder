@@ -38,7 +38,7 @@ test("a prompt-injected reviewer summary never enters parent assistant history",
   const provider = new ScriptedProvider([{ text: `Report:\n${malicious}`, toolCalls: [] }]);
   const session = await makeSession(provider);
 
-  const out = await handleSlashCommand("/review src", session, async () => {});
+  const out = await handleSlashCommand("/review --low src", session, async () => {});
   assert.equal(out.consumed, true);
 
   // The injection must NOT appear anywhere in model-visible history...
@@ -55,7 +55,7 @@ test("a prompt-injected reviewer summary never enters parent assistant history",
 test("session metadata reviews are persisted but separate from messages", async () => {
   const provider = new ScriptedProvider([{ text: '{"summary":"all good","findings":[],"suggestedNextSteps":[]}', toolCalls: [] }]);
   const session = await makeSession(provider);
-  await handleSlashCommand("/review src", session, async () => {});
+  await handleSlashCommand("/review --low src", session, async () => {});
 
   // messages stays exactly the seed system prompt; the review lives only in reviews.
   assert.equal(session.messages.length, 1);

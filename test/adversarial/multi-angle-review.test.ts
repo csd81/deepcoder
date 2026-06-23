@@ -69,10 +69,12 @@ test("[SLICE-failsafe] a finder that throws contributes zero findings but batch 
 });
 
 test("[SLICE-recall] refuted findings are dropped; confirmed + unverifiable are kept", async () => {
+  let counter = 0;
   const deps = mockDeps(
     (task) => {
       // Return 1 distinct finding per angle so they don't dedup
-      return [{ file: task.slice(0, 5) + ".ts", line: 1, claim: "c", severity: "low", evidence: "e" }];
+      counter++;
+      return [{ file: `f${counter}.ts`, line: 1, claim: "c", severity: "low", evidence: "e" }];
     },
     (findings) => {
       // Mark first as confirmed, second as refuted, third as unverifiable
