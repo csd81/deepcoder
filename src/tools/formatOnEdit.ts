@@ -11,6 +11,7 @@ import { runBoundedProcess } from "../process/runBoundedProcess.js";
 import { globMatch } from "../diagnostics/matcher.js";
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { FormatConfig } from "../config/fileConfig.js";
+import { cleanEnv } from "../process/env.js";
 
 /**
  * Check whether a workspace-relative file path matches any of the configured
@@ -44,9 +45,9 @@ export async function formatFile(
 ): Promise<FormatFileResult> {
   const command = `${config.command} ${shellQuote(file)}`;
 
-  // Classifier gate: a denied command is refused — never run.
-  if (classifyCommand(command) === "deny") {
-    return { formatted: false, error: "denied by command classifier" };
+  // Classifier gate: only allow "allow" commands. "ask" or "deny" are refused.
+  if (classifyCommand(command) !== "allow") {
+    return { formatted: false, error: "not allowed by command classifier" };
   }
 
   // Apply sandbox wrapping if configured.
@@ -61,7 +62,7 @@ export async function formatFile(
     args: [],
     shell: true,
     cwd: deps.workspaceRoot,
-    env: process.env,
+    env: cleanEnv(),
     signal: deps.signal,
     timeoutMs: config.timeoutMs ?? 30_000,
     maxCaptureBytes: 1024,

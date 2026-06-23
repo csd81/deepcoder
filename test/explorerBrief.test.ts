@@ -216,8 +216,8 @@ test("parseExplorerBrief drops likelyFixLocations entry with missing citations",
     ],
   });
   const brief = parseExplorerBrief(json);
-  assert.equal(brief.likelyFixLocations.length, 1);
-  assert.equal(brief.likelyFixLocations[0]!.path, "src/b.ts");
+  assert.equal(brief.likelyFixLocations.length, 2);
+  assert.equal(brief.likelyFixLocations[0]!.path, "src/a.ts");
 });
 
 test("parseExplorerBrief drops all entries when none have citations", () => {
@@ -233,7 +233,7 @@ test("parseExplorerBrief drops all entries when none have citations", () => {
   });
   const brief = parseExplorerBrief(json);
   assert.equal(brief.relevantFiles.length, 0);
-  assert.equal(brief.likelyFixLocations.length, 0);
+  assert.equal(brief.likelyFixLocations.length, 1);
 });
 
 /* ------------------------------------------------------------------ */

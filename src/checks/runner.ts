@@ -13,6 +13,7 @@ import { wrapCommand } from "../sandbox/index.js";
 import type { SandboxConfig } from "../sandbox/types.js";
 import type { DependencyHealingConfig } from "../config/config.js";
 import { maybeHealDependencies } from "../dependencies/healer.js";
+import { cleanEnv } from "../process/env.js";
 
 /** Thrown when a configured check command is denied by the command classifier. */
 export class CheckRefusedError extends Error {
@@ -120,7 +121,7 @@ async function runCheckOnce(
     args: [],
     shell: true,
     cwd: opts.workspaceRoot,
-    env: process.env,
+    env: cleanEnv(),
     signal: opts.signal,
     timeoutMs,
     maxCaptureBytes: CHECK_LOG_MAX_BYTES,

@@ -89,6 +89,7 @@ export class BackgroundManager {
   private async execute(job: BackgroundJob): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.deps.timeoutMs ?? 120_000);
+    timer.unref?.();
     try {
       const outcome = await this.deps.run(job.type, job.prompt, controller.signal);
       job.status = "completed";

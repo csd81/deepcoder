@@ -67,7 +67,7 @@ test("formatFile with exit 0 returns formatted: true", async () => {
   try {
     await writeFile(path.join(dir, "test.txt"), "hello", "utf8");
     const result = await formatFile("test.txt", {
-      command: "true", // always exits 0
+      command: "echo", // always exits 0
     }, {
       workspaceRoot: dir,
       signal: new AbortController().signal,
@@ -84,13 +84,13 @@ test("formatFile with exit 1 returns formatted: false + error", async () => {
   try {
     await writeFile(path.join(dir, "test.txt"), "hello", "utf8");
     const result = await formatFile("test.txt", {
-      command: "false", // always exits 1
+      command: "ls /doesnotexist", // always exits 1/2
     }, {
       workspaceRoot: dir,
       signal: new AbortController().signal,
     });
     assert.equal(result.formatted, false);
-    assert.ok(result.error?.includes("exit 1"), `expected exit 1, got: ${result.error}`);
+    assert.ok(result.error?.includes("exit"), `expected exit, got: ${result.error}`);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

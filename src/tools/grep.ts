@@ -200,10 +200,15 @@ function isBinary(buf: Buffer): boolean {
 
 function globToRegExp(glob: string): RegExp {
   let re = "";
-  for (const c of glob) {
+  let inGroup = false;
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
     if (c === "*") re += ".*";
     else if (c === "?") re += ".";
-    else if (".+^${}()|[]\\".includes(c)) re += "\\" + c;
+    else if (c === "{") { re += "("; inGroup = true; }
+    else if (c === "}" && inGroup) { re += ")"; inGroup = false; }
+    else if (c === "," && inGroup) { re += "|"; }
+    else if (".+^$()|[]\\".includes(c)) re += "\\" + c;
     else re += c;
   }
   return new RegExp("^" + re + "$");

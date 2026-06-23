@@ -70,9 +70,17 @@ export function runBoundedProcess(input: BoundedProcessInput): Promise<BoundedPr
     }
     if (linePending.length > LINE_PENDING_MAX) {
       input.onData?.(redactSecrets(linePending.slice(0, LINE_PENDING_MAX)));
+      const remainder = linePending.slice(LINE_PENDING_MAX);
       linePending = "";
       linePendingOverflow = true;
-      return;
+      const nl = remainder.indexOf("\n");
+      if (nl !== -1) {
+        linePending = remainder.slice(nl + 1);
+        linePendingOverflow = false;
+        // Fall through to process new linePending
+      } else {
+        return;
+      }
     }
     const nl = linePending.lastIndexOf("\n");
     if (nl !== -1) {

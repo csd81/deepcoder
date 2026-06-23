@@ -805,17 +805,17 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     mcpServers: file.mcpServers ?? {},
     checks: file.checks ?? {},
     commands: file.commands ?? {},
+    ...rest,
     // Default-off / fail-closed: execute-mode MCP tools are denied unless
     // explicitly opted in. Enabling only lifts the blanket deny — each call
     // still flows through the permission policy (classifier + approval mode).
     // 10T: yolo forces these uncontained escape hatches OFF regardless of env.
     mcpExecuteEnabled: isYolo ? false :
-      (process.env.DEEPCODER_MCP_EXECUTE === "1" ||
-       process.env.DEEPCODER_MCP_EXECUTE === "true"),
+      (rest.mcpExecuteEnabled ?? (process.env.DEEPCODER_MCP_EXECUTE === "1" ||
+       process.env.DEEPCODER_MCP_EXECUTE === "true")),
     interactiveShell: isYolo ? false :
-      (process.env.DEEPCODER_INTERACTIVE_SHELL === "1" ||
-       process.env.DEEPCODER_INTERACTIVE_SHELL === "true"), // Phase 10G: default-off
-    ...rest,
+      (rest.interactiveShell ?? (process.env.DEEPCODER_INTERACTIVE_SHELL === "1" ||
+       process.env.DEEPCODER_INTERACTIVE_SHELL === "true")), // Phase 10G: default-off
     // A CLI partial (e.g. {mode}) layers on top of the file/env-resolved sandbox
     // rather than replacing it wholesale. 10S: when containment is on it WINS —
     // the effective sandbox becomes fail-closed workspace-only (overrides --sandbox).

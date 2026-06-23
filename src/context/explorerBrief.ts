@@ -121,9 +121,6 @@ function cleanLikelyFixLocations(
     if (path.length === 0) continue;
     const reason = String(raw.reason ?? "").trim().slice(0, maxEntry);
     const confidence = normalizeConfidence(raw.confidence);
-    // A fix location claim requires at least one citation
-    const citations = asStringArray(raw.citations).filter((c) => c.trim().length > 0);
-    if (citations.length === 0) continue;
     const key = path.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

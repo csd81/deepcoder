@@ -213,7 +213,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       toolCalls: response.toolCalls.length ? response.toolCalls : undefined,
     });
     if (response.text && !streamedDelta) deps.onAssistantText?.(response.text);
-    if (response.text) deps.onAssistantMessageEnd?.(response.text);
+    deps.onAssistantMessageEnd?.(response.text);
     await deps.onPersist?.();
 
     // No tool calls => the model is done.
