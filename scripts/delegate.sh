@@ -2,6 +2,17 @@
 #
 # delegate.sh — delegate ONE bounded slice to a DeepSeek/Gemini model worker.
 #
+# ⚠ DEPRECATED — being retired in favor of the headless built-in pipeline, which
+#   runs delegation through the REAL verification (9 gates + red/green proof in
+#   src/delegate/), not just a `--check phase` pass:
+#       deepcoder delegate plan "<task>"      # → prints a plan id (no model needed)
+#       deepcoder delegate run   <plan>       # workers in isolated worktrees
+#       deepcoder delegate validate <plan> --json   # exit 0 iff applyable
+#       deepcoder delegate apply <plan> <worker>     # re-validates, then applies
+#   This script is the legacy `--solve --check phase` launcher (no gates). It
+#   stays until the CLI chain has had a live end-to-end worker run.
+#   See plans/new/feat-headless-delegate-cli-plan.md.
+#
 # Self-contained: creates the branch worktree, provisions deps, launches the
 # worker in the background, and writes a completion sentinel. It does NOT commit
 # or merge — landing work toward master is an explicit, human-gated step.
