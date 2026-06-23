@@ -73,6 +73,23 @@ export interface ToolContext {
    * but explicitly omitted inside subagent contexts to prevent nesting.
    */
   delegate?: DelegateRuntime;
+  /**
+   * Runtime for model-callable worktree isolation (enter/exit). When absent, the
+   * tools report "Workspace isolation is unavailable here." Present in full
+   * sessions (CLI) but omitted in contexts that don't support worktree isolation.
+   */
+  worktree?: WorktreeRuntime;
+}
+
+/**
+ * Runtime for the model-callable `enter_worktree` / `exit_worktree` tools.
+ * Closes over the session's workspace isolation lifecycle so the model can
+ * create a disposable worktree, make changes, and apply or discard them.
+ */
+export interface WorktreeRuntime {
+  isActive(): boolean;
+  enter(): Promise<{ isolatedRoot: string }>;
+  exit(action: "apply" | "discard"): Promise<{ changed: number; applied: boolean }>;
 }
 
 /**

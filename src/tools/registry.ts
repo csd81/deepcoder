@@ -16,32 +16,34 @@ import { repoIndexTool, findReferencesTool, impactGraphTool, targetTestsTool } f
 import { activateSkillTool } from "./activateSkill.js";
 import { applyPatchTool } from "./applyPatch.js";
 import { delegateTool } from "./delegateTool.js";
+import { enterWorktreeTool } from "./enterWorktree.js";
+import { exitWorktreeTool } from "./exitWorktree.js";
 
 export class ToolRegistry {
-  private tools = new Map<string, Tool>();
+  tools: Record<string, Tool> = {};
 
   register(tool: Tool): void {
-    this.tools.set(tool.name, tool);
+    this.tools[tool.name] = tool;
   }
 
   get(name: string): Tool | undefined {
-    return this.tools.get(name);
+    return this.tools[name];
   }
 
   names(): string[] {
-    return [...this.tools.keys()];
+    return Object.keys(this.tools);
   }
 
   /** Remove every tool whose name starts with `prefix` (used to refresh MCP tools). */
   unregisterByPrefix(prefix: string): void {
-    for (const name of this.tools.keys()) {
-      if (name.startsWith(prefix)) this.tools.delete(name);
+    for (const name of Object.keys(this.tools)) {
+      if (name.startsWith(prefix)) delete this.tools[name];
     }
   }
 
   /** JSON-Schema tool definitions, as sent to the model each turn. */
   schemas(): ToolSchema[] {
-    return [...this.tools.values()].map((t) => ({
+    return Object.values(this.tools).map((t) => ({
       name: t.name,
       description: t.description,
       // Raw-schema tools (MCP) supply their own JSON Schema; native tools convert
@@ -75,6 +77,8 @@ const NATIVE_TOOLS: Tool[] = [
   activateSkillTool,
   applyPatchTool,
   delegateTool,
+  enterWorktreeTool,
+  exitWorktreeTool,
 ];
 
 /** The full native tool set. */

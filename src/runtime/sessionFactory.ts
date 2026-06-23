@@ -9,7 +9,7 @@ import { composePluginChecks, composePluginSkills } from "../plugins/compose.js"
 import type { PluginTrustStore } from "../plugins/trust.js";
 import type { Plugin } from "../plugins/types.js";
 import type { SkillSummary } from "../skills/types.js";
-import { createIsolatedWorkspace, WorkspaceIsolationError } from "../workspaceIsolation/index.js";
+import { createIsolatedWorkspace, WorkspaceIsolationError, DEFAULT_WORKSPACE_ISOLATION } from "../workspaceIsolation/index.js";
 import { confirm } from "../permissions/prompt.js";
 import { createProvider } from "../providers/factory.js";
 import { EMPTY_USAGE } from "../providers/usage.js";
@@ -42,7 +42,7 @@ import { ModelRouter } from "../models/router.js";
 import { ProviderPool } from "../models/providerPool.js";
 import { runSubagent } from "../subagents/runner.js";
 import { PROFILES } from "../subagents/profiles.js";
-import type { DelegateRuntime } from "../tools/types.js";
+import type { DelegateRuntime, WorktreeRuntime } from "../tools/types.js";
 
 /** Connect configured MCP servers and register their tools. Returns undefined
  *  when none are configured; never throws (bad servers warn and are skipped). */
@@ -256,6 +256,50 @@ export function buildDelegateRuntime(session: Session): DelegateRuntime {
         }
       }
       return { summary: result.summary, findings };
+    },
+  };
+}
+
+/**
+ * Build a WorktreeRuntime for a running session. Closes over the session's
+ * workspace isolation lifecycle so the model-callable enter/exit_worktree tools
+ * can create and manage a disposable git worktree. Uses the same
+ * createIsolatedWorkspace machinery as --workspace-isolation, but does NOT wire
+ * into the session's automatic setup/finalize lifecycle — the model controls
+ * enter and exit explicitly.
+ */
+export function buildWorktreeRuntime(session: Session): WorktreeRuntime {
+  return {
+    isActive() {
+      return session.isolation !== undefined;
+    },
+    async enter() {
+      const ws = await createIsolatedWorkspace(session.config.workspaceRoot, {
+        ...DEFAULT_WORKSPACE_ISOLATION,
+        mode: "patch",
+      });
+      session.isolation = ws;
+      session.executionRoot = ws.isolatedRoot;
+      return { isolatedRoot: ws.isolatedRoot };
+    },
+    async exit(action: "apply" | "discard") {
+      const ws = session.isolation;
+      if (!ws) return { changed: 0, applied: false };
+      const files = await ws.changedFiles();
+      const changed = files.length;
+      let applied = false;
+      if (action === "apply" && changed > 0) {
+        try {
+          await ws.applyPatchToRealRoot({ force: false });
+          applied = true;
+        } catch {
+          applied = false;
+        }
+      }
+      await ws.cleanup();
+      session.isolation = undefined;
+      session.executionRoot = session.config.workspaceRoot;
+      return { changed, applied };
     },
   };
 }
