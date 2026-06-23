@@ -21,10 +21,16 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void): void 
   }
 }
 
-test("delegate.acceptanceFirst defaults to disabled", () => {
+test("delegate.acceptanceFirst defaults to ENABLED (verify-first is the default posture)", () => {
   withEnv({ DEEPCODER_DELEGATE_ACCEPTANCE_FIRST: undefined }, () => {
     const cfg = loadConfig({ workspaceRoot: "/tmp" });
-    assert.equal(cfg.delegate.acceptanceFirst.enabled, false);
+    assert.equal(cfg.delegate.acceptanceFirst.enabled, true);
+  });
+});
+
+test("DEEPCODER_DELEGATE_ACCEPTANCE_FIRST=0 disables it (explicit override beats the on-by-default)", () => {
+  withEnv({ DEEPCODER_DELEGATE_ACCEPTANCE_FIRST: "0" }, () => {
+    assert.equal(loadConfig({ workspaceRoot: "/tmp" }).delegate.acceptanceFirst.enabled, false);
   });
 });
 

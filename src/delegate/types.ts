@@ -51,6 +51,10 @@ export interface WorkerTask {
 
   /* ---- Phase 9L TDD fields ---- */
   tdd?: WorkerTddRequirement;
+
+  /** Phase: reachability gate — each module must be imported by at least one
+   *  non-test source file (catches green-but-inert/orphaned deliverables). */
+  expectedReachable?: { module: string; fromEntrypoint?: string }[];
 }
 
 export interface WorkerTddRequirement {
@@ -315,6 +319,9 @@ export interface ExpectedSymbolRule {
   file: string;
   symbol: string;
   mode: "must_add_or_change";
+  /** When true, the deliverable test-delta gate requires this symbol to appear
+   *  on an added line inside a TEST file (not just defined in production). */
+  mustBeTested?: boolean;
 }
 
 export interface ExpectedTestRule {
@@ -348,7 +355,9 @@ export interface CompletenessFailure {
     | "weak_regression_test"
     | "missing_self_audit"
     | "malformed_self_audit"
-    | "manual_review_required";
+    | "manual_review_required"
+    | "orphaned_deliverable"
+    | "deliverable_untested";
   message: string;
   deliverableId?: string;
   path?: string;

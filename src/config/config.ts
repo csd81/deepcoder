@@ -249,7 +249,11 @@ export const DEFAULT_DELEGATE_AUTOPILOT: DelegateAutopilotConfig = {
   stopOnQualityWarning: false,
 };
 
-export const DEFAULT_ACCEPTANCE_FIRST: AcceptanceFirstOptions = { enabled: false };
+// Verify-then-force is the default delegation posture: `/delegate plan` produces
+// acceptance-first plans (workers must make a production change, tests gate the
+// result) unless explicitly disabled via DEEPCODER_DELEGATE_ACCEPTANCE_FIRST=0
+// or config. The autopilot path is already acceptance-first by default.
+export const DEFAULT_ACCEPTANCE_FIRST: AcceptanceFirstOptions = { enabled: true };
 
 export const DEFAULT_QUALITY_GATE: QualityGateOptions = {
   enabled: false,

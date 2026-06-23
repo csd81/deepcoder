@@ -20,12 +20,14 @@
  * It never spawns processes, calls models, or mutates files.
  */
 
-import { promises as fs, existsSync } from "node:fs";
+import { promises as fs, existsSync, readdirSync, readFileSync } from "node:fs";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { validatePatch } from "./patchValidator.js";
 import { evaluateCompleteness } from "./completeness.js";
 import { loadPlan } from "./store.js";
 import { assertSafeId } from "../workspace/paths.js";
+import { extractImportSpecifiers, resolveSpecifier } from "../index/imports.js";
 import type {
   DelegationPlan,
   WorkerTask,
@@ -53,6 +55,83 @@ export function fileExistsIn(root: string, relPath: string): boolean {
   }
 }
 
+/**
+ * Recursively enumerate workspace-relative `.ts` files under `<root>/src`,
+ * skipping `node_modules`, `.git`, and `dist`. Paths use forward slashes and are
+ * relative to `root`. Best-effort: unreadable dirs are skipped, never throw.
+ */
+function enumerateSrcTsFiles(root: string): string[] {
+  const out: string[] = [];
+  const srcRoot = path.join(root, "src");
+  const SKIP = new Set(["node_modules", ".git", "dist"]);
+
+  const walk = (absDir: string): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (SKIP.has(ent.name)) continue;
+      const abs = path.join(absDir, ent.name);
+      if (ent.isDirectory()) {
+        walk(abs);
+      } else if (ent.isFile() && ent.name.endsWith(".ts")) {
+        const rel = path.relative(root, abs).split(path.sep).join("/");
+        out.push(rel);
+      }
+    }
+  };
+
+  walk(srcRoot);
+  return out;
+}
+
+/**
+ * Build the reachability `findImporters` predicate over a worktree `root`.
+ *
+ * Returns a function that, given a workspace-relative `modulePath`, yields the
+ * workspace-relative paths of NON-generated `.ts` source files under `src/`
+ * whose static imports resolve to that module. Reuses the canonical
+ * relative-import scanner (src/index/imports: extractImportSpecifiers +
+ * resolveSpecifier), which already handles the deepcoder ESM convention
+ * (`.js`-family specifier → `.ts` source) and `/index.ts` resolution.
+ *
+ * Caller (completeness reachability gate) filters test importers via classify;
+ * this helper only RETURNS importers and does no test-filtering.
+ */
+export function buildFindImporters(root: string): (modulePath: string) => string[] {
+  return (modulePath: string): string[] => {
+    // Enumerate lazily per call so the scan reflects the current filesystem
+    // state of the worktree (files materialized after build are still seen).
+    const files = enumerateSrcTsFiles(root);
+    const fileSet = new Set(files);
+    const target = modulePath.split(path.sep).join("/");
+    const importers: string[] = [];
+
+    for (const f of files) {
+      let text: string;
+      try {
+        text = readFileSync(path.join(root, f), "utf8");
+      } catch {
+        continue;
+      }
+      if (!text) continue;
+
+      const specs = extractImportSpecifiers(text, "ts");
+      for (const spec of specs) {
+        const resolved = resolveSpecifier(f, spec, fileSet);
+        if (resolved && resolved === target) {
+          importers.push(f);
+          break;
+        }
+      }
+    }
+    return importers;
+  };
+}
+
 export interface ValidateWorkerInput {
   root: string;
   plan: DelegationPlan;
@@ -69,6 +148,19 @@ export interface ValidateWorkerInput {
    */
   requireValidatedTest?: boolean;
   fileExists?: (relPath: string) => boolean;
+  /**
+   * Reachability gate input: given a module path, returns the workspace-relative
+   * paths that import it. Forwarded verbatim into evaluateCompleteness so the
+   * `task.expectedReachable` (orphaned_deliverable) gate runs from the pipeline.
+   * Absent → reachability fails closed when expectedReachable is non-empty.
+   */
+  findImporters?: (modulePath: string) => string[];
+  /**
+   * When true, every `expectedSymbols` rule is subject to the deliverable
+   * test-delta gate (deliverable_untested). Forwarded into evaluateCompleteness.
+   * Absent/false → only explicit `mustBeTested` rules apply (no behavior change).
+   */
+  requireDeliverableTested?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -201,6 +293,11 @@ export function validateWorkerResult(input: ValidateWorkerInput): WorkerValidati
       selfAudit: null, // We'll cross-check self-audit separately in Gate 5
       fileExists,
       reproPaths: run.tdd?.reproPaths,
+      // Anti-orphan wiring: forward the reachability + test-delta inputs so the
+      // orphaned_deliverable / deliverable_untested gates actually run from the
+      // pipeline (not just when completeness.ts is called directly).
+      findImporters: input.findImporters,
+      requireDeliverableTested: input.requireDeliverableTested,
     });
 
     if (!completenessResult.complete) {
@@ -466,6 +563,8 @@ export async function loadAndValidateWorker(
   opts?: {
     qualityGateRequired?: boolean;
     alreadyChangedPaths?: string[];
+    /** Forwarded to the deliverable test-delta gate (deliverable_untested). */
+    requireDeliverableTested?: boolean;
   },
 ): Promise<WorkerValidation> {
   // Validate ids
@@ -539,6 +638,10 @@ export async function loadAndValidateWorker(
   // every must_exist check would silently pass.
   const fileExists = (relPath: string): boolean => fileExistsIn(root, relPath);
 
+  // Reachability predicate: real importer scan over the worktree `root`. Built
+  // once here so the orphaned_deliverable gate runs against filesystem truth.
+  const findImporters = buildFindImporters(root);
+
   // Run validation
   const validation = validateWorkerResult({
     root,
@@ -549,6 +652,8 @@ export async function loadAndValidateWorker(
     alreadyChangedPaths,
     qualityGateRequired,
     fileExists,
+    findImporters,
+    requireDeliverableTested: opts?.requireDeliverableTested,
   });
 
   // Write validation.json

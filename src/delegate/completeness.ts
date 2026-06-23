@@ -40,6 +40,18 @@ export interface EvaluateCompletenessInput {
   fileExists?: (relPath: string) => boolean;
   /** Optional TDD repro paths from the worker run. */
   reproPaths?: string[];
+  /**
+   * Injected predicate for the reachability gate: given a module path, returns
+   * the workspace-relative paths that import it. If not provided while
+   * `task.expectedReachable` is non-empty, reachability fails closed.
+   */
+  findImporters?: (modulePath: string) => string[];
+  /**
+   * When true, every `task.expectedSymbols` rule is subject to the deliverable
+   * test-delta gate (symbol must appear on an added test line), even without an
+   * explicit `mustBeTested`. Absent/falsy → only `mustBeTested` rules apply.
+   */
+  requireDeliverableTested?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -57,7 +69,7 @@ export interface EvaluateCompletenessInput {
  * - `evidence`: record of what was checked and the outcome.
  */
 export function evaluateCompleteness(input: EvaluateCompletenessInput): CompletenessResult {
-  const { task, changedPaths, patchText, selfAudit, fileExists, reproPaths } = input;
+  const { task, changedPaths, patchText, selfAudit, fileExists, reproPaths, findImporters } = input;
 
   const failures: CompletenessFailure[] = [];
   const warnings: string[] = [];
@@ -330,7 +342,99 @@ export function evaluateCompleteness(input: EvaluateCompletenessInput): Complete
   }
 
   /* ---------------------------------------------------------------- */
-  /*  6. Result                                                        */
+  /*  6. Reachability gate (orphaned/inert deliverables)               */
+  /* ---------------------------------------------------------------- */
+
+  // Each expectedReachable module must be imported by at least one NON-test
+  // source file. Filesystem/import truth is injected via `findImporters`; when
+  // it is absent we fail closed (cannot prove reachability => not satisfied),
+  // mirroring how must_exist fails closed without `fileExists`.
+  const expectedReachable = task.expectedReachable ?? [];
+
+  for (const rule of expectedReachable) {
+    if (!findImporters) {
+      failures.push({
+        code: "orphaned_deliverable",
+        message: `Reachability of module "${rule.module}" cannot be verified (no findImporters injected)`,
+        path: rule.module,
+      });
+      evidence.push({
+        path: rule.module,
+        note: `reachability "${rule.module}" cannot verify (no findImporters)`,
+      });
+      continue;
+    }
+
+    const importers = findImporters(rule.module);
+    const nonTestImporters = importers.filter((p) => classify(p).kind !== "test");
+
+    if (nonTestImporters.length === 0) {
+      failures.push({
+        code: "orphaned_deliverable",
+        message: `Module "${rule.module}" is defined but not imported by any non-test source file (orphaned/inert).`,
+        path: rule.module,
+      });
+      evidence.push({
+        path: rule.module,
+        note: `reachability "${rule.module}" orphaned (no non-test importer)`,
+      });
+    } else {
+      evidence.push({
+        path: rule.module,
+        note: `reachability "${rule.module}" imported by ${nonTestImporters.join(", ")}`,
+      });
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  7. Deliverable test-delta gate (vacuous-test guard)              */
+  /* ---------------------------------------------------------------- */
+
+  // An in-scope symbol rule must have its symbol appear on an ADDED line inside
+  // at least one changed TEST file. A rule is in scope when it sets
+  // `mustBeTested` OR `input.requireDeliverableTested` is true. When the
+  // stronger expectedTests/tdd gates already own test coverage, a miss is
+  // downgraded to a warning to avoid double-failing.
+  const changedTestFiles = changedPaths.filter((p) => classify(p).kind === "test");
+  const addedTestLines = changedTestFiles
+    .map((f) => addedLinesForFile(patchText, f))
+    .join("\n");
+  const testCoverageOwnedElsewhere =
+    (task.expectedTests ?? []).length > 0 || task.tdd !== undefined;
+
+  for (const es of task.expectedSymbols ?? []) {
+    const inScope = es.mustBeTested === true || input.requireDeliverableTested === true;
+    if (!inScope) continue;
+
+    if (addedTestLines.includes(es.symbol)) {
+      evidence.push({
+        path: es.file,
+        note: `deliverable "${es.symbol}" exercised by an added test line`,
+      });
+    } else if (testCoverageOwnedElsewhere) {
+      warnings.push(
+        `Deliverable symbol "${es.symbol}" (from "${es.file}") is not directly ` +
+          "exercised by an added test line; relying on expectedTests/tdd gates for coverage",
+      );
+      evidence.push({
+        path: es.file,
+        note: `deliverable "${es.symbol}" untested in delta (downgraded — expectedTests/tdd owns coverage)`,
+      });
+    } else {
+      failures.push({
+        code: "deliverable_untested",
+        message: `Deliverable symbol "${es.symbol}" (from "${es.file}") does not appear on an added line in any test file (vacuous/untested).`,
+        path: es.file,
+      });
+      evidence.push({
+        path: es.file,
+        note: `deliverable "${es.symbol}" NOT exercised by any added test line`,
+      });
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  8. Result                                                        */
   /* ---------------------------------------------------------------- */
 
   return {
