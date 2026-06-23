@@ -11,6 +11,7 @@ import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext, ToolInvocation, ToolPreview, ToolResult, Todo } from "../tools/types.js";
 import { runAgentLoop, type AgentDeps } from "../agent/agentLoop.js";
 import { runPreToolUseHooks, runAdvisoryHooks, type HookRunContext } from "../hooks/runner.js";
+import { redactSecrets } from "../workspace/redact.js";
 import { evaluateAction } from "../security/monitor.js";
 import type { HookEvent } from "../hooks/types.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
@@ -300,10 +301,15 @@ export function skillsRuntime(session: Session): ActivateSkillRuntime {
 }
 
 /** Fire a session-level advisory event (no matcher keys); returns injected context. */
-async function fireSessionEvent(session: Session, event: HookEvent, payload: Record<string, unknown> = {}): Promise<string[]> {
+export async function fireSessionEvent(session: Session, event: HookEvent, payload: Record<string, unknown> = {}): Promise<string[]> {
   const list = hooksFor(session, event);
   if (!list) return [];
-  const out = await runAdvisoryHooks(event, list, [], payload, hookCtx(session));
+  // Redact secret-shaped tokens in the payload before handing it to hook subprocesses.
+  const safePayload: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    safePayload[k] = typeof v === "string" ? redactSecrets(v) : v;
+  }
+  const out = await runAdvisoryHooks(event, list, [], safePayload, hookCtx(session));
   for (const w of out.warnings) stdout.write(chalk.yellow(`\nhook: ${w}\n`));
   return out.context;
 }
@@ -990,7 +996,7 @@ export async function runRepl(session: Session): Promise<void> {
       }
 
       // UserPromptSubmit hooks (Phase 7B): may warn and inject context for this turn.
-      const extra = await fireSessionEvent(session, "UserPromptSubmit", { prompt: input });
+      const extra = await fireSessionEvent(session, "UserPromptSubmit", { prompt: redactSecrets(input) });
       const content = extra.length ? `${input}\n\n[hook context]\n${extra.join("\n")}` : input;
       // Expand @-file mentions before submitting.
       const root = session.executionRoot ?? session.config.workspaceRoot;
@@ -1040,14 +1046,11 @@ export async function runRepl(session: Session): Promise<void> {
   }
 }
 
-/** Append SessionStart hook context to the system message (best-effort). */
-async function injectSessionStartContext(session: Session): Promise<void> {
+/** Push SessionStart hook context as a user-role message (non-authoritative). */
+export async function injectSessionStartContext(session: Session): Promise<void> {
   const extra = await fireSessionEvent(session, "SessionStart");
   if (extra.length === 0) return;
-  const sys = session.messages[0];
-  if (sys?.role === "system") {
-    sys.content += `\n\n## Session hook context (non-authoritative)\n${extra.join("\n")}`;
-  }
+  session.messages.push({ role: "user", content: `[hook context]\n${extra.join("\n")}` });
 }
 
 /**
