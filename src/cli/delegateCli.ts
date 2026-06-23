@@ -283,6 +283,80 @@ export async function runDelegatePr(
   return { exitCode: 0, prUrl };
 }
 
+/* ------------------------------------------------------------------ */
+/*  delegate auto — autonomous plan → run → validate → pr chain       */
+/* ------------------------------------------------------------------ */
+
+export interface DelegateAutoResult {
+  /** 0 = every worker applyable (and PR'd unless noPr); 1 = some not applyable; 2 = plan/usage error. */
+  exitCode: number;
+  planId: string | null;
+  prUrls: string[];
+}
+
+interface AutoDeps {
+  plan?: (root: string, task: string, o: { tdd: boolean }) => Promise<{ exitCode: number; planId: string | null }>;
+  run?: (root: string, planId: string, o: { concurrent?: boolean }) => Promise<{ exitCode: number; result: unknown }>;
+  validate?: (root: string, planId: string, workerId: string) => Promise<WorkerValidation>;
+  pr?: (root: string, planId: string, workerId: string) => Promise<{ exitCode: number; prUrl?: string }>;
+}
+
+/**
+ * Chain plan (TDD) → run → validate → pr into one autonomous command.
+ * Seams default to runDelegatePlan/runDelegateRun/loadAndValidateWorker/runDelegatePr
+ * so tests inject fakes with no live model, no worktree, no GitHub.
+ *
+ * - A non-applyable worker NEVER opens a PR (the autonomy gate).
+ * - Plan step passes tdd:true so workers self-seed their red tests.
+ * - --no-pr stops after validation with the same exit semantics, prUrls empty.
+ */
+export async function runDelegateAuto(
+  root: string,
+  task: string,
+  opts?: { concurrent?: boolean; noPr?: boolean; base?: string },
+  deps?: AutoDeps,
+): Promise<DelegateAutoResult> {
+  const planFn = deps?.plan ?? ((r, t, o) => runDelegatePlan(r, t, { tdd: o.tdd }));
+  const runFn = deps?.run ?? ((r, p, o) => runDelegateRun(r, p, undefined, o));
+  const validateFn = deps?.validate ?? loadAndValidateWorker;
+  const prFn = deps?.pr ?? ((r, p, w) => runDelegatePr(r, p, w, { base: opts?.base }));
+
+  // 1. Plan — TDD required so workers self-seed red tests.
+  const planResult = await planFn(root, task, { tdd: true });
+  if (planResult.exitCode !== 0 || !planResult.planId) {
+    return { exitCode: 2, planId: null, prUrls: [] };
+  }
+  const planId = planResult.planId;
+
+  // 2. Run — proceed even if run fails (non-green workers will be non-applyable).
+  await runFn(root, planId, { concurrent: opts?.concurrent });
+
+  // 3. Load plan to enumerate workers; validate each.
+  const plan = await loadPlan(root, planId);
+  if (!plan) return { exitCode: 2, planId, prUrls: [] };
+
+  const workerIds = plan.workers.map((w) => w.id);
+  const validations: { workerId: string; applyable: boolean }[] = [];
+  for (const wid of workerIds) {
+    const v = await validateFn(root, planId, wid);
+    validations.push({ workerId: wid, applyable: v.applyable });
+  }
+
+  // 4. PR only for applyable workers (unless --no-pr).
+  const prUrls: string[] = [];
+  if (!opts?.noPr) {
+    for (const { workerId: wid, applyable } of validations) {
+      if (applyable) {
+        const prResult = await prFn(root, planId, wid);
+        if (prResult.prUrl) prUrls.push(prResult.prUrl);
+      }
+    }
+  }
+
+  const allApplyable = validations.every((v) => v.applyable);
+  return { exitCode: allApplyable ? 0 : 1, planId, prUrls };
+}
+
 /** Render a human-readable validation summary (used when --json is absent). */
 export function formatValidateSummary(results: DelegateValidateResult["results"]): string {
   const lines: string[] = [];
@@ -397,6 +471,31 @@ export function registerDelegateCommand(program: Command, deps: { root?: string 
         process.stdout.write(`PR opened: ${res.prUrl}\n`);
       }
       process.exit(0);
+    });
+
+  delegate
+    .command("auto <task...>")
+    .description("autonomous task → PR chain: plan (TDD) → run → validate → pr (gated on applyable)")
+    .option("--concurrent", "run independent workers concurrently")
+    .option("--no-pr", "stop after validation; do not open PRs")
+    .option("--base <branch>", "base branch for PRs")
+    .option("--json", "print DelegateAutoResult as JSON")
+    .action(async (taskParts: string[], o: { concurrent?: boolean; pr?: boolean; base?: string; json?: boolean }) => {
+      const res = await runDelegateAuto(root, taskParts.join(" "), {
+        concurrent: o.concurrent,
+        noPr: o.pr === false,
+        base: o.base,
+      });
+      if (o.json) {
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      } else {
+        process.stdout.write(`plan: ${res.planId}\n`);
+        process.stdout.write(`exit: ${res.exitCode}\n`);
+        for (const url of res.prUrls) {
+          process.stdout.write(`PR: ${url}\n`);
+        }
+      }
+      process.exit(res.exitCode);
     });
 
   return delegate;
