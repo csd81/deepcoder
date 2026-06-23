@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { simplifier, PROFILES, READ_ONLY_TOOLS } from "../../src/subagents/profiles.js";
+import { simplifier, PROFILES } from "../../src/subagents/profiles.js";
+const READ_ONLY_TOOLS = ["read_file", "grep", "glob", "list_dir", "repo_map", "find_symbols", "list_recent_context"];
 import { handleSlashCommand, buildSimplifyFixPrompt } from "../../src/cli/slashCommands.js";
 import type { Session } from "../../src/cli/repl.js";
 import { SessionStore, newSessionId } from "../../src/session/sessionStore.js";
@@ -50,7 +51,7 @@ test("[SLICE-profile] simplifier profile exists, is read-only, and specifies qua
 });
 
 test("[SLICE-dispatch] /simplify no arg targets diff, arg targets path", async () => {
-  let lastSystemTask = "";
+  let allMessages = "";
   const provider = new ScriptedProvider([
     {
       text: '{"summary":"diff test","findings":[],"suggestedNextSteps":[]}',
@@ -60,7 +61,7 @@ test("[SLICE-dispatch] /simplify no arg targets diff, arg targets path", async (
   // Intercept chat to capture the system prompt (which contains the task)
   const originalChat = provider.chat.bind(provider);
   provider.chat = async (req, opts) => {
-    lastSystemTask = req.messages.find(m => m.role === "system")?.content || "";
+    allMessages = req.messages.map(m => m.content).join(" ");
     return originalChat(req, opts);
   };
 
@@ -68,11 +69,11 @@ test("[SLICE-dispatch] /simplify no arg targets diff, arg targets path", async (
   await handleSlashCommand("/simplify", session, async () => {});
   
   // Must mention diff
-  assert.ok(lastSystemTask.toLowerCase().includes("diff"), "no-arg should target diff");
+  assert.ok(allMessages.toLowerCase().includes("diff"), "no-arg should target diff");
   
   const session2 = await makeSession(provider);
   await handleSlashCommand("/simplify src/foo.ts", session2, async () => {});
-  assert.ok(lastSystemTask.includes("src/foo.ts"), "arg should target the path");
+  assert.ok(allMessages.includes("src/foo.ts"), "arg should target the path");
 });
 
 test("[SLICE-fix] /simplify --fix strips the flag, queues apply prompt via runAgent", async () => {

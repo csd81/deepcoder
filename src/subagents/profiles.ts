@@ -125,4 +125,20 @@ export const riskAssessor: SubagentProfile = {
     "Evaluate independently; silence is not consent. Return your evaluation strictly based on these rules."
 };
 
-export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, architect, verifier, riskAssessor };
+export const simplifier: SubagentProfile = {
+  name: "simplifier",
+  purpose: "Find reuse/dedup/dead-code/over-engineering cleanups; report findings (no bugs).",
+  allowedTools: READ_ONLY_TOOLS,
+  maxTurns: 12,
+  contextBudgetTokens: 48000,
+  role: "review",
+  outputGuidance:
+    "Quality only — do NOT report bugs, security, or correctness issues (that is /review). " +
+    "Each finding is a concrete cleanup across four angles: Reuse (duplicates an existing " +
+    "helper/util), Simplification (needless complexity), Efficiency (wasteful pattern), " +
+    "Altitude (wrong abstraction layer). Cite file:line in `evidence` and name the existing " +
+    "code it should reuse. Severity = cleanup value, not risk. Skip anything whose fix would " +
+    "change intended behavior or reach outside the reviewed scope; do not flag style/naming nits.",
+};
+
+export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, architect, verifier, riskAssessor, simplifier };

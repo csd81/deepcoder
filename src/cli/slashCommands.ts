@@ -46,7 +46,7 @@ import { handleGit, isGitCommand } from "./gitSlashCommands.js";
 import { listCheckpoints, rollback } from "../session/checkpoints.js";
 import { loadCheckRun, listCheckRuns } from "../session/checkRuns.js";
 import { runSubagent } from "../subagents/runner.js";
-import { reviewer, researcher, testTriage } from "../subagents/profiles.js";
+import { reviewer, researcher, testTriage, simplifier } from "../subagents/profiles.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
 import { runPlanFlow } from "../subagents/planFlow.js";
 import { detectTestFramework, detectPkgManager, detectLinter, detectLanguage, buildStarterMd, type ProjectProfile } from "./initProject.js";
@@ -643,6 +643,31 @@ export async function handleSlashCommand(
     case "stop":
       runStopSlash(activityRegistry, arg);
       return { consumed: true };
+
+    case "simplify": {
+      const fix = /(?:^|\s)--fix\b/.test(arg);
+      const scopeArg = arg.replace(/(?:^|\s)--fix\b/, "").trim();
+      const scope = scopeArg
+        ? `target path/topic: ${scopeArg}`
+        : "the current working-tree diff (changed files only)";
+      await runSubagentCommand(
+        session,
+        save,
+        simplifier,
+        `Review ${scope} for reuse/dedup/dead-code/over-engineering cleanups only (no bugs). ` +
+        `Cite file:line and the existing code to reuse.`
+      );
+      if (fix && runAgent) {
+        session.messages.push({
+          role: "user",
+          content: buildSimplifyFixPrompt(session.reviews.at(-1)!.result)
+        });
+        await runAgent();
+      } else if (fix && !runAgent) {
+        console.log(chalk.yellow("/simplify --fix needs an interactive agent turn — run it from the REPL."));
+      }
+      return { consumed: true };
+    }
 
     case "review": {
       if (!arg) {
@@ -4006,4 +4031,17 @@ async function activateSkillSlash(session: Session, name: string, args: string):
   const rec = res.record;
   console.log(chalk.green(res.message));
   if (rec) console.log(chalk.dim(`body: ${(rec.bodyBytes / 1024).toFixed(1)} KiB${rec.arguments ? `, arguments: ${rec.arguments}` : ""}`));
+}
+
+export function buildSimplifyFixPrompt(result: SubagentResult): string {
+  let p = "Please apply the following simplifications found by the review subagent.\n\n";
+  for (const finding of result.findings) {
+    p += `- **${finding.file}${finding.line ? `:${finding.line}` : ""}**: ${finding.claim}\n`;
+    p += `  Evidence: ${finding.evidence}\n`;
+  }
+  p += "\n**IMPORTANT CONSTRAINTS:**\n";
+  p += "1. Skip any fixes that would change intended behavior or correctness.\n";
+  p += "2. Skip any fixes that reach outside the reviewed scope.\n";
+  p += "3. Summarize what was fixed and what was skipped at the end.\n";
+  return p;
 }
