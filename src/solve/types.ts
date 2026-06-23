@@ -34,6 +34,12 @@ export interface SolveOptions {
   repro?: "auto" | "off";
   /** Workspace-relative path for the generated repro test (default: a scratch path). */
   reproPath?: string;
+  /**
+   * Opt-in (`--plan`): before the fix loop, run the read-only architect flow
+   * (explorer → planner), persist the plan under plans/, and inject the rendered
+   * plan as advisory context for the agent to follow. Default off.
+   */
+  plan?: boolean;
 }
 
 export interface SolveResult {

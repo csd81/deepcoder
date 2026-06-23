@@ -1324,10 +1324,13 @@ export async function handleSlashCommand(
     }
 
     case "solve": {
-      const [checkName, ...taskParts] = arg.split(/\s+/);
+      // Opt-in `--plan`: run the architect flow and inject a plan before solving.
+      const plan = /(^|\s)--plan(\s|$)/.test(arg);
+      const rest = plan ? arg.replace(/(^|\s)--plan(\s|$)/, " ").trim() : arg;
+      const [checkName, ...taskParts] = rest.split(/\s+/);
       const task = taskParts.join(" ").trim();
       if (!checkName || !task) {
-        console.log(chalk.dim("usage: /solve <check-name> <task>   (edits, runs the check, retries on failure)"));
+        console.log(chalk.dim("usage: /solve [--plan] <check-name> <task>   (edits, runs the check, retries on failure)"));
         return { consumed: true };
       }
       if (!runAgent) {
@@ -1336,7 +1339,7 @@ export async function handleSlashCommand(
       }
       await runSolveCommand(
         session,
-        { task, checkName, maxAttempts: config.solveMaxAttempts },
+        { task, checkName, maxAttempts: config.solveMaxAttempts, plan },
         runAgent,
       );
       await save();
