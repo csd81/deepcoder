@@ -1,98 +1,199 @@
 # Feature — Repo refactoring (`/refactor`)
 
+> **This plan was rewritten after an assessment against the codebase.** The
+> original draft's execution design — a `runSolveLoop(session, { contextMessages,
+> strategy: "apply_patch-first", … })` call — does not match the real solver API
+> and double-counted context-gathering the solver already does. The intent
+> (analyze → plan → execute → verify in one command) is kept; the wiring is
+> corrected to ride the *existing* `/solve` plumbing. See **Appendix A** for the
+> assessment.
+
 ## Context
 
-Deepcoder can edit individual files (`edit_file`) and atomic multi-file patches (`apply_patch`), and has a solve loop (`/solve`) for iterating against a check. But cross-file refactoring — renaming a symbol, extracting a module, restructuring an API — is still manual: the user must identify all affected files, apply changes one by one, and verify.
+deepcoder can edit single files (`edit_file`), apply multi-file atomic patches
+(`apply_patch`: `create` / `update` / `delete` ops), and iterate against a check
+(`/solve` → `runSolveLoop`). Cross-file refactoring is still manual. The pieces
+to automate it already exist:
 
-The repo index (`src/index/`) already tracks symbol definitions, references, import edges, and impact graphs. The `apply_patch` tool handles multi-file atomic edits. The solver handles iterative check-against. What's missing is a workflow that ties them together: **analyze → plan → execute → verify** in one command.
+- **Impact data** lives in `src/index/` — `impact.ts` (who imports a symbol),
+  `references.ts` (all references), `symbols.ts`, `imports.ts`. It's also exposed
+  to the model as the `impact_graph`, `find_references`, `repo_index`, and
+  `repo_map` **tools**, which the model can call mid-loop.
+- **The edit→check→retry loop** is `runSolveLoop(session, opts, deps)`
+  (`src/solve/solver.ts`), driven by `runSolveCommand` (`src/cli/solveRunner.ts`),
+  which wires the `SolveDeps` (runAgent + lifecycle hooks).
+- **Preflight context** already exists: when `config.context.preflight` is on,
+  `solveRunner` runs an explorer subagent before attempt 1 and injects a brief
+  into `session.messages` (`solveRunner.ts:144-164`).
+
+So `/refactor` is **not a new engine** — it is `/solve` seeded with
+refactor-oriented context and a prompt that steers toward an atomic
+`apply_patch`. The work is a thin command wrapper, not a new solver.
 
 ## Model
 
-- `/refactor <description>` — analyses the codebase, identifies all files affected by the refactor, produces an `apply_patch` plan, executes it, and runs verification (typecheck + tests).
-- `/refactor --check phase` — like `/solve`, runs a named check after applying the refactor.
-- The model sees the impact graph (which files import the symbol being changed), the current definitions, and all references. It produces a single `apply_patch` payload covering all changes.
-- If compilation or tests fail, the model gets one retry with the error output (same as `/solve`).
+- `/refactor <check-name> <description>` — mirrors `/solve`'s arg shape (the
+  check is required because the solver verifies against a named, classifier-gated
+  check; it refuses with neither a check nor `repro:auto`). Gathers refactor
+  context, seeds it, then runs the existing solve loop against `<check-name>`.
+- The model is steered (via a seeded system message) to use `impact_graph` /
+  `find_references` to find every affected site and to emit a single
+  `apply_patch` covering all of them. This is a *nudge*, not an enforced
+  strategy — the solver cannot force a particular tool.
+- On check failure the existing loop feeds back a redacted summary and retries up
+  to `maxAttempts` (same as `/solve`).
 
 ## Design
 
-### 1. Analysis phase
+### 1. Refactor context (reuse preflight; add impact only if it pays)
 
-Before the model plans edits, gather context:
+**Default:** rely on the existing preflight explorer + the model's own
+`impact_graph` / `find_references` tools. Do **not** hand-roll a bounded
+`RefactorContext` snapshot first — a pre-baked top-20/top-50 list can be stale or
+clip the very reference the refactor needs, and the model can query the live
+index itself.
+
+**Optional refactor-specific seed:** if a symbol name is parseable from the
+description, build a small, explicit impact block directly from the index and
+inject it as a system message (mirroring the preflight injection at
+`solveRunner.ts:159`):
 
 ```ts
-export interface RefactorContext {
-  task: string;
-  // Derived from the repo index
-  affectedFiles: string[];
-  symbols: { name: string; file: string; kind: string }[];
-  references: { symbol: string; file: string; line: number }[];
-  impact: { file: string; impactedBy: string[] }[];
+// src/cli/refactor.ts
+import { findReferences } from "../index/references.js";
+import { impactedBy } from "../index/impact.js";
+
+export function buildRefactorSeed(symbol: string, refs: Reference[], impacted: string[]): string {
+  // A SHORT, explicit "here are the known reference sites; verify with the
+  // tools before editing" block — advisory, not authoritative.
 }
 ```
 
-Built from the existing `impactedBy`, `findReferences`, and `repo_index` tools. The context is bounded (top 20 files, top 50 references) to fit the prompt.
+Seed via `session.messages.push({ role: "system", content: seed })` before
+invoking the loop — the same mechanism preflight uses. There is no
+`contextMessages` option on the solver.
 
-### 2. `apply_patch` + solve loop
+### 2. Execute via the existing solve wiring
 
-The refactor uses the existing solve loop infrastructure from `src/solve/solver.ts`, but:
-- The initial edit is an `apply_patch` call instead of individual edits
-- The model gets the refactor context (impact graph + references) as a system message
-- On check failure, the model can emit additional `apply_patch` or individual edits as retries
-
-### 3. Slash command (`/refactor`)
+`/refactor` calls the **same** `runSolveCommand` that `/solve` uses — it does NOT
+call `runSolveLoop` directly (that needs the full `SolveDeps` wiring, which
+`runSolveCommand` owns). The real options shape is `SolveOptions`
+(`src/solve/types.ts`): `{ task, checkName?, maxAttempts, repro?, reproPath? }` —
+no `strategy`, no `contextMessages`.
 
 ```ts
+// src/cli/slashCommands.ts — mirror `case "solve"` (line ~1283)
 case "refactor": {
-  const task = arg.trim();
-  if (!task) { console.log(chalk.red("Usage: /refactor <description>")); return { consumed: true }; }
-
-  // 1. Gather refactor context from the index
-  const ctx = await gatherRefactorContext(config.workspaceRoot, task);
-
-  // 2. Build a system message with the impact context
-  const contextMsg = buildRefactorContextMessage(ctx);
-
-  // 3. Run the solve loop with a combined apply_patch strategy
-  const result = await runSolveLoop(session, {
-    task,
-    contextMessages: [contextMsg],
-    check: "phase",                          // or user-specified
-    strategy: "apply_patch-first",           // prefer atomic patch over individual edits
-    maxAttempts: 3,
-  });
-
-  // 4. Show summary
-  const changed = result.changedFiles ?? [];
-  console.log(chalk.green(`Refactor complete. ${changed.length} file(s) changed.`));
-  if (result.solved) console.log(chalk.dim("All checks passed."));
-  else console.log(chalk.yellow("Refactor applied but checks failed. Review with /diff."));
+  const [checkName, ...rest] = arg.split(/\s+/);
+  const description = rest.join(" ").trim();
+  if (!checkName || !description) {
+    console.log(chalk.dim("usage: /refactor <check-name> <description>"));
+    return { consumed: true };
+  }
+  if (!runAgent) {
+    console.log(chalk.red("Refactor is unavailable in this context."));
+    return { consumed: true };
+  }
+  // Seed refactor-oriented context (preflight already runs inside runSolveCommand
+  // when enabled; this adds the apply_patch / impact-tool nudge + any symbol seed).
+  session.messages.push({ role: "system", content: buildRefactorPrompt(description) });
+  await runSolveCommand(
+    session,
+    { task: `Refactor: ${description}`, checkName, maxAttempts: config.solveMaxAttempts },
+    runAgent,
+  );
+  await save();
   return { consumed: true };
 }
 ```
 
-### 4. Reuse existing solver
+`buildRefactorPrompt` is the steering message: "use impact_graph/find_references
+to find ALL sites, then apply them as a single apply_patch; verify nothing else
+changed." Keep it short — it rides the cached prefix only for this run.
 
-The `runSolveLoop` in `src/solve/solver.ts` already handles edit→check→retry cycles. The refactor command just seeds it with richer context and a strategy hint. No new solver needed — wire the existing one.
+### 3. Register in the catalog
+
+Add one entry to `SLASH_CATALOG` in `src/cli/slashCatalog.ts` (metadata only — the
+executor stays the `handleSlashCommand` switch):
+
+```ts
+{ name: "refactor", args: "<check-name> <description>",
+  description: "Cross-file refactor: gather impact, edit atomically, verify against a check",
+  category: "session" },
+```
+
+### 4. No solver changes
+
+`runSolveLoop` is reused as-is. There is **no** `apply_patch-first` strategy to
+add — the solver runs the agent, which picks tools; steering happens in the
+seeded prompt. Dropping the original plan's `src/solve/solver.ts` edit.
 
 ## Files to change
 
-- **New:** `src/cli/refactor.ts`, `test/refactor.test.ts`.
-- **Edit:** `src/cli/slashCommands.ts` (add `case "refactor"`), `src/cli/slashCatalog.ts`, `src/solve/solver.ts` (optional: add apply_patch-first strategy).
+- **New:** `src/cli/refactor.ts` (`buildRefactorPrompt`, optional `buildRefactorSeed`),
+  `test/refactor.test.ts`.
+- **Edit:** `src/cli/slashCommands.ts` (add `case "refactor"`, mirroring `case "solve"`),
+  `src/cli/slashCatalog.ts` (one `SLASH_CATALOG` entry).
+- **Not touched:** `src/solve/solver.ts` (no strategy needed), `src/index/*` (read
+  via existing exports only).
 
 ## Tests
 
-- `gatherRefactorContext` queries the index and returns affected files + references.
-- `buildRefactorContextMessage` produces a bounded, structured context block.
-- Solve loop with `strategy: "apply_patch-first"` emits `apply_patch` on the first turn.
-- End-to-end (temp repo): `/refactor rename function X to Y` → all references updated, typecheck passes.
+- `buildRefactorPrompt` produces a bounded steering message naming the impact
+  tools and the atomic-patch expectation.
+- `buildRefactorSeed` (if built) turns index `findReferences` / `impactedBy`
+  output into a short, explicit block and never exceeds its byte budget.
+- `/refactor` with a missing check-name or description prints usage and does not
+  invoke the loop.
+- The `SLASH_CATALOG` entry exists and matches the real command (there is likely
+  an existing catalog-vs-switch consistency test — extend it).
+- End-to-end (temp repo, configured check): `/refactor <check> rename X to Y` →
+  references updated in one patch, check passes. NOTE: needs a configured check;
+  pick the harness's existing solve E2E fixture as the template.
 
 ## Verification
 
 1. `npm run typecheck` clean; `npm run test:phase` green.
-2. Manual: in deepcoder's own repo, `/refactor rename displayPath to formatPath` → index detects all references, model renames them in one atomic patch, typecheck passes.
+2. Manual: `/refactor <check> rename displayPath to formatPath` in deepcoder's own
+   repo. **Prereq:** a check named `<check>` must exist in `config.checks` (e.g.
+   wire `test:phase` as a named check first), or the solver refuses.
 
 ## Safety
 
-- All edits go through the existing permission gate (same as any mutate tool).
-- Reuses the existing solve loop — bounded attempts, redacted failure feedback, classifier-gated checks.
-- Impact context is read-only (from the repo index). Never mutates without explicit approval.
+- All edits go through the existing permission gate (apply_patch is a mutate tool).
+- Reuses the solve loop's guarantees: bounded attempts, redacted failure
+  feedback, classifier-gated checks (the check is looked up by name, never
+  model-chosen), no auto-rollback.
+- Index reads are read-only; the seeded impact block is advisory — the model must
+  still verify with tools before editing.
+
+---
+
+## Appendix A — assessment of the original draft
+
+Verified against the code; the goal is sound but the execution was fictional.
+
+1. **`runSolveLoop(session, { task, contextMessages, check, strategy, maxAttempts })`
+   does not exist.** Real signature: `runSolveLoop(session, opts, deps)`
+   (`solver.ts:84`). `SolveOptions` (`types.ts:19`) is
+   `{ task, checkName?, maxAttempts, repro?, reproPath? }` — no `contextMessages`,
+   no `strategy`, and `check` is `checkName`. `deps` (`SolveDeps`, ~9 fields incl.
+   `runAgent`) must be wired; `runSolveCommand` (`solveRunner.ts`) owns that. A
+   command calls `runSolveCommand`, like `case "solve"` does.
+
+2. **No `strategy: "apply_patch-first"`.** The solver runs the agent loop; the
+   model chooses tools. You can only nudge via the seeded prompt.
+
+3. **The solver refuses without a check or `repro:auto`** (`solver.ts:109-115`).
+   `/refactor <description>` with no check would refuse. Hence the required
+   `<check-name>` arg, mirroring `/solve`.
+
+4. **The "Analysis phase" duplicates existing work.** A Phase 8D preflight
+   already runs an explorer and injects a brief into `session.messages`
+   (`solveRunner.ts:144-164`), and `impact_graph` / `find_references` /
+   `repo_index` are already model-callable tools. A bespoke bounded
+   `RefactorContext` (top-20/top-50) risks staleness and clipping the needed
+   reference — prefer the live tools, seed only a short advisory block.
+
+5. **Context is seeded by pushing a message, not by a `contextMessages` option** —
+   exactly what preflight does at `solveRunner.ts:159`.
