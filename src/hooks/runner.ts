@@ -97,7 +97,7 @@ export async function runAdvisoryHooks(
           if (msg) warnings.push(redactSecrets(String(msg)).slice(0, MAX_HOOK_OUTPUT_CHARS));
         }
         if (allowsContext && typeof parsed.context === "string" && parsed.context.trim()) {
-          context.push(redactSecrets(parsed.context).slice(0, MAX_HOOK_OUTPUT_CHARS));
+          context.push(stripControlChars(redactSecrets(parsed.context).slice(0, MAX_HOOK_OUTPUT_CHARS)));
         }
       }
     } catch {
@@ -207,21 +207,47 @@ function runHookCommand(
   });
 }
 
+/** Strip non-printable control chars from hook context, preserving \n and \t. */
+function stripControlChars(text: string): string {
+  return text.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "");
+}
+
 function tryParseJson(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
+  // Fast path: the whole output is valid JSON.
   try {
     const parsed = JSON.parse(trimmed);
     if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
   } catch {
-    const match = trimmed.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        const parsed = JSON.parse(match[0]);
-        if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
-      } catch {
-        // not JSON
+    // Fall through to single-object extraction.
+  }
+  // Conservative fallback: extract the FIRST complete JSON object from the
+  // output.  Multi-JSON output (two or more objects) must fail open → null.
+  const firstBrace = trimmed.indexOf("{");
+  if (firstBrace === -1) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = firstBrace; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
       }
     }
+  }
+  if (end === -1) return null;
+  // If there is more non-whitespace content after this object, the output
+  // contained multiple JSON values → fail open.
+  const rest = trimmed.slice(end + 1).trim();
+  if (rest.length > 0) return null;
+  try {
+    const parsed = JSON.parse(trimmed.slice(firstBrace, end + 1));
+    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+  } catch {
+    // not valid JSON after all
   }
   return null;
 }
