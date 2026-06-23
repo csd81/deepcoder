@@ -204,10 +204,18 @@ export interface DelegateAutopilotConfig {
   stopOnQualityWarning: boolean;
 }
 
+/** Per-prompt delegation assessment (the autonomous-delegation nudge). */
+export interface DelegateAssessConfig {
+  /** When true, each substantial prompt is assessed and the model is nudged
+   *  toward the `delegate` tool for broad/multi-area work. Advisory only. */
+  enabled: boolean;
+}
+
 export interface DelegateConfig {
   qualityGate: QualityGateOptions;
   acceptanceFirst: AcceptanceFirstOptions;
   autopilot: DelegateAutopilotConfig;
+  assess: DelegateAssessConfig;
 }
 
 export type TestTargetingMode = "off" | "suggest" | "targeted-first" | "targeted-only";
@@ -254,6 +262,11 @@ export const DEFAULT_DELEGATE_AUTOPILOT: DelegateAutopilotConfig = {
 // result) unless explicitly disabled via DEEPCODER_DELEGATE_ACCEPTANCE_FIRST=0
 // or config. The autopilot path is already acceptance-first by default.
 export const DEFAULT_ACCEPTANCE_FIRST: AcceptanceFirstOptions = { enabled: true };
+
+// The per-prompt delegation nudge is ON by default: it is advisory and read-only
+// (it only injects a hint; the model still decides), and autonomous delegation is
+// the feature this exists to enable. Disable with DEEPCODER_DELEGATE_ASSESS=0.
+export const DEFAULT_DELEGATE_ASSESS: DelegateAssessConfig = { enabled: true };
 
 export const DEFAULT_QUALITY_GATE: QualityGateOptions = {
   enabled: false,
@@ -375,7 +388,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
-  delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig> };
+  delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig>; assess?: Partial<DelegateAssessConfig> };
   format?: FormatConfig | null;
 };
 
@@ -589,10 +602,23 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     stopOnQualityWarning: overrideAutopilot.stopOnQualityWarning ?? fileAutopilot.stopOnQualityWarning ?? DEFAULT_DELEGATE_AUTOPILOT.stopOnQualityWarning,
   };
 
+  // Per-prompt delegation nudge: default ON; env DEEPCODER_DELEGATE_ASSESS=0/false/no disables.
+  const overrideAssess = delegateOverride?.assess ?? {};
+  const fileAssess = (fileDelegate.assess ?? {}) as Partial<DelegateAssessConfig>;
+  const assessEnabledEnv = process.env.DEEPCODER_DELEGATE_ASSESS;
+  const assess: DelegateAssessConfig = {
+    enabled: overrideAssess.enabled !== undefined
+      ? overrideAssess.enabled
+      : (assessEnabledEnv !== undefined
+        ? !["0", "false", "no"].includes(assessEnabledEnv.toLowerCase())
+        : (fileAssess.enabled ?? DEFAULT_DELEGATE_ASSESS.enabled)),
+  };
+
   const delegate: DelegateConfig = {
     qualityGate,
     acceptanceFirst,
     autopilot,
+    assess,
   };
 
   // Phase 10H — test targeting config: default < file < env.

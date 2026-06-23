@@ -1,0 +1,12 @@
+<!-- adapted-from: claude-code-system-prompts/data-http-error-codes-reference.md -->
+- **DeepSeek API error codes**:
+  - `400` — Invalid request (malformed JSON, bad parameters, unsupported model). Not retryable.
+  - `401` — Invalid API key (missing/revoked `Authorization` header). Not retryable. Set `DEEPSEEK_API_KEY` or `DEEPCODER_API_KEY`.
+  - `402` — Insufficient balance (credit exhausted). Not retryable. Top up account.
+  - `422` — Invalid parameter (e.g., `max_tokens` out of range). Not retryable. Fix request params.
+  - `429` — Rate limited (too many requests / tokens per minute). **Retryable** with exponential backoff.
+  - `500` — Internal server error. **Retryable** with exponential backoff.
+  - `503` — Service overloaded / temporary unavailable. **Retryable** with backoff.
+- **Key handling**: DeepSeek uses `Authorization: Bearer <key>` header. All requests must include it.
+- **Model names**: Use exact IDs like `deepseek-chat`, `deepseek-reasoner`, `deepseek-coder`. Invalid model ID → 400.
+- DeepSeek SDK auto-retries 429 and 5xx with exponential backoff (default: `max_retries=3`).

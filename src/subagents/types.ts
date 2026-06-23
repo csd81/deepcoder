@@ -15,12 +15,19 @@ export interface SubagentProfile {
 
 export type Severity = "critical" | "high" | "medium" | "low";
 
+/** Verdict from the adversarial finding-verifier (see src/delegate/verifyFindings.ts). */
+export type FindingVerdict = "confirmed" | "refuted" | "unverifiable";
+
 export interface SubagentFinding {
   severity: Severity;
   file?: string;
   line?: number;
   claim: string;
   evidence: string;
+  /** Set by auto-verification: whether an independent verifier confirmed the claim. */
+  verdict?: FindingVerdict;
+  /** The verifier's evidence/reason for its verdict. */
+  verifyEvidence?: string;
 }
 
 /** Structured, NON-authoritative subagent output. The parent may quote it but never acts on it. */

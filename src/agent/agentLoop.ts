@@ -74,6 +74,14 @@ export interface AgentDeps {
    */
   jitContext?(): string[];
   /**
+   * Delegation assessment hint. Consulted once per turn (like jitContext) and
+   * injected as ephemeral system context. Advisory only — it nudges the model
+   * toward the `delegate` tool for broad/multi-area work; it never invokes
+   * delegation itself. Yields its hint once, then []. Subagents are NOT given
+   * this callback (prevents recursion). Undefined = no nudge.
+   */
+  delegationHint?(): string[];
+  /**
    * Phase 7I — post-write diagnostics config. DEFAULT DISABLED. When enabled,
    * after a successful mutating tool (edit_file/write_file) the agent runs
    * matching diagnostic commands and feeds bounded output back to the model
@@ -325,8 +333,9 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
 
 /**
  * Append ephemeral context (todo list + newly-relevant JIT path-local
- * instructions) for the upcoming model call, without mutating persisted
- * history. JIT blocks are pulled once via `deps.jitContext()`.
+ * instructions + a one-shot delegation-assessment hint) for the upcoming model
+ * call, without mutating persisted history. JIT blocks are pulled once via
+ * `deps.jitContext()`; the delegation hint via `deps.delegationHint()`.
  */
 function withEphemeralContext(messages: AgentMessage[], ctx: ToolContext, deps: AgentDeps): AgentMessage[] {
   const extra: AgentMessage[] = [];
@@ -334,6 +343,9 @@ function withEphemeralContext(messages: AgentMessage[], ctx: ToolContext, deps: 
     extra.push({ role: "system", content: `Current todo list:\n${renderTodos(ctx.todos)}` });
   }
   for (const block of deps.jitContext?.() ?? []) {
+    extra.push({ role: "system", content: block });
+  }
+  for (const block of deps.delegationHint?.() ?? []) {
     extra.push({ role: "system", content: block });
   }
   return extra.length ? [...messages, ...extra] : messages;

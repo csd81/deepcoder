@@ -38,6 +38,7 @@ import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
 import { buildDelegateRuntime, attachFileWatcher } from "../runtime/sessionFactory.js";
+import { makeDelegationHint } from "../delegate/assess.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
 import type { UiEvent } from "../ui/events.js";
@@ -430,11 +431,28 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
       (route.baseUrl ?? "") === (session.config.baseUrl ?? "");
     provider = sameBackend ? session.provider : session.providerPool.providerFor(route);
   }
+  // Autonomous-delegation nudge: assess the latest user prompt and, if it looks
+  // worth fanning out, inject a one-shot advisory hint toward the `delegate` tool.
+  // Advisory only — never invokes delegation. Skips the model call for trivial
+  // prompts (looksDelegable pre-gate) and is disabled by DEEPCODER_DELEGATE_ASSESS=0.
+  let delegationHint: (() => string[]) | undefined;
+  if (session.config.delegate.assess.enabled) {
+    const lastUser = [...session.messages].reverse().find((m) => m.role === "user");
+    if (lastUser) {
+      delegationHint = await makeDelegationHint(lastUser.content, {
+        provider,
+        model: session.config.subagentModel ?? model,
+        signal: controller.signal,
+      });
+    }
+  }
+
   const deps: AgentDeps = {
     provider,
     registry: session.registry,
     ctx,
     model,
+    delegationHint,
     mode: effectivePlanModeApproval(session.planState ?? initPlanMode(), session.mode),
     // Phase 7I — post-write diagnostics (no-op unless config.diagnostics.enabled).
     diagnostics: session.config.diagnostics,

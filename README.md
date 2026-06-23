@@ -1,9 +1,10 @@
 # deepcoder
 
-A small, **safety-first** agentic coding CLI for the terminal. It runs an agent
+A small, **safety-first** agentic coding CLI for the terminal. Built for
+**DeepSeek V4 Flash/Pro** — one model family, fully optimized. It runs an agent
 loop that reads, searches, edits, and runs commands in your project to complete a
 task — but every action that can change your machine passes through a real
-permission model first, and the whole thing is **local-first and model-agnostic**.
+permission model first.
 
 It's deliberately compact (~4.5k lines) and **heavily tested** — including an
 adversarial suite that tries to *break* the safety guarantees, not just confirm
@@ -15,22 +16,21 @@ the happy path.
   approval modes (`readonly`/`ask`/`auto`), workspace + symlink confinement,
   secret-file guards, and output redaction. Read-only subagents and verification
   checks can't mutate your repo by construction. ~150 of the tests are adversarial.
-- **Local-first, no lock-in.** Runs against **Ollama** (fully local) or any of six
-  providers behind one vendor-neutral boundary — switch with one env var.
+- **Optimized for DeepSeek.** Temperature 0, prefix caching, 1M context,
+  provider-specific system prompt tuned for V4 Flash/Pro. Every optimization
+  targets one model family.
 - **Yours to audit.** Small, readable TypeScript; plain JSON session/checkpoint
   state under `.deepcoder/`; no telemetry.
 - **Undo built in.** Optional local checkpoints can roll back a run of agent edits
   (including deleting files it created) — not git, no commits.
 
-**Providers:** DeepSeek (default) · OpenAI-compatible · Ollama (local) · Qwen ·
-Gemini · Anthropic (native) — one vendor-neutral boundary, pick with
-`DEEPCODER_PROVIDER` ([details](#providers)).
+**Provider:** DeepSeek V4 Flash/Pro — exclusively optimized ([details](#providers)).
 
 ## Status
 
 Working: agent loop + permissions, streaming, sessions/resume, context
-compaction, repo map, reasoner planning (`/plan`), read-only MCP, six providers,
-local checkpoints, three read-only subagents (`/review`, `/research`, `/triage`),
+compaction, repo map, reasoner planning (`/plan`), read-only MCP, local
+checkpoints, three read-only subagents (`/review`, `/research`, `/triage`),
 and user-invoked verification checks (`/checks`). **217 tests** (unit +
 adversarial). See `plans/` for the per-phase design notes and `ROADMAP.md` for
 what's next.
@@ -47,7 +47,7 @@ cp .env.example .env   # then fill in DEEPSEEK_API_KEY
 ```
 DEEPSEEK_API_KEY=sk-...
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-flash
 ```
 
 ## Usage
@@ -87,28 +87,25 @@ before it can be applied — run artifact, check, patch validation, completeness
 self-audit, quality, conflict, and audit artifact gates. See `ROADMAP.md` for the
 full design.
 
-## Providers
+## Provider
 
-DeepSeek is the default, but any OpenAI-compatible backend works behind the same
-boundary — the agent loop, tools, and permissions are provider-agnostic. Select
-with `DEEPCODER_PROVIDER`:
-
-| Provider | Notes |
-|---|---|
-| `deepseek` (default) | uses `DEEPSEEK_*` or the generic `DEEPCODER_*` env |
-| `openai-compatible` | any OpenAI-style `/v1` endpoint; **requires `DEEPCODER_BASE_URL`** |
-| `ollama` | local models; no API key needed; defaults to `http://localhost:11434/v1` |
-| `qwen` | Alibaba Qwen via the DashScope OpenAI-compatible endpoint (default `qwen2.5-coder-32b-instruct`) |
-| `gemini` | Google Gemini via its OpenAI-compatibility endpoint (default `gemini-2.0-flash`) |
-| `anthropic` | **native** Claude adapter (Messages API); default `claude-3-5-sonnet-latest`, override with `DEEPCODER_MODEL` |
-| `openrouter` | [OpenRouter](https://openrouter.ai) unified API; default base URL `https://openrouter.ai/api/v1`; key `OPENROUTER_API_KEY`; model slugs like `openai/gpt-5.2` or `anthropic/claude-sonnet-4.6` |
-
-Generic env (`DEEPCODER_API_KEY/BASE_URL/MODEL`) takes precedence over the
-`DEEPSEEK_*` aliases. Example — point at local Ollama:
+Deepcoder is optimized exclusively for **DeepSeek V4 Flash** (default) and
+**DeepSeek V4 Pro** (planning). Set your API key in `.env` or export it:
 
 ```bash
-DEEPCODER_PROVIDER=ollama DEEPCODER_MODEL=llama3.1 npm run dev
+export DEEPSEEK_API_KEY=sk-...
+npm run dev
 ```
+
+Select model via `DEEPSEEK_MODEL` or `DEEPCODER_MODEL`:
+
+| Model | Use case |
+|---|---|
+| `deepseek-v4-flash` (default) | Daily coding, edits, simple tasks |
+| `deepseek-v4-pro` | Planning, complex refactoring, security review |
+
+An `openai-compatible` escape hatch exists for proxy/self-hosted endpoints
+via `DEEPCODER_BASE_URL` — but all tuning is designed for DeepSeek.
 
 ## Safety model
 
@@ -445,7 +442,7 @@ can `describe()` itself, `preview()` its effect, and `execute()`.
 
 ## Limitations
 
-- Providers: DeepSeek / OpenAI-compatible / Ollama / Qwen / Gemini / Anthropic (native).
+- Provider: DeepSeek V4 Flash/Pro only. Other providers removed to focus optimization.
 - MCP is read-only (execute-mode MCP tools are discovered but denied). No
   subagents yet.
 - The command classifier is a heuristic, **not a sandbox** — review actions in
@@ -521,6 +518,6 @@ DEEPCODER_PROVIDER=… DEEPCODER_API_KEY=… npm run eval   # scored run (needs 
 ```
 
 It's a **custom** suite (not SWE-bench): 8 self-contained JS bugs the agent must
-fix until a hidden test passes. Current result: **8/8 (100%)** on `deepseek-chat`
+fix until a hidden test passes. Current result: **8/8 (100%)** on `deepseek-v4-flash`
 (3/3 identical runs). Treat it as a capability smoke-test, not a ranking — these
 are small, well-described bugs, so a high score is expected.

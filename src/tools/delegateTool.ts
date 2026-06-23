@@ -38,7 +38,10 @@ export const delegateTool: Tool = {
   description:
     "Delegate a bounded, read-only subtask to a focused subagent (reviewer, researcher, explorer, or testTriage). " +
     "The subagent runs independently with its own tool budget and returns a structured summary + findings. " +
-    "Use this to investigate a specific area without polluting your own context or spending your turn budget.",
+    "Use this to investigate a specific area without polluting your own context or spending your turn budget. " +
+    "Reach for this when a task spans multiple files/subsystems or has independent parts (audits, broad surveys, " +
+    "\"check every X\") — delegating one subagent per area keeps your context clean and runs them in parallel, " +
+    "instead of grinding through everything serially. For a single-file or localized change, just edit directly.",
   kind: "read-only",
   schema,
   build(raw: unknown): ToolInvocation {

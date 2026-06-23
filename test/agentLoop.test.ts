@@ -63,6 +63,44 @@ test("denied run_bash returns a tool error and never executes", async () => {
   assert.ok(messages.some((m) => m.role === "tool" && /Denied by permission policy/.test(m.content)));
 });
 
+test("delegationHint blocks are injected as ephemeral system context, once, without mutating history", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "deepcoder-deleghint-"));
+  // Capture the messages the provider sees on each turn.
+  const seen: AgentMessage[][] = [];
+  const provider: ModelProvider = {
+    async chat(input: ChatRequest): Promise<ChatResponse> {
+      seen.push(input.messages);
+      // turn 0: one no-op tool call so there's a 2nd turn; turn 1: finish.
+      return seen.length === 1
+        ? { text: "", toolCalls: [{ id: "1", name: "read_file", arguments: { path: "a.txt" } }] }
+        : { text: "done", toolCalls: [] };
+    },
+  } as ModelProvider;
+  await writeFile(path.join(root, "a.txt"), "hi", "utf8");
+  const messages: AgentMessage[] = [{ role: "user", content: "audit everything" }];
+  let calls = 0;
+  const delegationHint = () => (calls++ === 0 ? ["[delegation assessment] try delegate"] : []);
+  await runAgentLoop(messages, deps(provider, await ctxFor(root), { delegationHint }));
+
+  const hintTurns = seen.filter((ms) => ms.some((m) => m.role === "system" && /delegation assessment/.test(m.content)));
+  assert.equal(hintTurns.length, 1, "hint appears in exactly one turn's prompt");
+  assert.ok(!messages.some((m) => m.role === "system" && /delegation assessment/.test(m.content)), "never persisted to history");
+});
+
+test("no delegationHint → no extra system context", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "deepcoder-nohint-"));
+  let captured: AgentMessage[] = [];
+  const provider: ModelProvider = {
+    async chat(input: ChatRequest): Promise<ChatResponse> {
+      captured = input.messages;
+      return { text: "done", toolCalls: [] };
+    },
+  } as ModelProvider;
+  const messages: AgentMessage[] = [{ role: "user", content: "hi" }];
+  await runAgentLoop(messages, deps(provider, await ctxFor(root)));
+  assert.ok(!captured.some((m) => m.role === "system" && /delegation assessment/.test(m.content)));
+});
+
 test("a tool that throws becomes a recoverable tool-result, not a fatal error", async () => {
   // read_file on a missing path throws ENOENT; the loop must keep going and the
   // model must see the failure as a tool result it can react to.
