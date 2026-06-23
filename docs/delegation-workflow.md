@@ -40,10 +40,16 @@ Large/cross-cutting phases do **not** one-pass. Carve out a **pure or seam-injec
 (`config.ts`, `registry.ts`, `sessionStore.ts`, `slashCommands.ts`) to an in-house follow-up —
 those are where a worker most often breaks the build or does partial work.
 
-## 2. Red-seed it (the forcing function)
+## 2. Red-seed it (the forcing function) — ON THE BRANCH, never on master
 
 Write the **failing test first**, with one tagged deliverable per behavior (`[SLICE-id]`),
-and confirm it is **red on baseline** (usually module-missing → import error). Commit the seed.
+and confirm it is **red on baseline** (usually module-missing → import error).
+
+> ⚠ **Do NOT commit the seed to master.** A red seed on master breaks the shared
+> `test:phase` gate for every agent until the impl lands — that defeats the entire
+> point of a branch. **Leave the seed UNCOMMITTED in your working tree** and let
+> `delegate.sh` land it ON THE BRANCH via `DELEGATE_SEED` (§4). Master only ever
+> sees the finished, green feature — through the PR.
 
 This is mandatory: DeepSeek **no-ops on a green check** ("delivery scope == seed scope"). A red
 anchor forces it to actually implement. The seed also pins scope so you can detect a worker
@@ -60,9 +66,11 @@ path so green ⇒ wired:
 - a pure render/util → assert its actual caller produces the new output (or don't delegate it standalone — bundle it with the feature that uses it).
 
 ```bash
+# Verify red on baseline — but do NOT `git add`/`git commit` it to master.
 node --import tsx --test test/adversarial/<slice>.test.ts >/dev/null 2>&1 \
   && echo "UNEXPECTED PASS" || echo "red on baseline ✓"
-git add test/adversarial/<slice>.test.ts && git commit -q -m "test(<area>): <slice> seed (red)"
+# Leave it uncommitted; hand it to delegate.sh via DELEGATE_SEED (§4), which
+# commits it on the branch:  DELEGATE_SEED="test/adversarial/<slice>.test.ts"
 ```
 
 ## 3. Write the task contract
@@ -84,14 +92,18 @@ git add test/adversarial/<slice>.test.ts && git commit -q -m "test(<area>): <sli
 ## 4. Launch the worker
 
 `scripts/delegate.sh` is now self-contained — it creates the branch worktree,
-provisions deps, launches the worker, and writes a completion sentinel. It does
-NOT commit or merge: the worker's changes are left UNCOMMITTED on the branch, so
-landing toward master is an explicit, human-gated step (verify → commit → merge).
-A delegation never integrates itself.
+**commits the red seed on the branch** (via `DELEGATE_SEED`, so master is never
+polluted), provisions deps, launches the worker, and writes a completion
+sentinel. It does NOT merge: the worker's changes are left UNCOMMITTED on the
+branch (or, with `DELEGATE_OPEN_PR=1`, committed + PR'd), so landing toward
+master is an explicit, human-gated step. A delegation never integrates itself.
 
 ```bash
-scripts/delegate.sh deepseek /tmp/task-XX.txt feat-XX        # provider task-file branch
+# branch-first: the seed is uncommitted in your tree; the script lands it on the branch.
+DELEGATE_SEED="test/<slice>.test.ts" \
+  scripts/delegate.sh deepseek /tmp/task-XX.txt feat-XX     # provider task-file branch
 # → worktree:  ../deleg-feat-XX   (branch feat-XX off master; slug-on-collision)
+# → branch:    seed committed as "test: feat-XX seed (red)" — master untouched
 # → log:       /tmp/deleg-feat-XX.log
 # → sentinel:  /tmp/deleg-feat-XX.log.exit   (worker exit code, written on finish)
 ```

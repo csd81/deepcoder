@@ -31,6 +31,13 @@
 # Run it N times with disjoint branches to delegate in parallel — each gets its
 # OWN branch worktree (no shared /tmp namespace), so parallel/multi-agent is safe.
 #
+# BRANCH-FIRST SEEDING (never pollute master): put the red-seed test in your main
+# checkout's working tree (UNCOMMITTED — do NOT commit it to master) and pass it
+# via DELEGATE_SEED. The script commits the seed ON THE BRANCH, so master stays
+# clean and only sees the finished feature via the PR:
+#   DELEGATE_SEED="test/foo.test.ts" \
+#     DELEGATE_OPEN_PR=1 scripts/delegate.sh deepseek /tmp/task-foo.txt feat-foo
+#
 # Opt-in PR mode (default off): set DELEGATE_OPEN_PR=1 to have the worker, on a
 # PASSING check only, commit + push its branch and open a PR for review (base:
 # $PR_BASE, default master). It NEVER merges — the PR is the review gate, and the
@@ -107,11 +114,27 @@ if [ "${DELEGATE_DRY_RUN:-}" = "1" ]; then
   echo "[dry-run] worktree would be: $DIR (branch $branch off $base) — NOT created"
   echo "[dry-run] would launch: node ... --mode auto --sandbox off --no-contain --workspace-isolation off --solve --check phase --solve-attempts $attempts <task>"
   echo "[dry-run] log: $log  sentinel: $log.exit  provider: $provider model: $M"
+  [ -n "${DELEGATE_SEED:-}" ] && echo "[dry-run] would commit seed ON BRANCH (not master): $DELEGATE_SEED"
   [ "$open_pr" = "1" ] && echo "[dry-run] on success would: commit + push $branch + open PR (base $pr_base) — never merge"
   exit 0
 fi
 
 git worktree add "$DIR" -b "$branch" "$base" >/dev/null
+
+# Branch-first seeding (do NOT pollute master). DELEGATE_SEED is a
+# space/newline-separated list of repo-relative red-seed files in the MAIN
+# checkout's working tree (uncommitted). They are copied into the worktree and
+# committed ON THE BRANCH — never on master. This is the forcing function for
+# the worker; master only ever sees the finished feature via the PR.
+if [ -n "${DELEGATE_SEED:-}" ]; then
+  for f in $DELEGATE_SEED; do
+    [ -f "$REPO/$f" ] || { echo "DELEGATE_SEED file not found: $f" >&2; git worktree remove --force "$DIR"; exit 5; }
+    mkdir -p "$DIR/$(dirname "$f")"
+    cp "$REPO/$f" "$DIR/$f"
+    git -C "$DIR" add "$f"
+  done
+  git -C "$DIR" commit -q -m "test: $branch seed (red)" || { echo "seed commit failed" >&2; exit 5; }
+fi
 
 # Deps: the worker runs UNCONTAINED (see header), so a symlink is fine + instant.
 [ -e "$DIR/node_modules" ] || ln -s "$REPO/node_modules" "$DIR/node_modules"

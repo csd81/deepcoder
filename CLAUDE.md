@@ -88,7 +88,7 @@ Config comes from env vars (`DEEPCODER_*`, with `DEEPSEEK_*` aliases) and `.deep
 
 When delegating a slice to a DeepSeek worker (deepcoder-as-subagent), follow `docs/delegation-workflow.md`. Key invariants from `AGENTS.md`:
 1. Override **all** provider env vars inline (`DEEPCODER_PROVIDER/MODEL/BASE_URL/API_KEY`) so a stray var can't send the wrong key (→ 401). `scripts/delegate.sh` does this.
-2. **Red-seed first** — commit a tagged failing test red on baseline; a DeepSeek worker no-ops on a green check.
+2. **Red-seed first, ON THE BRANCH** — author a tagged failing test (red on baseline); a DeepSeek worker no-ops on a green check. **Never commit the seed to master** (it breaks the shared gate). Leave it uncommitted and pass `DELEGATE_SEED="test/<slice>.test.ts"` so `delegate.sh` commits it on the feature branch. Master only sees the finished feature via the PR.
 3. Cap `--solve-attempts 3`.
 4. **Verify-then-force in house** — a green `--check phase` is necessary, not sufficient. Re-apply to a clean baseline and prove scope + anchors + red-on-baseline + green-on-full `test:phase` yourself.
 
