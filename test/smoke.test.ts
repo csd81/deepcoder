@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { SmokeCase, Executor, SmokeResult } from "../scripts/smoke.js";
+import { formatResultLine } from "../scripts/smoke.js";
 
 /**
  * Import the runner's core function and drive it directly (no subprocess).
@@ -78,4 +79,35 @@ test("[smoke-fail-timeout] runner reports FAIL for timeout scenario", async () =
   assert.equal(result.passed, false);
   assert.equal(result.exitCode, null);
   assert.equal(result.signal, "SIGTERM");
+});
+
+test("[smoke-report] a passing case renders a tick and no diagnostics", () => {
+  const line = formatResultLine({ name: "ok", passed: true, exitCode: 0, durationMs: 5 });
+  assert.match(line, /ok … ✓/);
+  assert.doesNotMatch(line, /exit/);
+});
+
+test("[smoke-report] a failing case surfaces the captured stderr so CI is diagnosable", () => {
+  // The whole point: when a case crashes in CI, the operator must SEE why.
+  const line = formatResultLine({
+    name: "list-files",
+    passed: false,
+    exitCode: 1,
+    durationMs: 5,
+    error: "Error: Cannot find module 'tsx'\n    at boot (main.ts:1)",
+  });
+  assert.match(line, /list-files … ✗ \(exit 1\)/);
+  assert.match(line, /Cannot find module 'tsx'/, "the failure reason must be printed, not swallowed");
+  assert.match(line, /at boot/, "the stack detail must be printed too");
+});
+
+test("[smoke-report] a signalled failure shows the signal alongside the exit tag", () => {
+  const line = formatResultLine({
+    name: "hang",
+    passed: false,
+    exitCode: null,
+    durationMs: 5,
+    signal: "SIGTERM",
+  });
+  assert.match(line, /hang … ✗ \(exit null SIGTERM\)/);
 });

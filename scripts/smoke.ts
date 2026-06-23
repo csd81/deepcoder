@@ -67,7 +67,7 @@ export async function runCase(
       passed: false,
       exitCode: r.exitCode,
       durationMs,
-      error: r.stderr?.slice(0, 500),
+      error: r.stderr?.slice(0, 4000),
       signal: r.signal,
     };
   } catch (err: any) {
@@ -82,6 +82,21 @@ export async function runCase(
   }
 }
 
+/**
+ * Render one result as a console line. On failure, the captured stderr is
+ * printed (indented) beneath the status — without this, a CI crash shows only
+ * "✗ (exit 1)" with no clue why, which is undiagnosable from the logs.
+ */
+export function formatResultLine(r: SmokeResult): string {
+  if (r.passed) return `  ${r.name} … ✓`;
+  let line = `  ${r.name} … ✗ (exit ${r.exitCode}${r.signal ? ` ${r.signal}` : ""})`;
+  const detail = r.error?.trim();
+  if (detail) {
+    line += "\n" + detail.split("\n").map((l) => `      ${l}`).join("\n");
+  }
+  return line;
+}
+
 async function main() {
   const cases: SmokeCase[] = JSON.parse(
     await readFile(new URL("smoke-prompts.json", import.meta.url), "utf8"),
@@ -90,15 +105,10 @@ async function main() {
   let failed = 0;
 
   for (const c of cases) {
-    process.stdout.write(`  ${c.name} … `);
     const result = await runCase(c);
-    if (result.passed) {
-      passed++;
-      process.stdout.write("✓\n");
-    } else {
-      failed++;
-      process.stdout.write(`✗ (exit ${result.exitCode}${result.signal ? ` ${result.signal}` : ""})\n`);
-    }
+    if (result.passed) passed++;
+    else failed++;
+    console.log(formatResultLine(result));
   }
 
   console.log(`\n${passed + failed} cases: ${passed} passed, ${failed} failed`);
