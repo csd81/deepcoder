@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadConfig } from "../../src/config/config.js";
 import { createProvider } from "../../src/providers/factory.js";
-import { redactSecrets, mapProviderError, temperatureField } from "../../src/providers/openaiCompatible.js";
+import { mapProviderError, temperatureField } from "../../src/providers/openaiCompatible.js";
+import { redactSecrets } from "../../src/workspace/redact.js";
 import { SessionStore, newSessionId, loadSession } from "../../src/session/sessionStore.js";
 
 /** Run a function with a patched process.env, always restored afterwards. */

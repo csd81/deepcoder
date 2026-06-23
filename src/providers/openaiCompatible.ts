@@ -14,9 +14,6 @@ import type {
 import { redactSecrets } from "../workspace/redact.js";
 import { parseUsage } from "./usage.js";
 
-// Re-export so existing `from "./openaiCompatible.js"` import paths keep working.
-export { redactSecrets };
-
 export interface OpenAICompatibleOptions {
   apiKey: string;
   baseUrl: string;
