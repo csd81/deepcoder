@@ -137,8 +137,13 @@ test("cost result includes itemised costs when pricing known", () => {
   const r = costResult(session);
   assert.equal(r.kind, "table");
   assert.ok(r.rows?.some((row) => row[0] === "total"));
-  assert.ok(r.rows?.some((row) => row[0] === "input"));
+  // Cost is broken out by class (fresh vs cached input, output) plus cache-hit
+  // rate so the dominant lever is visible — the plan's item-1 efficiency view.
+  assert.ok(r.rows?.some((row) => row[0] === "input (fresh)"));
+  assert.ok(r.rows?.some((row) => row[0] === "input (cached)"));
   assert.ok(r.rows?.some((row) => row[0] === "output"));
+  assert.ok(r.rows?.some((row) => row[0] === "cache hit rate"));
+  assert.ok(r.rows?.some((row) => row[0] === "biggest cost"));
 });
 
 // ── Telemetry ───────────────────────────────────────────────────────────────

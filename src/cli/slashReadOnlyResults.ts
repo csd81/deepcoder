@@ -9,7 +9,7 @@
 
 import { type Session } from "./repl.js";
 import type { SlashResult } from "./slashResult.js";
-import { estimateCost } from "../providers/pricing.js";
+import { estimateCost, tokenEfficiency } from "../providers/pricing.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { renderTodos } from "../tools/todoWrite.js";
 import { summarizeWebTrace } from "../web/trace.js";
@@ -72,10 +72,17 @@ export function costResult(session: Session): SlashResult {
     );
   }
 
+  // Token-efficiency view: on a prefix-cached DeepSeek agent the costly class is
+  // output (~40x cached input), so surface the cache-hit rate and which class
+  // dominates spend — that's the lever worth pulling.
+  const eff = tokenEfficiency(u, est);
   const rows: string[][] = [
     ["total", `~$${est.totalUsd.toFixed(4)}`],
-    ["input", `~$${est.inputUsd.toFixed(4)}`],
-    ["output", `~$${est.outputUsd.toFixed(4)}`],
+    ["output", `~$${eff.outputUsd.toFixed(4)}`],
+    ["input (fresh)", `~$${eff.freshInputUsd.toFixed(4)}`],
+    ["input (cached)", `~$${eff.cachedInputUsd.toFixed(4)}`],
+    ["cache hit rate", `${(eff.cacheHitRate * 100).toFixed(1)}%`],
+    ["biggest cost", eff.dominantCostClass],
     ["rate", est.rateLabel],
     ["tokens", String(u.totalTokens)],
   ];

@@ -51,6 +51,64 @@ export const DEFAULT_PRICING: ModelPricing[] = [
 ];
 
 /**
+ * A token-efficiency snapshot derived from usage + a cost estimate.
+ *
+ * The plan's thesis: on a prefix-cached DeepSeek agent, token TYPE dominates
+ * token COUNT — output bills ~40x cached input. This surfaces the cache-hit
+ * rate and which cost CLASS dominates so optimization targets the right lever.
+ */
+export interface TokenEfficiency {
+  promptTokens: number;
+  cachedPromptTokens: number;
+  freshPromptTokens: number;
+  completionTokens: number;
+  /** cachedPromptTokens / promptTokens, in [0,1]; 0 when no prompt tokens. */
+  cacheHitRate: number;
+  outputUsd: number;
+  freshInputUsd: number;
+  cachedInputUsd: number;
+  /** Which cost class is largest — the lever with the most leverage. */
+  dominantCostClass: "output" | "fresh-input" | "cached-input" | "none";
+}
+
+/**
+ * Derive a TokenEfficiency snapshot from normalized usage and its cost estimate.
+ * Pure; never throws (mirrors estimateCost's safety contract).
+ */
+export function tokenEfficiency(usage: TokenUsage, cost: CostEstimate): TokenEfficiency {
+  const cached = Math.min(Math.max(usage.cachedPromptTokens ?? 0, 0), usage.promptTokens);
+  const fresh = usage.promptTokens - cached;
+  const cacheHitRate = usage.promptTokens > 0 ? cached / usage.promptTokens : 0;
+  const freshInputUsd = cost.inputUsd - cost.cachedInputUsd;
+
+  const classes: Array<[TokenEfficiency["dominantCostClass"], number]> = [
+    ["output", cost.outputUsd],
+    ["fresh-input", freshInputUsd],
+    ["cached-input", cost.cachedInputUsd],
+  ];
+  let dominant: TokenEfficiency["dominantCostClass"] = "none";
+  let max = 0;
+  for (const [label, usd] of classes) {
+    if (usd > max) {
+      max = usd;
+      dominant = label;
+    }
+  }
+
+  return {
+    promptTokens: usage.promptTokens,
+    cachedPromptTokens: cached,
+    freshPromptTokens: fresh,
+    completionTokens: usage.completionTokens,
+    cacheHitRate,
+    outputUsd: cost.outputUsd,
+    freshInputUsd,
+    cachedInputUsd: cost.cachedInputUsd,
+    dominantCostClass: dominant,
+  };
+}
+
+/**
  * Match a model name against a pattern. Supports:
  * - Exact match
  * - Glob-style wildcard: "*" matches everything, "gpt-4o*" matches "gpt-4o-mini"
