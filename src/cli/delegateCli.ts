@@ -17,6 +17,7 @@ import { runRunnable, runRunnableConcurrent, type OrchestrationResult } from "..
 import { applyWorker, type ApplyResult } from "../delegate/apply.js";
 import { buildPlan } from "../delegate/planner.js";
 import { savePlan } from "../delegate/store.js";
+import { openPr } from "../delegate/openPr.js";
 import { loadConfig } from "../config/config.js";
 import type { DelegationPlan, WorkerValidation } from "../delegate/types.js";
 
@@ -218,6 +219,70 @@ export async function runDelegateApply(
   return { exitCode: result.ok ? 0 : 1, result };
 }
 
+/* ------------------------------------------------------------------ */
+/*  delegate pr — gate worker validation, then open a PR               */
+/* ------------------------------------------------------------------ */
+
+export interface DelegatePrResult {
+  /** 0 = PR opened; 1 = not applyable (no PR); 2 = usage/plan error. */
+  exitCode: number;
+  prUrl?: string;
+}
+
+interface PrDeps {
+  validate?: (root: string, planId: string, workerId: string) => Promise<WorkerValidation>;
+  openPr?: (body: string) => Promise<string>;
+}
+
+/**
+ * Open a PR for a worker ONLY if the 9-gate validator says it's applyable.
+ * The safety gate is non-negotiable: a non-applyable worker NEVER opens a PR.
+ *
+ * - validateFn = deps.validate ?? loadAndValidateWorker.
+ * - If `!validation.applyable` → print failing gate codes to stderr, return
+ *   { exitCode: 1 } and do NOT call openPr.
+ * - If applyable → build a PR body with the gate verdict, call
+ *   openPrFn = deps.openPr ?? openPr(root), and return the PR url.
+ */
+export async function runDelegatePr(
+  root: string,
+  planId: string,
+  workerId: string,
+  opts: { base?: string } = {},
+  deps: PrDeps = {},
+): Promise<DelegatePrResult> {
+  const validateFn = deps.validate ?? loadAndValidateWorker;
+  const openPrFn = deps.openPr ?? ((body: string) => openPr(body, { root, base: opts.base }));
+
+  const validation = await validateFn(root, planId, workerId);
+
+  if (!validation.applyable) {
+    for (const f of validation.failures) {
+      process.stderr.write(`delegate pr: gate ${f.code} — ${f.message}\n`);
+    }
+    return { exitCode: 1 };
+  }
+
+  // Build a PR body that includes the gate verdict.
+  const body = [
+    `**Worker validation: applyable (${validation.status})**`,
+    "",
+    ...validation.warnings.map((w) => `- Warning: ${w}`),
+    ...validation.evidence.map((e) => `- ${e.note}${e.path ? ` (${e.path})` : ""}`),
+    "",
+    "## Reviewer verify-then-force checklist",
+    "- [ ] Scope: only the intended files changed; the red seed was not gutted",
+    "- [ ] Non-vacuous: hiding the new impl makes its tests fail",
+    "- [ ] Wiring: new symbols have a real caller in `src/` (no orphan module)",
+    "- [ ] `npm run test:phase` is green on the merge result",
+    "",
+    "_Delegated via `deepcoder delegate pr`. The PR is the review gate; never auto-merge._",
+  ].join("\n");
+
+  const prUrl = await openPrFn(body);
+  return { exitCode: 0, prUrl };
+}
+
 /** Render a human-readable validation summary (used when --json is absent). */
 export function formatValidateSummary(results: DelegateValidateResult["results"]): string {
   const lines: string[] = [];
@@ -313,6 +378,25 @@ export function registerDelegateCommand(program: Command, deps: { root?: string 
       if (o.json) process.stdout.write(JSON.stringify(res.result, null, 2) + "\n");
       else process.stdout.write(`${res.result.ok ? "applied" : "refused"}: ${res.result.message}\n`);
       process.exit(res.exitCode);
+    });
+
+  delegate
+    .command("pr <plan-id> <worker-id>")
+    .description("open a PR for a worker (runs the 9-gate validator first; refuses if not applyable)")
+    .option("--base <branch>", "base branch for the PR (default: master)")
+    .option("--json", "print the result as JSON")
+    .action(async (planId: string, workerId: string, o: { base?: string; json?: boolean }) => {
+      const res = await runDelegatePr(root, planId, workerId, { base: o.base });
+      if (res.exitCode !== 0) {
+        process.stderr.write(`delegate pr: worker "${workerId}" is NOT applyable — no PR opened\n`);
+        process.exit(res.exitCode);
+      }
+      if (o.json) {
+        process.stdout.write(JSON.stringify({ prUrl: res.prUrl }, null, 2) + "\n");
+      } else {
+        process.stdout.write(`PR opened: ${res.prUrl}\n`);
+      }
+      process.exit(0);
     });
 
   return delegate;
