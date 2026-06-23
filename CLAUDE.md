@@ -18,9 +18,20 @@ npm run typecheck           # tsc --noEmit
 npm test                    # all tests (fast default; uses fake providers)
 npm run test:unit           # test/*.test.ts
 npm run test:adversarial    # test/adversarial/** (hostile-input / safety tests)
+npm run test:changed        # INNER LOOP: only tests affected by your changes
+npm run test:watch          # test:changed in --watch mode (re-run affected on save)
 npm run test:phase          # THE RELEASE GATE: typecheck + unit + adversarial
 npm run test:live           # optional live DeepSeek smoke (readonly); needs .env
 ```
+
+**Iterate with `test:changed`, gate with `test:phase`.** The full suite is ~304 files
+each paying a `tsx` process-startup tax (~25 s for unit alone), so don't run it on every
+edit. `scripts/test-changed.mjs` diffs your working tree vs HEAD, walks a transitive
+reverse-import graph (src + test), and runs only the tests that reach a changed file —
+a leaf change runs a handful of files in ~1 s. It errs toward running *more* tests (never
+fewer) and reports any changed src file no test reaches. Flags: `--list` (preview without
+running), `<ref>` (diff vs a base, e.g. `origin/master`), `--all` (full `test:phase`).
+Always run `test:phase` before considering work done.
 
 Run a single test file: `node --import tsx --test test/permissions.test.ts`
 Filter within a file: append `--test-name-pattern "<substring>"`.
