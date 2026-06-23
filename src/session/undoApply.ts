@@ -25,6 +25,25 @@ async function writeBlob(root: string, content: Buffer): Promise<string> {
   return sha;
 }
 
+/**
+ * Atomically write `content` to `file`: write a sibling temp file in the SAME
+ * directory, then rename it onto the target. A crash mid-write leaves only the
+ * temp file (or nothing) — never a partially-written target. Mirrors the
+ * `atomicWrite` helper in checkpoints.ts so `/undo` restores are as crash-safe
+ * as `rollback`. The temp lives beside the target so the rename stays on one
+ * filesystem (cross-device rename would fail).
+ */
+async function atomicWriteFile(file: string, content: Buffer): Promise<void> {
+  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  try {
+    await fs.writeFile(tmp, content);
+    await fs.rename(tmp, file);
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
 export interface UndoApplyResult {
   reverse: UndoEntry;
   restored: string[];
@@ -56,7 +75,7 @@ export async function applyUndoEntry(root: string, entry: UndoEntry): Promise<Un
     if (f.existed && f.restoreSha) {
       const content = await fs.readFile(blobPath(root, f.restoreSha));
       await fs.mkdir(path.dirname(abs), { recursive: true });
-      await fs.writeFile(abs, content);
+      await atomicWriteFile(abs, content);
       restored.push(f.path);
     } else {
       try { await fs.rm(abs); deleted.push(f.path); } catch { /* already gone */ }

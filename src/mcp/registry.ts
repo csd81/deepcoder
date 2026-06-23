@@ -34,11 +34,21 @@ export interface McpServerStatus {
  * Deepcoder `Tool`s. A server that fails to start is recorded as an error and
  * skipped — it never crashes the CLI.
  *
- * Trust model: an MCP tool is `read-only` only if its server is configured
- * `mode: "readonly"` (an operator assertion about the server). Otherwise it is
- * `execute`, and in Phase 4A execute-mode tools are denied by the permission
- * policy. MCP output is untrusted text — already size-capped in McpClient — and
- * flows through the normal tool-result path, so it can never alter policy.
+ * Trust model: a tool's `kind` is derived SOLELY from the operator-configured
+ * server `mode` ("readonly" → `read-only`, else `execute`). This is an operator
+ * assertion about the whole server; it is NOT verified against each tool's own
+ * advertised `annotations.readOnlyHint` (which the MCP protocol carries). We
+ * deliberately do not consult that hint here — it is server-supplied and thus
+ * untrusted, and `McpClient.listTools()` already discards it (it never reaches
+ * `wrapMcpTool`). So a `mode: "readonly"` server makes every tool `read-only`
+ * even if the tool advertises NOT read-only; the operator is trusted to only
+ * mark genuinely-safe servers `readonly`. (Wiring the per-tool hint through
+ * would require changes to McpClient/McpToolInfo, and even then we would treat
+ * it as advisory, never as a way to *escalate* a server the operator marked
+ * readonly.) Otherwise the tool is `execute`, and in Phase 4A execute-mode
+ * tools are denied by the permission policy. MCP output is untrusted text —
+ * already size-capped in McpClient — and flows through the normal tool-result
+ * path, so it can never alter policy.
  */
 export class McpManager {
   private clients: McpClient[] = [];
@@ -126,6 +136,9 @@ function wrapMcpTool(
   description: string,
   inputSchema: Record<string, unknown>,
 ): Tool {
+  // Operator-asserted, not verified: derived from the server `mode`, NOT from
+  // this tool's own `annotations.readOnlyHint` (which is dropped in McpClient
+  // and would be untrusted anyway). See the McpManager trust-model note above.
   const kind = client.mode === "readonly" ? "read-only" : "execute";
   return {
     name: toolName,

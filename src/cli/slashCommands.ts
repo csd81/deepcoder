@@ -1180,6 +1180,10 @@ export async function handleSlashCommand(
       } else if (sub === "apply") {
         try {
           await ws.applyPatchToRealRoot({ force: false });
+          // Reset isolation state so finalizeIsolation doesn't re-apply this same
+          // diff at session end; edits now target the real workspace.
+          session.isolation = undefined;
+          session.executionRoot = config.workspaceRoot;
           console.log(chalk.green("applied isolated changes to the real workspace."));
         } catch (err) {
           console.log(chalk.red(`apply failed: ${(err as Error).message}`));
@@ -2387,6 +2391,10 @@ export async function handleSlashCommand(
             task,
             checks: config.checks,
             config: apConfig,
+            // Fail-closed: if the quality gate is enabled, a worker with no
+            // gate result blocks apply (the gate isn't implemented yet, so
+            // enabling it must not silently pass workers unchecked).
+            qualityGateRequired: config.delegate.qualityGate.enabled,
             signal: controller.signal,
             confirm: async (prompt: string) => {
               // Only prompt when autoApply is true and we're interactive.

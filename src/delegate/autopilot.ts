@@ -40,6 +40,14 @@ export interface AutopilotInput {
   checks: Record<string, CheckConfig>;
   /** Autopilot configuration (default OFF, maxRounds, etc.). */
   config: DelegateAutopilotConfig;
+  /**
+   * Whether the delegate quality gate is required (from
+   * `config.delegate.qualityGate.enabled`). When true, a worker with no
+   * quality-gate result fails closed at validation (the gate is not yet
+   * implemented, so enabling it blocks rather than silently passing unchecked).
+   * Default false → unchanged behavior.
+   */
+  qualityGateRequired?: boolean;
   /** Abort signal for cancellation. */
   signal: AbortSignal;
   /** Optional interactive confirmation hook. Defaults to programmatic accept. */
@@ -201,6 +209,7 @@ export async function runAutopilot(input: AutopilotInput): Promise<AutopilotResu
     seams = {},
     planId: planIdOverride,
     dryRun = false,
+    qualityGateRequired = false,
   } = input;
 
   // Resolve seams with defaults.
@@ -366,6 +375,15 @@ export async function runAutopilot(input: AutopilotInput): Promise<AutopilotResu
     const roundBlocked: string[] = [];
     const roundSkipped: string[] = runResult.skipped.map((s) => s.workerId);
 
+    // Cross-worker conflict tracking (validation-time): accumulate the paths
+    // changed by workers ALREADY APPLIED earlier in this round, and feed them to
+    // each subsequent worker's validation as `alreadyChangedPaths`. This makes
+    // the validation-time conflict gate (overlap → conflict) actually fire so a
+    // later worker that edits a path a peer already applied is blocked rather
+    // than silently double-applied. (The concurrent orchestrator's
+    // detectFileConflicts is a separate, earlier check.)
+    const appliedPathsThisRound = new Set<string>();
+
     // Check for conflicts.
     if (runResult.conflicts.length > 0) {
       const conflictedIds = new Set<string>();
@@ -411,8 +429,8 @@ export async function runAutopilot(input: AutopilotInput): Promise<AutopilotResu
       let validation: WorkerValidation;
       try {
         validation = await validateWorkerFn(realRoot, planId, ran.workerId, {
-          qualityGateRequired: false,
-          alreadyChangedPaths: [],
+          qualityGateRequired,
+          alreadyChangedPaths: [...appliedPathsThisRound],
         });
       } catch {
         validations[ran.workerId] = { status: "invalid", applyable: false, failures: ["Validation error"] };
@@ -444,6 +462,9 @@ export async function runAutopilot(input: AutopilotInput): Promise<AutopilotResu
               if (applyResult.ok) {
                 roundApplied.push(ran.workerId);
                 allApplied.push(ran.workerId);
+                // Record this worker's changed paths so a later worker in the
+                // same round that overlaps them is blocked at validation time.
+                for (const p of ran.changedFiles) appliedPathsThisRound.add(p);
                 // Mark applied in the in-memory plan so (a) dependents become
                 // runnable next round and (b) this worker is never re-run/
                 // re-applied. Without this the loop re-applies the same worker

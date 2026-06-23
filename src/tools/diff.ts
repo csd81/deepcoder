@@ -14,6 +14,45 @@ interface DiffLine {
 
 const MAX_DIFF_LINES = 4000; // LCS is O(n*m); guard against pathological previews
 
+/**
+ * Preview cap (in *changed* lines, i.e. `+`/`-` rows) for the human-facing
+ * approval prompt. A change can be far smaller than MAX_DIFF_LINES yet still be
+ * large enough that a reviewer skims past a hostile edit buried in an otherwise
+ * benign-looking diff. Context/header rows don't count toward the cap.
+ */
+export const DIFF_PREVIEW_MAX_CHANGED_LINES = 200;
+
+/**
+ * Cap a unified diff for human PREVIEW only. Renders changed (`+`/`-`) lines up
+ * to {@link DIFF_PREVIEW_MAX_CHANGED_LINES}; once the cap is hit, the remaining
+ * lines are dropped and replaced with a marker stating how many changed lines
+ * were hidden. The full diff is never mutated — callers keep it for the actual
+ * apply; only what is shown at the approval prompt is truncated.
+ *
+ * Returns the input unchanged when the diff is empty or under the cap.
+ */
+export function capDiffPreview(diff: string, maxChangedLines = DIFF_PREVIEW_MAX_CHANGED_LINES): string {
+  if (!diff) return diff;
+  const lines = diff.split("\n");
+  let changed = 0;
+  for (const l of lines) if (l.startsWith("+") || l.startsWith("-")) changed++;
+  if (changed <= maxChangedLines) return diff;
+
+  const out: string[] = [];
+  let shown = 0;
+  for (const l of lines) {
+    const isChanged = l.startsWith("+") || l.startsWith("-");
+    if (isChanged && shown >= maxChangedLines) break;
+    out.push(l);
+    if (isChanged) shown++;
+  }
+  const hidden = changed - shown;
+  out.push(
+    `… (${hidden} more changed lines — approve to see full change / run a tool to inspect)`,
+  );
+  return out.join("\n");
+}
+
 export function unifiedDiff(oldText: string, newText: string, contextLines = 3): string {
   const a = oldText.length ? oldText.split("\n") : [];
   const b = newText.length ? newText.split("\n") : [];

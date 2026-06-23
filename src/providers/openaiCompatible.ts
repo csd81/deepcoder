@@ -39,6 +39,40 @@ export interface OpenAICompatibleOptions {
    * field. `undefined` → omit entirely (let the API use its own default).
    */
   reasoningEffort?: "low" | "medium" | "high";
+  /** Per-request timeout (ms) for the underlying HTTP client. Non-positive/NaN → default. */
+  timeoutMs?: number;
+  /** Max automatic retries on transient errors. Default DEFAULT_MAX_RETRIES. */
+  maxRetries?: number;
+}
+
+/**
+ * Default request timeout. Without this the OpenAI SDK falls back to a 10-minute
+ * default, so a hung connection would block the whole agent loop. 120s is well
+ * above a normal long completion yet bounds a stalled request.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+export const DEFAULT_MAX_RETRIES = 2;
+
+/** Resolved OpenAI client constructor options. */
+export interface ResolvedClientOptions {
+  apiKey: string;
+  baseURL: string;
+  defaultHeaders?: Record<string, string>;
+  timeout: number;
+  maxRetries: number;
+}
+
+/**
+ * Pure builder for the OpenAI client options. Always yields a finite, positive
+ * timeout (never unbounded) — a non-positive/NaN override falls back to the
+ * default. Extracted so the timeout policy is unit-testable without a client.
+ */
+export function resolveClientOptions(opts: OpenAICompatibleOptions): ResolvedClientOptions {
+  const t = opts.timeoutMs;
+  const timeout = typeof t === "number" && Number.isFinite(t) && t > 0 ? t : DEFAULT_REQUEST_TIMEOUT_MS;
+  const r = opts.maxRetries;
+  const maxRetries = typeof r === "number" && Number.isFinite(r) && r >= 0 ? r : DEFAULT_MAX_RETRIES;
+  return { apiKey: opts.apiKey, baseURL: opts.baseUrl, defaultHeaders: opts.defaultHeaders, timeout, maxRetries };
 }
 
 /** Models that accept a `reasoning: { effort }` body field. */
@@ -73,6 +107,22 @@ export function temperatureField(
 }
 
 /**
+ * Model-aware `temperature` fragment. Reasoning models (deepseek-v4-pro) reject a
+ * non-default temperature when `reasoning.effort` is set, so the field is OMITTED
+ * entirely for them — mirroring how `reasoningField` is gated by
+ * `supportsReasoningEffort`. For every other model this is just
+ * `temperatureField(perCall, providerDefault)`.
+ */
+export function modelAwareTemperatureField(
+  wireModel: string,
+  perCall: number | undefined,
+  providerDefault: number | undefined,
+): { temperature?: number } {
+  if (supportsReasoningEffort(wireModel)) return {};
+  return temperatureField(perCall, providerDefault);
+}
+
+/**
  * Generic OpenAI-compatible chat provider. DeepSeek, Ollama, and any other
  * OpenAI-compatible endpoint are just different (apiKey, baseUrl, label) presets
  * — see `factory.ts`. All wire-format mapping is confined to this file so the
@@ -86,11 +136,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private modelName: (model: string) => string;
 
   constructor(opts: OpenAICompatibleOptions) {
-    this.client = new OpenAI({
-      apiKey: opts.apiKey,
-      baseURL: opts.baseUrl,
-      defaultHeaders: opts.defaultHeaders,
-    });
+    this.client = new OpenAI(resolveClientOptions(opts));
     this.label = opts.label;
     this.temperature = opts.temperature;
     this.reasoningEffort = opts.reasoningEffort;
@@ -104,7 +150,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       res = await this.client.chat.completions.create(
         {
           model: wireModel,
-          ...temperatureField(input.temperature, this.temperature),
+          ...modelAwareTemperatureField(wireModel, input.temperature, this.temperature),
           ...reasoningField(wireModel, this.reasoningEffort),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
@@ -135,7 +181,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       stream = await this.client.chat.completions.create(
         {
           model: wireModel,
-          ...temperatureField(input.temperature, this.temperature),
+          ...modelAwareTemperatureField(wireModel, input.temperature, this.temperature),
           ...reasoningField(wireModel, this.reasoningEffort),
           messages: input.messages.map(toWireMessage),
           tools: input.tools.length ? input.tools.map(toWireTool) : undefined,
@@ -160,6 +206,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
         if (u) usage = u;
         const choice = chunk.choices[0];
         if (!choice) continue;
+        // DeepSeek-Pro (deepseek-v4-pro) streams its chain-of-thought as
+        // `reasoning_content` deltas alongside the normal `content` deltas. We
+        // DELIBERATELY discard reasoning_content: it is private model thinking,
+        // not assistant output, and `ModelEvent` has no channel to surface it
+        // separately. Reading it here (even just to drop it) makes the behavior
+        // explicit so it can never be mistaken for normal text.
+        const _reasoning = (choice.delta as { reasoning_content?: unknown } | undefined)?.reasoning_content;
+        void _reasoning; // intentionally dropped — never emitted as assistant text
         if (choice.delta?.content) yield { type: "assistant_text_delta", text: choice.delta.content };
         for (const tc of choice.delta?.tool_calls ?? []) acc.push(tc);
         if (choice.finish_reason) finishReason = choice.finish_reason;
@@ -290,13 +344,43 @@ function providerErrorDetail(err: unknown): string | undefined {
   return typeof detail === "string" && detail.trim().length > 0 ? detail.trim() : undefined;
 }
 
+/**
+ * Best-effort extraction of a `Retry-After` value (seconds or HTTP-date) from an
+ * error's response headers. Supports both a `Headers`-like object (OpenAI SDK)
+ * and a plain `{ "retry-after": "..." }` map. Returns the raw string or undefined.
+ */
+function retryAfterHeader(err: unknown): string | undefined {
+  const headers = (err as { headers?: unknown }).headers;
+  if (!headers) return undefined;
+  let raw: unknown;
+  if (typeof (headers as Headers).get === "function") {
+    raw = (headers as Headers).get("retry-after");
+  } else if (typeof headers === "object") {
+    const h = headers as Record<string, unknown>;
+    raw = h["retry-after"] ?? h["Retry-After"];
+  }
+  return typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : undefined;
+}
+
 export function mapProviderError(err: unknown, ctx: { label: string; model: string }): ProviderError {
   const status = (err as { status?: number }).status;
   switch (status) {
     case 401:
       return new ProviderError(`${ctx.label} rejected the API key (401). Check your API key.`);
-    case 429:
-      return new ProviderError(`${ctx.label} rate limit hit (429). Wait a moment and retry.`);
+    case 402:
+      return new ProviderError(
+        `${ctx.label} reports insufficient balance (402). Top up your account balance and retry.`,
+      );
+    case 429: {
+      const retryAfter = retryAfterHeader(err);
+      return new ProviderError(
+        retryAfter
+          ? `${ctx.label} rate limit hit (429). Retry after ${retryAfter}s.`
+          : `${ctx.label} rate limit hit (429). Wait a moment and retry.`,
+      );
+    }
+    case 503:
+      return new ProviderError(`${ctx.label} is overloaded (503). The service is busy — wait a moment and try again.`);
     case 404:
       return new ProviderError(`${ctx.label} could not use model "${ctx.model}" (404). Check the model name.`);
     case 400: {

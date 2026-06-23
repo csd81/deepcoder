@@ -48,7 +48,7 @@ export interface Config {
    * Set via DEEPCODER_TEMPERATURE (a number, or "default"/"omit" to omit).
    */
   temperature?: number;
-  /** Reasoning effort for reasoning providers (openai-responses). Default "medium". */
+  /** Reasoning effort for DeepSeek reasoning models (deepseek-v4-pro). Default "medium". */
   reasoningEffort?: "low" | "medium" | "high";
   /** Phase 8E opt-in semantic search (default disabled). */
   semanticSearch: SemanticSearchConfig;
@@ -274,6 +274,11 @@ export const DEFAULT_ACCEPTANCE_FIRST: AcceptanceFirstOptions = { enabled: true 
 // the feature this exists to enable. Disable with DEEPCODER_DELEGATE_ASSESS=0.
 export const DEFAULT_DELEGATE_ASSESS: DelegateAssessConfig = { enabled: true };
 
+// Auto-verification of delegated findings is ON by default (it's the safety net
+// against the model relaying unverified subagent claims). Disable with
+// DEEPCODER_DELEGATE_VERIFY=0.
+export const DEFAULT_DELEGATE_VERIFY: DelegateVerifyConfig = { enabled: true };
+
 export const DEFAULT_QUALITY_GATE: QualityGateOptions = {
   enabled: false,
   mode: "mandatory",
@@ -377,6 +382,18 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
 const KNOWN_PROVIDERS = new Set(Object.keys(PROVIDER_DEFAULT_MODELS));
 
 /**
+ * Default context-window budget for a provider. DeepSeek ships a 1M window; other
+ * providers keep a conservative 120K (smaller windows; smaller stable context
+ * caches better). Pure + exported so `runTask` can re-derive the budget from the
+ * resolved edit-route provider after a mid-session `/model` switch (the static
+ * load-time value would otherwise leave a 1M budget on a 120K model → OOM/400,
+ * or a 120K budget on a 1M model → premature compaction).
+ */
+export function contextBudgetForProvider(provider: string): number {
+  return provider === "deepseek" ? 1_000_000 : 120_000;
+}
+
+/**
  * Per-provider env-var prefix. Each provider resolves its key/baseUrl/model from
  * its OWN prefix only, so credentials never bleed across providers.
  */
@@ -394,7 +411,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   context?: Partial<ContextConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
-  delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig>; assess?: Partial<DelegateAssessConfig> };
+  delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig>; assess?: Partial<DelegateAssessConfig>; verify?: Partial<DelegateVerifyConfig> };
   format?: FormatConfig | null;
 };
 
@@ -620,11 +637,24 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
         : (fileAssess.enabled ?? DEFAULT_DELEGATE_ASSESS.enabled)),
   };
 
+  // Auto-verify delegated findings: default ON; env DEEPCODER_DELEGATE_VERIFY=0/false/no disables.
+  const overrideVerify = delegateOverride?.verify ?? {};
+  const fileVerify = (fileDelegate.verify ?? {}) as Partial<DelegateVerifyConfig>;
+  const verifyEnabledEnv = process.env.DEEPCODER_DELEGATE_VERIFY;
+  const verify: DelegateVerifyConfig = {
+    enabled: overrideVerify.enabled !== undefined
+      ? overrideVerify.enabled
+      : (verifyEnabledEnv !== undefined
+        ? !["0", "false", "no"].includes(verifyEnabledEnv.toLowerCase())
+        : (fileVerify.enabled ?? DEFAULT_DELEGATE_VERIFY.enabled)),
+  };
+
   const delegate: DelegateConfig = {
     qualityGate,
     acceptanceFirst,
     autopilot,
     assess,
+    verify,
   };
 
   // Phase 10H — test targeting config: default < file < env.
@@ -747,7 +777,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     // DEEPCODER_COMPACT_AT still override either default.
     contextBudgetTokens: numEnv(
       process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS,
-      provider === "deepseek" ? 1_000_000 : 120_000,
+      contextBudgetForProvider(provider),
     ),
     // Trim at 0.8 of the budget for every provider. For DeepSeek's 1M window
     // that still leaves ~800K working tokens, but caps how large the re-sent

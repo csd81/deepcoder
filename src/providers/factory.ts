@@ -12,6 +12,9 @@ import type { Config } from "../config/config.js";
  * nothing downstream is provider-aware.
  */
 export function createProvider(config: Config): ModelProvider {
+  // Optional request-timeout override (ms); undefined → provider default.
+  const envTimeout = Number(process.env.DEEPCODER_REQUEST_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : undefined;
   switch (config.provider) {
     case "deepseek":
       return new OpenAICompatibleProvider({
@@ -20,6 +23,7 @@ export function createProvider(config: Config): ModelProvider {
         label: "DeepSeek",
         temperature: config.temperature,
         reasoningEffort: config.reasoningEffort,
+        timeoutMs,
       });
 
     case "openai-compatible":
@@ -34,6 +38,7 @@ export function createProvider(config: Config): ModelProvider {
         label: "OpenAI-compatible",
         temperature: config.temperature,
         reasoningEffort: config.reasoningEffort,
+        timeoutMs,
       });
 
     // Test/smoke harness only: a canned no-op provider so the smoke suite can

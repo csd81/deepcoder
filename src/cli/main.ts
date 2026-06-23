@@ -37,7 +37,7 @@ program
   .option("--no-contain", "disable workspace containment (runs without bubblewrap; ignored under --yolo)")
   .option("--yolo", "approve ALL actions within the workspace — no prompts; forces containment ON and disables the MCP-execute + interactive-shell escape hatches")
   .option("--workspace-isolation <mode>", "isolate file edits in a git worktree: off | patch | keep")
-  .option("--workspace-isolation-include-dirty", "allow isolation even when the repo has uncommitted changes")
+  .option("--workspace-isolation-include-dirty", "allow isolation despite a dirty repo (works against HEAD; uncommitted changes are NOT included in the worktree)")
   .option("--tui", "interactive: use the experimental scrollable terminal UI (TTY only)")
   .option("--no-tui", "interactive: force the plain line UI")
   .option("--title <name>", "set a session title")

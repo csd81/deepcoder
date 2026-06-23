@@ -79,8 +79,17 @@ export class CheckpointRecorder {
   // after the agent's write (recordPostWrite) — NOT at finalize — so a later
   // user edit can't masquerade as the agent's post-write state.
   private pending = new Map<string, CheckpointFile>();
+  // Paths whose pre-image looked like it held secrets and so were NOT captured
+  // (see capture()). These edits are intentionally un-undoable; the list lets a
+  // caller surface a warning that rollback won't restore them.
+  private secretSkips = new Set<string>();
 
   constructor(private root: string) {}
+
+  /** Paths skipped by secret detection in capture() — their edits are NOT undoable. */
+  get skippedSecrets(): string[] {
+    return [...this.secretSkips];
+  }
 
   /** Number of finalizable entries (those the agent actually wrote). */
   get size(): number {
@@ -98,10 +107,14 @@ export class CheckpointRecorder {
       this.pending.set(rel, { path: rel, existed: false });
       return;
     }
-    // Secret detection: if the content looks like it contains secrets
-    // (e.g., API keys), skip capturing the pre-image. The file will be
-    // skipped on rollback with a "skipped" entry.
+    // Secret detection: if the pre-image looks like it contains secrets
+    // (e.g., API keys), do NOT capture it — we never copy secret bytes into the
+    // blob store. Because no `pending` entry is created, this file never enters
+    // a manifest, so its edit is silently un-undoable (it will NOT appear as a
+    // "skipped" rollback entry — rollback only sees manifest files). The path is
+    // recorded in `secretSkips` so a caller can warn the user it can't be undone.
     if (redactSecrets(content.toString("utf8")) !== content.toString("utf8")) {
+      this.secretSkips.add(rel);
       return;
     }
     const sha = sha256(content);
@@ -179,10 +192,11 @@ const RECOVERY_FILE = "recovery.json";
 
 async function writeRecoveryManifest(root: string, id: string, plan: Array<{ path: string; op: "restore" | "delete" }>): Promise<void> {
   const dir = path.join(checkpointsDir(root), id);
-  await fs.writeFile(
+  // atomicWrite (temp + rename) so a crash mid-write can't leave a half-written
+  // recovery.json that the next rollback would fail to JSON.parse.
+  await atomicWrite(
     path.join(dir, RECOVERY_FILE),
     JSON.stringify({ checkpointId: id, files: plan }, null, 2),
-    "utf8",
   );
 }
 
@@ -191,6 +205,19 @@ async function clearRecoveryManifest(root: string, id: string): Promise<void> {
     await fs.rm(path.join(checkpointsDir(root), id, RECOVERY_FILE), { force: true });
   } catch {
     // best-effort
+  }
+}
+
+/** True iff a recovery.json exists AND parses to a well-formed plan. A corrupt
+ *  manifest (crash mid-write) returns false so the caller can discard it rather
+ *  than crashing on JSON.parse. */
+async function recoveryManifestIsReadable(root: string, id: string): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(path.join(checkpointsDir(root), id, RECOVERY_FILE), "utf8");
+    const parsed = JSON.parse(raw) as { files?: unknown };
+    return Array.isArray(parsed.files);
+  } catch {
+    return false;
   }
 }
 
@@ -216,9 +243,15 @@ export async function detectIncompleteRollback(root: string, id: string): Promis
 export async function rollback(root: string, id: string, opts: { force?: boolean } = {}): Promise<RollbackResult> {
   assertSafeId(id);
 
-  // Crash recovery: if a previous rollback was interrupted, resume it.
+  // Crash recovery: if a previous rollback was interrupted, resume it. A
+  // corrupt recovery.json (e.g. a crash mid-write) must not brick the rollback:
+  // if it can't be parsed, discard it and fall through to a fresh forward
+  // rollback instead of letting resumeRollback's JSON.parse throw.
   if (await detectIncompleteRollback(root, id)) {
-    return resumeRollback(root, id, opts);
+    if (await recoveryManifestIsReadable(root, id)) {
+      return resumeRollback(root, id, opts);
+    }
+    await clearRecoveryManifest(root, id);
   }
 
   const raw = await fs.readFile(path.join(checkpointsDir(root), id, "manifest.json"), "utf8");
@@ -309,9 +342,30 @@ async function resumeRollback(root: string, id: string, _opts: { force?: boolean
     try {
       const f = manifest.files.find((mf) => mf.path === entry.path);
       if (!f) { result.skipped.push(entry.path); continue; }
-      const abs = resolveRealPathInWorkspace(root, f.path);
+      // Defense-in-depth, identical to the forward rollback path: a tampered
+      // recovery.json/manifest must never restore/delete a sensitive path or a
+      // malformed blob ref. (Previously the resume path trusted the manifest
+      // blindly, reopening the forged-manifest threat the forward path defends.)
+      if (isSensitivePath(f.path)) { result.skipped.push(entry.path); continue; }
+      let abs: string;
+      try {
+        abs = resolveRealPathInWorkspace(root, f.path);
+      } catch {
+        result.skipped.push(entry.path); // resolves (via symlink) outside the workspace
+        continue;
+      }
+      if (isSensitivePath(displayPath(root, abs))) { result.skipped.push(entry.path); continue; }
+      if (f.restoreSha && !/^[a-f0-9]{64}$/.test(f.restoreSha)) { result.skipped.push(entry.path); continue; }
       if (entry.op === "restore") {
         if (!f.restoreSha) { result.skipped.push(entry.path); continue; }
+        // Conflict re-check: only restore when the live file still matches the
+        // agent's post-run state (expectedSha) or is already at the pre-image —
+        // otherwise the user edited it after the crash; don't clobber it.
+        const current = await shaOfFile(abs);
+        if (current !== null && current !== f.expectedSha && current !== f.restoreSha) {
+          result.conflicts.push(entry.path);
+          continue;
+        }
         const content = await fs.readFile(path.join(checkpointsDir(root), "blobs", f.restoreSha));
         await fs.mkdir(path.dirname(abs), { recursive: true });
         await ensureNotDirectory(abs);

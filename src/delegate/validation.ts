@@ -6,15 +6,16 @@
  * auto-apply) calls this module — there is no duplicated or divergent gate
  * logic.
  *
- * The pipeline runs 8 gates in order:
+ * The pipeline runs 9 gates in order (Gate 5 is currently NOT WIRED):
  *   1. Run Artifact Gate
  *   2. Check Gate
  *   3. Patch Validation Gate
  *   4. Completeness Gate
- *   5. Self-Audit Gate
+ *   5. Self-Audit Gate (NOT WIRED — see note below)
  *   6. Quality Gate
  *   7. Conflict Gate
  *   8. Audit Artifact Gate
+ *   9. Validated-Test Gate (require a red→green test; 9L flip)
  *
  * validateWorkerResult is PURE except for the injected `fileExists` predicate.
  * It never spawns processes, calls models, or mutates files.
@@ -169,7 +170,7 @@ export interface ValidateWorkerInput {
 /* ------------------------------------------------------------------ */
 
 /**
- * Run the full 8-gate validation pipeline on a worker result.
+ * Run the full 9-gate validation pipeline on a worker result (Gate 5 NOT WIRED).
  *
  * Pure except for the injected `fileExists` predicate. Does NOT spawn
  * processes, call models, or mutate files.
@@ -290,7 +291,12 @@ export function validateWorkerResult(input: ValidateWorkerInput): WorkerValidati
       task: worker,
       changedPaths: run.changedFiles,
       patchText,
-      selfAudit: null, // We'll cross-check self-audit separately in Gate 5
+      // selfAudit is intentionally omitted: no part of the codebase currently
+      // PRODUCES or PERSISTS a WorkerSelfAudit artifact (isWorkerSelfAudit is
+      // never called; WorkerRun has no selfAudit field; the loader never reads
+      // one). evaluateCompleteness therefore takes the "missing self-audit"
+      // path (a warning), and the self-audit cross-check does NOT run. See the
+      // Gate 5 note below. Do not hard-code `selfAudit: null` as if a check ran.
       fileExists,
       reproPaths: run.tdd?.reproPaths,
       // Anti-orphan wiring: forward the reachability + test-delta inputs so the
@@ -325,28 +331,21 @@ export function validateWorkerResult(input: ValidateWorkerInput): WorkerValidati
   }
 
   /* ---------------------------------------------------------------- */
-  /*  Gate 5: Self-Audit Gate                                          */
+  /*  Gate 5: Self-Audit Gate (NOT WIRED)                              */
   /* ---------------------------------------------------------------- */
 
-  // We need to check if a self-audit file exists. Since this is a pure function,
-  // we rely on the caller to have loaded it. We check via the fileExists predicate
-  // or by noting that no self-audit was provided.
-  // The self-audit cross-check is done by evaluateCompleteness when we pass it.
-  // Here we add additional checks specific to the validation layer.
-
-  // If the worker has deliverables, a self-audit is expected.
-  const hasDeliverables = (worker.deliverables?.length ?? 0) > 0;
-
-  if (hasDeliverables && qualityGateRequired) {
-    // When quality gate is required, self-audit is also expected.
-    // We check if a self-audit was loaded by the caller.
-    // The caller should pass selfAudit via the completeness gate.
-    // For now, we note that self-audit validation is handled by evaluateCompleteness.
-    evidence.push({
-      source: "completeness",
-      note: "Self-audit gate: evaluated via evaluateCompleteness (completeness gate)",
-    });
-  }
+  // HONEST NO-OP: there is no self-audit gate at present. Nothing in the
+  // codebase produces or persists a WorkerSelfAudit artifact — `isWorkerSelfAudit`
+  // is never called, `WorkerRun` has no `selfAudit` field, and the loader
+  // (`loadAndValidateWorker`) never reads one. evaluateCompleteness is therefore
+  // always called without a selfAudit (Gate 4 above), so the self-audit
+  // cross-check in completeness.ts never fires from this pipeline.
+  //
+  // We deliberately push NO evidence note here. A note such as
+  // "evaluated via evaluateCompleteness" would falsely imply a cross-check ran.
+  // When a self-audit artifact is actually produced and threaded into
+  // evaluateCompleteness, wire it through Gate 4's `selfAudit` input and add a
+  // real check (and evidence) here.
 
   /* ---------------------------------------------------------------- */
   /*  Gate 6: Quality Gate                                             */

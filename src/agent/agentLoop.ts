@@ -105,6 +105,29 @@ export interface AgentDeps {
 export const READ_BUDGET_NUDGE_BYTES = 400_000;
 
 /**
+ * Per-message cap (bytes) on a single stored tool result. A single huge tool
+ * result (e.g. a whole-file read of a giant file) would otherwise be stored
+ * whole and land in the kept tail, blowing the context budget on its own.
+ * Generous enough not to clip normal results; results above it are truncated
+ * with an explicit marker so the model knows content was cut.
+ */
+export const MAX_TOOL_RESULT_BYTES = 100_000;
+
+/**
+ * Cap an individual tool-result string before it is stored in history. Returns
+ * the input unchanged when within the bound; otherwise keeps a leading slice
+ * and appends a clear truncation marker noting how many bytes were dropped.
+ */
+export function capToolResult(content: string, max = MAX_TOOL_RESULT_BYTES): string {
+  if (content.length <= max) return content;
+  const dropped = content.length - max;
+  return (
+    content.slice(0, max) +
+    `\n\n[... tool result truncated: ${dropped} of ${content.length} bytes omitted to fit the context budget ...]`
+  );
+}
+
+/**
  * Sum the byte length of all tool-role message content. Pure and testable.
  * Ignores user/assistant/system messages — only tool results count toward the
  * read budget.
@@ -124,6 +147,10 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
   let lastInvalidSignature: string | null = null;
   // The read-budget focus nudge is a one-shot: it fires at most once per run.
   let nudged = false;
+  // Cumulative UNCAPPED tool-output bytes the agent has read this run. Tracked
+  // separately from stored bytes because results are capped before storage
+  // (capToolResult) — the nudge is about read *volume*, not what we kept.
+  let readBytes = 0;
 
   for (let turn = 0; turn < maxTurns; turn++) {
     if (ctx.signal.aborted) {
@@ -143,7 +170,23 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       await deps.onPersist?.();
     }
 
-    const response = await getResponseWithRetry(deps, withEphemeralContext(messages, ctx, deps));
+    // Track whether ANY streaming delta actually fired for this turn's response.
+    // The final-text fallback must key on real emission, not merely on whether
+    // the delta callback is wired — a non-streaming path (stream fallback or a
+    // provider without streamChat) emits no deltas even when the callback exists,
+    // and that final text must still reach the renderer.
+    let streamedDelta = false;
+    const turnDeps: AgentDeps = deps.onAssistantTextDelta
+      ? {
+          ...deps,
+          onAssistantTextDelta: (chunk: string) => {
+            streamedDelta = true;
+            deps.onAssistantTextDelta!(chunk);
+          },
+        }
+      : deps;
+
+    const response = await getResponseWithRetry(turnDeps, withEphemeralContext(messages, ctx, deps));
     deps.onUsage?.(response.usage);
 
     messages.push({
@@ -151,7 +194,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       content: response.text,
       toolCalls: response.toolCalls.length ? response.toolCalls : undefined,
     });
-    if (response.text && !deps.onAssistantTextDelta) deps.onAssistantText?.(response.text);
+    if (response.text && !streamedDelta) deps.onAssistantText?.(response.text);
     if (response.text) deps.onAssistantMessageEnd?.(response.text);
     await deps.onPersist?.();
 
@@ -167,7 +210,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       }
       const tool = deps.registry.get(call.name);
       if (!tool) {
-        pushToolResult(messages, call.id, call.name, `Unknown tool "${call.name}".`);
+        pushSyntheticToolResult(messages, deps, call.id, call.name, `Unknown tool "${call.name}".`);
         await deps.onPersist?.();
         continue;
       }
@@ -184,7 +227,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
             return "";
           }
           lastInvalidSignature = signature;
-          pushToolResult(messages, call.id, call.name, err.message);
+          pushSyntheticToolResult(messages, deps, call.id, call.name, err.message);
           await deps.onPersist?.();
           continue;
         }
@@ -213,7 +256,13 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         }
         const approved = await deps.approve(invocation, preview);
         if (!approved) {
-          pushToolResult(messages, call.id, call.name, "User rejected this action. It was not run.");
+          pushSyntheticToolResult(
+            messages,
+            deps,
+            call.id,
+            call.name,
+            "User rejected this action. It was not run.",
+          );
           await deps.onPersist?.();
           continue;
         }
@@ -222,7 +271,16 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       // PreToolUse hooks fire only after the policy allowed/approved the tool, so
       // a hook deny is additive (it can never resurrect a policy-denied tool).
       if (deps.onPreToolUse) {
-        const outcome = await deps.onPreToolUse(call.name, invocation, ctx);
+        let outcome: import("../hooks/types.js").HookOutcome | undefined;
+        try {
+          outcome = await deps.onPreToolUse(call.name, invocation, ctx);
+        } catch (err) {
+          // A throwing PreToolUse hook must never abort the run. Treat it as
+          // non-blocking (proceed) and surface the failure as a notice, matching
+          // how the advisory post-hook/diagnostics/format hooks swallow errors.
+          deps.onNotice?.(`hook PreToolUse error: ${(err as Error)?.message ?? String(err)}`);
+          outcome = undefined;
+        }
         if (outcome?.decision === "deny") {
           deps.onToolCall?.(call.name, invocation.describe());
           pushToolResult(
@@ -251,15 +309,16 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         result = { output: `Tool ${call.name} failed: ${(err as Error).message ?? String(err)}`, isError: true };
       }
       deps.onToolResult?.(call.name, result);
+      readBytes += result.output.length;
       pushToolResult(messages, call.id, call.name, result.output);
       await deps.onPersist?.();
 
       // One-shot read-budget focus nudge. A soft nudge only — nothing is
       // blocked, truncated, or removed. Fires at most once per run, when the
-      // cumulative tool-output bytes first cross the threshold (a model hoarding
-      // whole-file reads instead of converging on a hypothesis).
+      // cumulative (uncapped) tool-output bytes first cross the threshold (a
+      // model hoarding whole-file reads instead of converging on a hypothesis).
       if (!nudged) {
-        const bytes = cumulativeToolBytes(messages);
+        const bytes = readBytes;
         if (bytes >= READ_BUDGET_NUDGE_BYTES) {
           nudged = true;
           const approxTokens = Math.round(bytes / 4 / 1000);
@@ -518,7 +577,30 @@ function pushToolResult(
   name: string,
   content: string,
 ): void {
-  messages.push({ role: "tool", toolCallId, name, content });
+  messages.push({ role: "tool", toolCallId, name, content: capToolResult(content) });
+}
+
+/**
+ * Like {@link pushToolResult}, but also fires the `onToolCall`/`onToolResult`
+ * renderer callbacks so synthetic outcomes (unknown tool, invalid args, ask
+ * rejected) render a tool block — consistent with the execute and deny paths.
+ * These branches never run a real tool, so the result is synthesized as an
+ * error result for the renderer; history still stores it via pushToolResult.
+ */
+function pushSyntheticToolResult(
+  messages: AgentMessage[],
+  deps: AgentDeps,
+  toolCallId: string,
+  name: string,
+  content: string,
+): void {
+  // Fire ONLY onToolResult — NOT onToolCall. onToolCall feeds the subagent
+  // runner's `trace.toolsCalled` (a security record of tools actually
+  // dispatched), and an unknown/invalid/rejected call must never appear there
+  // (a restricted-registry run_bash is unknown → it must stay out of toolsCalled).
+  // The result event alone is enough for a renderer to show the error block.
+  deps.onToolResult?.(name, { output: content, isError: true });
+  pushToolResult(messages, toolCallId, name, content);
 }
 
 /**

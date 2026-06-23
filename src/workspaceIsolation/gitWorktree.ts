@@ -78,7 +78,17 @@ export async function createGitWorktree(
     }
   }
 
-  const stageAll = () => git(isolatedRoot, ["add", "-A"]); // worktree has its own index; .gitignore respected
+    // Provisioned dirs (e.g. node_modules) are symlinks into the real root. If a
+    // target isn't gitignored, `git add -A` would stage the symlink and leak a
+    // `120000` entry into the patch. Exclude the provisioned paths (worktree-
+    // relative) from staging and diffing so they can never enter the patch.
+    const excludePathspecs = provisioned
+      .map((p) => path.relative(isolatedRoot, p.link))
+      .filter((rel) => rel && !rel.startsWith(".."))
+      .map((rel) => `:(exclude)${rel}`);
+  const pathspec = [".", ...excludePathspecs];
+
+  const stageAll = () => git(isolatedRoot, ["add", "-A", "--", ...pathspec]); // worktree has its own index; .gitignore respected
 
   return {
     realRoot,
@@ -88,12 +98,12 @@ export async function createGitWorktree(
 
     async diff(): Promise<string> {
       stageAll();
-      return git(isolatedRoot, ["diff", "--cached"]).stdout;
+      return git(isolatedRoot, ["diff", "--cached", "--binary", "--", ...pathspec]).stdout;
     },
 
     async changedFiles(): Promise<string[]> {
       stageAll();
-      return git(isolatedRoot, ["diff", "--cached", "--name-only"]).stdout
+      return git(isolatedRoot, ["diff", "--cached", "--name-only", "--", ...pathspec]).stdout
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
@@ -101,7 +111,7 @@ export async function createGitWorktree(
 
     async applyPatchToRealRoot({ force }: { force: boolean }): Promise<void> {
       stageAll();
-      const patch = git(isolatedRoot, ["diff", "--cached"]).stdout;
+      const patch = git(isolatedRoot, ["diff", "--cached", "--binary", "--", ...pathspec]).stdout;
       if (!patch.trim()) return; // nothing to apply
       const patchFile = path.join(base, "isolated.patch");
       await writeFile(patchFile, patch, "utf8");

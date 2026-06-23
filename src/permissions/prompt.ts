@@ -2,6 +2,7 @@ import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import chalk from "chalk";
 import type { ToolInvocation, ToolPreview } from "../tools/types.js";
+import { capDiffPreview } from "../tools/diff.js";
 
 /**
  * Render an invocation (and its preview, if any) and ask the user to approve.
@@ -26,7 +27,10 @@ export async function promptForApproval(
     stdout.write(chalk.dim(preview.description) + "\n");
   }
   if (preview?.diff) {
-    stdout.write(renderDiff(preview.diff) + "\n");
+    // Cap the human-facing PREVIEW so a hostile edit can't hide inside a large
+    // benign-looking diff at the prompt. The full diff is still applied on
+    // approval — only what we render here is truncated.
+    stdout.write(renderDiff(capDiffPreview(preview.diff)) + "\n");
   }
 
   return confirm("Approve?");

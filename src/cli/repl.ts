@@ -4,7 +4,7 @@ import { stdin, stdout } from "node:process";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import chalk from "chalk";
-import { effectiveMaxTurns, type ApprovalMode, type Config } from "../config/config.js";
+import { effectiveMaxTurns, contextBudgetForProvider, type ApprovalMode, type Config } from "../config/config.js";
 import type { ModelProvider, AgentMessage } from "../providers/types.js";
 import { addUsage } from "../providers/usage.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -32,7 +32,7 @@ import { proposeMemory } from "../memory/store.js";
 import { SessionStore, type SessionSnapshot } from "../session/sessionStore.js";
 import type { McpManager } from "../mcp/registry.js";
 import type { LspRuntime } from "../lsp/types.js";
-import { CheckpointRecorder } from "../session/checkpoints.js";
+import { CheckpointRecorder, pruneCheckpoints } from "../session/checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { ModelRouter } from "../models/router.js";
@@ -423,6 +423,11 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
   // pooled provider. Routing never changes tool permissions.
   let provider = session.provider;
   let model = session.config.model;
+  // Recompute the compaction budget from the RESOLVED edit-route provider each
+  // run, so a mid-session `/model` switch to a different-window provider compacts
+  // correctly (the load-time value is fixed at the original provider). An explicit
+  // DEEPCODER_CONTEXT_BUDGET_TOKENS pin always wins.
+  let contextBudgetTokens = session.config.contextBudgetTokens;
   if (session.modelRouter && session.providerPool) {
     const route = session.modelRouter.resolve("edit");
     model = route.model;
@@ -430,6 +435,9 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
       route.provider === session.config.provider &&
       (route.baseUrl ?? "") === (session.config.baseUrl ?? "");
     provider = sameBackend ? session.provider : session.providerPool.providerFor(route);
+    if (!process.env.DEEPCODER_CONTEXT_BUDGET_TOKENS) {
+      contextBudgetTokens = contextBudgetForProvider(route.provider);
+    }
   }
   // Autonomous-delegation nudge: assess the latest user prompt and, if it looks
   // worth fanning out, inject a one-shot advisory hint toward the `delegate` tool.
@@ -463,7 +471,7 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
       interactive: session.interactive === true,
       envExplicit: (process.env.DEEPCODER_MAX_TURNS ?? "") !== "",
     }),
-    contextBudgetTokens: session.config.contextBudgetTokens,
+    contextBudgetTokens,
     compactAt: session.config.compactAt,
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
     approve: ui?.approve ?? ((inv: ToolInvocation, preview?: ToolPreview) => promptForApproval(inv, preview)),
@@ -521,6 +529,11 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
           if (ui) renderer.emit({ type: "notice", message: msg });
           else stdout.write(chalk.dim(msg + "\n"));
         }
+        // Bound on-disk checkpoint growth (blobs + manifests accumulate forever
+        // otherwise). Keep the N most recent; override with DEEPCODER_CHECKPOINT_KEEP.
+        const keepEnv = Number(process.env.DEEPCODER_CHECKPOINT_KEEP);
+        const keep = Number.isFinite(keepEnv) && keepEnv > 0 ? Math.floor(keepEnv) : 50;
+        await pruneCheckpoints(session.config.workspaceRoot, keep).catch(() => {});
       } catch {
         /* never mask the original error with a checkpoint failure */
       }

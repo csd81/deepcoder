@@ -62,6 +62,21 @@ test("all gates pass → applyable", () => {
   assert.equal(v.status, "valid");
 });
 
+test("quality gate REQUIRED but missing → not applyable (quality_gate_missing)", () => {
+  // Contract the autopilot fix relies on: when the quality gate is enabled,
+  // a worker with no quality-gate result must fail closed (block apply) rather
+  // than silently pass unchecked. Previously autopilot hardcoded
+  // qualityGateRequired:false, so enabling the gate was a silent no-op.
+  const v = validateWorkerResult(vinput({ qualityGateRequired: true, run: run() }));
+  assert.equal(v.applyable, false);
+  assert.ok(codes(v).includes("quality_gate_missing"), JSON.stringify(codes(v)));
+});
+
+test("quality gate NOT required + missing → still applyable (default, unchanged)", () => {
+  const v = validateWorkerResult(vinput({ qualityGateRequired: false, run: run() }));
+  assert.equal(v.applyable, true, JSON.stringify(v.failures));
+});
+
 test("missing run → not applyable (missing_run)", () => {
   const v = validateWorkerResult(vinput({ run: null }));
   assert.equal(v.applyable, false);
@@ -163,6 +178,33 @@ test("REGRESSION: worker timed out but left a patch → NOT applyable", () => {
   // a timed-out run reports checkPassed:false → check gate blocks
   const v = validateWorkerResult(vinput({ run: run({ checkPassed: false, exitCode: null, warnings: ["worker timed out"] }) }));
   assert.equal(v.applyable, false);
+});
+
+/* ---------------- self-audit gate (honest no-op) ---------------- */
+
+test("Gate 5 self-audit is NOT wired: it adds no evidence implying a cross-check ran", () => {
+  // The codebase produces no WorkerSelfAudit artifact, so Gate 4 calls
+  // evaluateCompleteness WITHOUT a selfAudit and the self-audit cross-check
+  // never fires. Gate 5 must be an HONEST no-op: it must not push an evidence
+  // note that falsely claims a self-audit was "evaluated". This holds even with
+  // deliverables present and qualityGateRequired=true (the old false-positive
+  // condition).
+  const wf = w({ deliverables: [{ id: "d1", description: "change foo", required: true, evidence: { kind: "file_changed", path: "src/foo.ts" } }] });
+  const v = validateWorkerResult(vinput({ worker: wf, plan: planOf(wf), qualityGateRequired: true, run: run({ qualityGate: gate() }) }));
+  assert.equal(v.applyable, true, JSON.stringify(v.failures));
+  // No evidence note may claim the self-audit gate/cross-check was EVALUATED —
+  // that is the misleading no-op the audit flagged (Gate 5 used to push
+  // "Self-audit gate: evaluated via evaluateCompleteness"). The honest
+  // "No self-audit provided" note from the completeness gate is fine.
+  assert.ok(
+    !v.evidence.some((e) => /self-?audit gate|self-?audit.*evaluat|evaluat.*self-?audit/i.test(e.note)),
+    "Gate 5 must not emit a misleading 'self-audit evaluated' evidence note: " + JSON.stringify(v.evidence),
+  );
+  // The honest "missing self-audit" signal comes through completeness as a warning.
+  assert.ok(
+    v.warnings.some((wn) => /self-?audit/i.test(wn)),
+    "missing self-audit should surface as a completeness warning: " + JSON.stringify(v.warnings),
+  );
 });
 
 /* ---------------- apply-time integration ---------------- */

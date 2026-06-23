@@ -25,11 +25,26 @@ test("buildVerificationTask lists every finding with its anchor", () => {
 // ── parseVerdicts ───────────────────────────────────────────────────────────
 
 test("parseVerdicts extracts verdicts from valid JSON", () => {
-  const text = '{"verdicts":[{"index":0,"verdict":"confirmed","evidence":"Found at src/a.ts:10"}]}';
+  const text = '{"verdicts":[{"index":1,"verdict":"confirmed","evidence":"Found at src/a.ts:10"}]}';
   const verdicts = parseVerdicts(text, 1);
   assert.equal(verdicts.length, 1);
   assert.equal(verdicts[0]!.verdict, "confirmed");
   assert.equal(verdicts[0]!.evidence, "Found at src/a.ts:10");
+});
+
+test("parseVerdicts maps the model's 1-based indices to the right findings (regression: off-by-one)", () => {
+  // The verifier prompt numbers findings 1-based (`${i+1}`) and the example shows
+  // "index": 1, so the model emits 1-based indices. This is the exact shape the
+  // live probe produced: finding 1 confirmed, finding 2 refuted.
+  const text = '{"verdicts":[{"index":1,"verdict":"confirmed","evidence":"yes"},{"index":2,"verdict":"refuted","evidence":"no axios import"}]}';
+  const findings: SubagentFinding[] = [
+    { severity: "low", file: "a.ts", claim: "TRUE claim", evidence: "e1" },
+    { severity: "high", file: "b.ts", claim: "FALSE claim", evidence: "e2" },
+  ];
+  const applied = applyVerdicts(findings, parseVerdicts(text, findings.length));
+  const byClaim = Object.fromEntries(applied.map((f) => [f.claim, f.verdict]));
+  assert.equal(byClaim["TRUE claim"], "confirmed", "verdict #1 must land on the first finding");
+  assert.equal(byClaim["FALSE claim"], "refuted", "verdict #2 must land on the second finding (and not be dropped)");
 });
 
 test("parseVerdicts with no JSON returns all unverifiable", () => {
@@ -45,7 +60,7 @@ test("parseVerdicts with malformed JSON falls back to unverifiable", () => {
 });
 
 test("parseVerdicts with unknown verdict maps to unverifiable", () => {
-  const text = '{"verdicts":[{"index":0,"verdict":"maybe","evidence":"unsure"}]}';
+  const text = '{"verdicts":[{"index":1,"verdict":"maybe","evidence":"unsure"}]}';
   const verdicts = parseVerdicts(text, 1);
   assert.equal(verdicts[0]!.verdict, "unverifiable");
 });
@@ -57,7 +72,7 @@ test("parseVerdicts with index out of range returns -1", () => {
 });
 
 test("parseVerdicts extracts JSON from markdown-wrapped response", () => {
-  const text = 'Here are my findings:\n```json\n{"verdicts":[{"index":0,"verdict":"refuted","evidence":"Not found"}]}\n```';
+  const text = 'Here are my findings:\n```json\n{"verdicts":[{"index":1,"verdict":"refuted","evidence":"Not found"}]}\n```';
   const verdicts = parseVerdicts(text, 1);
   assert.equal(verdicts[0]!.verdict, "refuted");
 });

@@ -53,7 +53,10 @@ export function parseVerdicts(text: string, count: number): Verdict[] {
 
     const result = verdicts.map((v: unknown) => {
       const item = v as { index?: number; verdict?: string; evidence?: string };
-      const idx = typeof item.index === "number" ? item.index : -1;
+      // buildVerificationTask numbers findings 1-based (`${i+1}`) and the
+      // instruction example shows "index": 1, so the model emits 1-based
+      // indices. Convert to the 0-based position applyVerdicts maps against.
+      const idx = (typeof item.index === "number" ? item.index : 0) - 1;
       const vd = item.verdict as string;
       return {
         index: idx >= 0 && idx < count ? idx : -1,

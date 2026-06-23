@@ -121,6 +121,8 @@ export type Hazard =
   | "preprocessor_flag"
   | "git_write_flag"
   | "git_exec_flag"
+  | "env_assignment"
+  | "dangerous_env_assignment"
   | "unknown_segment";
 
 export interface Segment {
@@ -129,6 +131,25 @@ export interface Segment {
   argv: string[];
   tokens: ShellToken[];
   redirects: ShellRedirect[];
+  /** Leading `VAR=value` env assignments preceding the command word. */
+  assignments: ShellToken[];
+}
+
+/**
+ * Env vars whose value is executed or loaded as code by common tools — a leading
+ * `VAR=value cmd` assignment of any of these turns a "read-only" command into
+ * arbitrary execution (e.g. `GIT_EXTERNAL_DIFF=… git diff`, `LD_PRELOAD=… cat`).
+ * Matched by exact name or by the `GIT_`/`LD_`/`DYLD_` prefix families.
+ */
+const DANGEROUS_ENV_VARS = new Set([
+  "BASH_ENV", "ENV", "IFS", "PAGER", "MANPAGER", "GLOBIGNORE", "PROMPT_COMMAND",
+  "NODE_OPTIONS", "PERL5OPT", "RUBYOPT", "PYTHONSTARTUP",
+]);
+const DANGEROUS_ENV_PREFIXES = ["GIT_", "LD_", "DYLD_"];
+
+function isDangerousEnvVar(name: string): boolean {
+  if (DANGEROUS_ENV_VARS.has(name)) return true;
+  return DANGEROUS_ENV_PREFIXES.some((p) => name.startsWith(p));
 }
 
 export interface CommandMatrix {
@@ -196,6 +217,7 @@ export function buildCommandMatrix(program: ShellProgram): CommandMatrix {
       argv,
       tokens,
       redirects: node.redirects,
+      assignments: node.assignments,
     });
 
     // Per-segment hazards.
@@ -218,6 +240,7 @@ export function buildCommandMatrix(program: ShellProgram): CommandMatrix {
   // added. We also inspect operands for the ask/deny operand hazards.
   for (const seg of segments) {
     inspectSegmentTokens(seg, hazards);
+    inspectAssignments(seg, hazards);
   }
 
   return {
@@ -225,6 +248,23 @@ export function buildCommandMatrix(program: ShellProgram): CommandMatrix {
     operators: program.operators,
     hazards: [...hazards],
   };
+}
+
+/**
+ * Inspect leading `VAR=value` env assignments. A known exec-injection var
+ * (GIT_, LD_, BASH_ENV, PAGER, …) is a deny-class hazard; any other assignment is
+ * an ask-class hazard (env mutation must never silently auto-allow a read-only
+ * command). The parser captures these in `node.assignments`; before this they
+ * were dropped, allowing `GIT_EXTERNAL_DIFF=… git diff` to auto-allow.
+ */
+function inspectAssignments(seg: Segment, hazards: Set<Hazard>): void {
+  for (const tok of seg.assignments) {
+    const raw = tok.normalized;
+    const eq = raw.indexOf("=");
+    const name = eq > 0 ? raw.slice(0, eq) : raw;
+    if (isDangerousEnvVar(name)) hazards.add("dangerous_env_assignment");
+    else hazards.add("env_assignment");
+  }
 }
 
 /** Scan a segment's argv + redirect targets for operand/flag hazards. */
@@ -305,6 +345,7 @@ const DENY_HAZARDS: Hazard[] = [
   "pipe_to_shell",
   "dangerous_command",
   "preprocessor_flag",
+  "dangerous_env_assignment",
 ];
 
 export function classifyMatrix(matrix: CommandMatrix): ApprovalDecision {
@@ -344,6 +385,7 @@ export function classifyMatrix(matrix: CommandMatrix): ApprovalDecision {
     "recursive_flag",
     "git_write_flag",
     "git_exec_flag",
+    "env_assignment",
     "unknown_segment",
     "parse_error",
   ];

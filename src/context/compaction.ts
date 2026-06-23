@@ -64,6 +64,23 @@ export function isSummary(m: AgentMessage): boolean {
 }
 
 /**
+ * Pull the original task text out of a prior `[compacted-summary]` body — the
+ * lines under its `## Task` heading, up to the next `##` section. Lets a second
+ * compaction carry the real task forward instead of re-wrapping the summary tag.
+ */
+export function extractTaskFromSummary(summary: string): string {
+  const lines = summary.split("\n");
+  const start = lines.findIndex((l) => l.trim() === "## Task");
+  if (start === -1) return "";
+  const body: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i]!.startsWith("## ")) break;
+    body.push(lines[i]!);
+  }
+  return body.join("\n").trim();
+}
+
+/**
  * Deterministic structured markdown recap built from session data — NO LLM call.
  * Sections: ## Task, ## Files changed, ## Unresolved items.
  */
@@ -73,9 +90,16 @@ export function buildStructuredSummary(
   writeTracker: Set<string>,
   todos: Todo[],
 ): string {
-  // Extract task from the first user message
+  // Extract task from the first user message. On a re-compaction the first user
+  // message IS a prior [compacted-summary]; re-wrapping it would make the "task"
+  // the summary tag and lose the real task. Recover the original task from
+  // inside that prior summary's ## Task section instead.
   const firstUser = messages.find((m) => m.role === "user");
-  const task = firstUser?.content?.trim() ?? "";
+  const task = firstUser
+    ? isSummary(firstUser)
+      ? extractTaskFromSummary(firstUser.content)
+      : firstUser.content.trim()
+    : "";
 
   // Classify files from the trackers
   const readSet = new Set(readTracker);
