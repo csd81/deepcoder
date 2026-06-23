@@ -14,6 +14,7 @@ import { Git } from "../workspace/git.js";
 import { DeepcoderClient } from "../sdk/client.js";
 import { createStdioTransport } from "../server/index.js";
 import { createAgentRunner } from "../server/agentRunner.js";
+import { registerDelegateCommand } from "./delegateCli.js";
 
 const program = new Command();
 
@@ -201,6 +202,11 @@ program
       await finalizeIsolation(session);
     }
   });
+
+// Headless delegation subcommand (`deepcoder delegate validate|…`). Registered
+// as a sibling to the default prompt action; runs the built-in pipeline's real
+// validation gates without a TTY. See plans/new/feat-headless-delegate-cli-plan.md.
+registerDelegateCommand(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(chalk.red((err as Error).message ?? String(err)));
