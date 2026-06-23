@@ -8,7 +8,7 @@
  * are shrunk (respecting minWidth) to fit.
  */
 
-import { visibleWidth } from "./minimalRenderer.js";
+import { visibleWidth, truncate } from "./minimalRenderer.js";
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ export function renderTable(
   //    floored by minWidth
   const widths = columns.map((col, i) => {
     const contentWidths = rows.map((r) => visibleWidth(r[i] ?? ""));
-    const maxContent = Math.max(col.header.length, ...contentWidths);
+    const maxContent = Math.max(visibleWidth(col.header), ...contentWidths);
     const clamped = Math.min(maxContent, col.maxWidth ?? Infinity);
     return Math.max(clamped, col.minWidth ?? 0);
   });
@@ -88,9 +88,9 @@ function renderRow(
   const parts = cells.map((c, i) => {
     const w = widths[i]!;
     const vis = visibleWidth(c);
-    // Truncate if wider than column
-    const text =
-      vis > w ? truncateToWidth(c, w) : c.padEnd(w + (vis - c.length));
+    // Truncate if wider than the column; otherwise right-pad in display columns
+    // (CJK/emoji count as two), so the box borders line up.
+    const text = vis > w ? truncateToWidth(c, w) : c + " ".repeat(w - vis);
     return " ".repeat(pad) + text + " ".repeat(pad);
   });
   return `${sep}${parts.join(sep)}${sep}`;
@@ -145,10 +145,12 @@ function fitToWidth(
   }
 }
 
-/** Strip ANSI escape codes and truncate, appending "…" when cut. */
+/**
+ * Truncate to `w` display columns, appending a 1-column "…". Width-aware
+ * (CJK/emoji = 2 columns) and surrogate-pair safe; `truncate` preserves any
+ * SGR codes and closes them with a reset, so color never bleeds across cells.
+ * Only called when the cell is already known to be wider than `w`.
+ */
 function truncateToWidth(s: string, w: number): string {
-  const cleaned = s.replace(/\u001b\[[0-9;]*m/g, "");
-  return cleaned.length > w
-    ? cleaned.slice(0, Math.max(0, w - 1)) + "…"
-    : cleaned;
+  return truncate(s, Math.max(0, w - 1)) + "…";
 }

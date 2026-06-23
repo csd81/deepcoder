@@ -5,8 +5,29 @@
  * resize can re-wrap cleanly. Operates on PLAIN text (semantic color is applied
  * later, per wrapped line), so wrapping needs no ANSI awareness. Word-aware: pack
  * words up to the width, breaking at spaces; a single token longer than the width
- * is hard-split so nothing is ever lost or runs off-screen.
+ * is hard-split so nothing is ever lost or runs off-screen. Width is measured in
+ * display columns (CJK/emoji = 2, combining = 0) so wide text wraps correctly.
  */
+
+import { charWidth, displayWidth } from "./charWidth.js";
+
+/**
+ * Split `s` into a leading chunk of at most `width` display columns and the
+ * remainder, never cutting a surrogate pair and never splitting a wide character
+ * across the boundary.
+ */
+function takeColumns(s: string, width: number): [string, string] {
+  let i = 0;
+  let cols = 0;
+  while (i < s.length) {
+    const cp = s.codePointAt(i)!;
+    const w = charWidth(cp);
+    if (cols + w > width) break;
+    cols += w;
+    i += String.fromCodePoint(cp).length;
+  }
+  return [s.slice(0, i), s.slice(i)];
+}
 
 /** Wrap one logical line to `width` columns. Always returns at least one line. */
 export function wrapLine(line: string, width: number): string[] {
@@ -15,7 +36,7 @@ export function wrapLine(line: string, width: number): string[] {
   // A line that already fits is returned verbatim — this preserves leading
   // indentation AND internal whitespace runs (critical for code; the old
   // split(" ")/rejoin path silently dropped leading spaces).
-  if (line.length <= width) return [line];
+  if (displayWidth(line) <= width) return [line];
   // Preserve leading indentation across the wrap: strip it for tokenizing and
   // re-attach it to the first emitted chunk.
   const indent = /^\s*/.exec(line)?.[0] ?? "";
@@ -23,22 +44,33 @@ export function wrapLine(line: string, width: number): string[] {
   const out: string[] = [];
   let cur = "";
   for (const word of body.split(" ")) {
-    if (word.length > width) {
-      // Token longer than the width: flush the current line, then hard-split it.
+    if (displayWidth(word) > width) {
+      // Token wider than the width: flush the current line, then hard-split it
+      // by display columns.
       if (cur !== "") {
         out.push(cur);
         cur = "";
       }
       let rest = word;
-      while (rest.length > width) {
-        out.push(rest.slice(0, width));
-        rest = rest.slice(width);
+      while (displayWidth(rest) > width) {
+        const [chunk, remainder] = takeColumns(rest, width);
+        // Defensive: a single char wider than `width` can't fit — emit it alone
+        // so we never loop forever.
+        if (chunk === "") {
+          const cp = rest.codePointAt(0)!;
+          const first = String.fromCodePoint(cp);
+          out.push(first);
+          rest = rest.slice(first.length);
+          continue;
+        }
+        out.push(chunk);
+        rest = remainder;
       }
       cur = rest; // remainder may still accept following words
       continue;
     }
     if (cur === "") cur = word;
-    else if (cur.length + 1 + word.length <= width) cur += " " + word;
+    else if (displayWidth(cur) + 1 + displayWidth(word) <= width) cur += " " + word;
     else {
       out.push(cur);
       cur = word;
