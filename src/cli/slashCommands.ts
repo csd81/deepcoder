@@ -3,6 +3,7 @@ import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
 import { estimateCost } from "../providers/pricing.js";
 import { enterPlanMode, exitPlanMode, initPlanMode } from "./planMode.js";
+import { initLearnState } from "./learnMode.js";
 import { Git } from "../workspace/git.js";
 import { fetchPr, getPrDiff } from "./prFetch.js";
 import { detectConflicts, readConflict, buildResolvePrompt, filesStillConflicted, type ConflictFile } from "./mergeConflict.js";
@@ -56,6 +57,7 @@ import { buildTestTargetPlan } from "../checks/testTargetPlanner.js";
 import { runTargetedChecks } from "../checks/targetedCheck.js";
 import { resolveBackend } from "../sandbox/index.js";
 import { discoverSkills } from "../skills/discovery.js";
+import { buildSkillPrompt, type SkillDraft } from "./skillify.js";
 import { loadStartupMemory, listTopics, remember, forget, loadInbox, acceptMemory, rejectMemory } from "../memory/store.js";
 import { buildRepoIndex } from "../index/scanner.js";
 import { impactedBy, reverseGraph } from "../index/impact.js";
@@ -110,6 +112,7 @@ import { parseCopyArgs, extractLatestAssistant, extractLatestCodeBlock, type Cop
 import { copyToClipboard } from "../clipboard/clipboard.js";
 import { redactSecrets } from "../workspace/redact.js";
 import { formatSessionShare } from "./sessionShare.js";
+import { analyzeSession } from "./sessionInsights.js";
 import { safeExportFilename, writeExport } from "../ui/exportWriter.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -282,6 +285,20 @@ export async function handleSlashCommand(
         console.log(chalk.dim("Plan mode: OFF."));
       }
       return { consumed: true };
+
+    case "learn": {
+      const ls = session.learnState ?? initLearnState();
+      if (arg === "codebase" || arg === "patterns" || arg === "tools" || arg === "all") {
+        session.learnState = { active: true, focus: arg };
+        console.log(chalk.green(`Learn mode active (focus: ${arg}). I'll explain as I work.`));
+      } else if (arg) {
+        console.log(chalk.dim("usage: /learn [codebase|patterns|tools|all] — toggle or set focus"));
+      } else {
+        session.learnState = { ...ls, active: !ls.active };
+        console.log(chalk.dim(`Learn mode ${session.learnState.active ? "on" : "off"}.`));
+      }
+      return { consumed: true };
+    }
 
     case "mode":
       if (MODES.includes(arg as ApprovalMode)) {
@@ -1123,6 +1140,62 @@ export async function handleSlashCommand(
         console.log(`  ${chalk.bold(s.name)} ${chalk.dim(`(${s.source})`)}  ${s.description}${flags ? chalk.dim(` [${flags}]`) : ""}`);
       }
       console.log(chalk.dim("Activate with /skills activate <name> [args]  or  /$<name> [args]"));
+      return { consumed: true };
+    }
+
+    case "skillify": {
+      const name = arg.trim();
+      if (!name) {
+        console.log(chalk.red("Usage: /skillify <skill-name> — analyzes the session and generates a reusable skill"));
+        return { consumed: true };
+      }
+
+      // 1. Ask the model to analyze the session
+      console.log(chalk.dim("Analyzing session to extract a repeatable process…"));
+      const prompt = buildSkillPrompt(session.messages);
+      const res = await session.provider.chat({
+        messages: [{ role: "user", content: prompt }],
+        tools: [],
+        model: config.model,
+      });
+
+      // 2. Parse the JSON response
+      let draft: SkillDraft;
+      try {
+        const text = res.text.trim();
+        // Strip markdown code fences if present
+        const json = text.startsWith("```") ? text.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "") : text;
+        draft = JSON.parse(json) as SkillDraft;
+      } catch (err) {
+        console.log(chalk.red(`Failed to parse skill draft: ${(err as Error).message}`));
+        return { consumed: true };
+      }
+
+      if (!draft.name || !draft.description || !draft.steps?.length) {
+        console.log(chalk.red("Invalid skill draft: name, description, and at least one step are required."));
+        return { consumed: true };
+      }
+
+      // 3. Generate SKILL.md
+      const skillDir = path.join(config.workspaceRoot, ".deepcoder", "skills", name);
+      await fs.mkdir(skillDir, { recursive: true });
+      const skillContent = [
+        "---",
+        `name: ${name}`,
+        `description: ${draft.description}`,
+        "---",
+        "",
+        ...draft.steps.map((s, i) => `## Step ${i + 1}: ${s}`),
+        "",
+        "## Inputs",
+        ...draft.inputs.map((i) => `- ${i}`),
+        "",
+        "## Success Criteria",
+        ...draft.successCriteria.map((c) => `- ${c}`),
+      ].join("\n");
+      await fs.writeFile(path.join(skillDir, "SKILL.md"), skillContent, "utf8");
+
+      console.log(chalk.green(`Skill "${name}" created. Activate with /skills activate ${name}`));
       return { consumed: true };
     }
 
@@ -2761,6 +2834,29 @@ export async function handleSlashCommand(
       session.title = undefined;
       save();
       console.log(chalk.dim("Title cleared."));
+      return { consumed: true };
+    }
+
+    case "audit":
+    case "insights": {
+      const i = analyzeSession(session);
+      console.log(chalk.bold("\nSession Insights"));
+      console.log(chalk.dim(i.summary));
+      console.log(chalk.bold("\nSatisfaction: ") + (i.satisfaction === "high" ? chalk.green("high") : i.satisfaction === "medium" ? chalk.yellow("medium") : chalk.red("low")));
+      if (i.goalCategories.length) console.log(chalk.bold("Goals: ") + i.goalCategories.join(", "));
+      console.log(chalk.bold("\nTools used:"));
+      for (const t of i.toolsUsed) {
+        console.log(`  ${t.name}: ${t.count}x`);
+      }
+      console.log(chalk.bold("\nTokens: ") + chalk.dim(`${i.tokensUsed} · ${i.turnsUsed} turns`));
+      if (i.frictionPoints.length) {
+        console.log(chalk.bold("\nFriction points:"));
+        for (const f of i.frictionPoints) console.log(chalk.yellow(`  ⚠ ${f}`));
+      }
+      if (i.suggestions.length) {
+        console.log(chalk.bold("\nSuggestions:"));
+        for (const s of i.suggestions) console.log(chalk.dim(`  → ${s}`));
+      }
       return { consumed: true };
     }
 

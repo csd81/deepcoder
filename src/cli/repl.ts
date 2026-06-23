@@ -100,6 +100,7 @@ import {
   effectivePlanModeApproval,
   type PlanModeState,
 } from "./planMode.js";
+import { generateToolExplanation, type LearnState } from "./learnMode.js";
 
 /** Debounce map for auto-memory: only stage a candidate if the last proposal
  *  for a given source was more than 60s ago. Module-level so it persists
@@ -161,6 +162,8 @@ export interface Session {
   telemetry?: import("../telemetry/sessionTelemetry.js").SessionTelemetry;
   /** Interactive Plan Mode state — undefined means inactive (/plan-mode off). */
   planState?: PlanModeState;
+  /** Learn mode state — toggled via /learn. When active, explains each tool call. */
+  learnState?: LearnState;
   /** Human-readable session label, set via /title or --title. */
   title?: string;
   /** When true, renderers strip ANSI escape codes from all output. */
@@ -488,6 +491,13 @@ export async function runTask(session: Session, ui?: TaskUi): Promise<void> {
     onToolCall: (name, describe) => renderer.emit({ type: "tool_start", name, description: describe }),
     onToolResult: (_name, result: ToolResult) => {
       renderer.emit({ type: "tool_result", name: _name, output: result.output, isError: !!result.isError });
+      // Learn mode: after each tool result, emit an educational explanation.
+      if (session.learnState?.active && !result.isError) {
+        const explanation = generateToolExplanation(_name, result);
+        if (explanation) {
+          renderer.emit({ type: "notice", message: `#learn: ${explanation}` });
+        }
+      }
       // Phase 10E: record web tool calls into the auditable, bounded, redacted trace.
       if (_name === "web_fetch" || _name === "web_search") {
         session.webTrace = appendWebTrace(session.webTrace ?? [], {

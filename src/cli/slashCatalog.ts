@@ -40,6 +40,9 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "resolve", args: "[--continue]", description: "Resolve merge/rebase conflicts with the agent, then stage", category: "git" },
   // session
   { name: "help", description: "Show command help", category: "session" },
+  { name: "skillify", args: "<name>", description: "Generate a reusable skill from the current session transcript", category: "session" },
+  { name: "learn", args: "[codebase|patterns|tools|all]", description: "Toggle learn mode — explains each tool call and shares patterns", category: "session" },
+  { name: "insights", description: "Show session analysis: goals, tools, friction, suggestions", category: "session", aliases: ["audit"] },
   { name: "exit", description: "Quit the session", category: "session", aliases: ["quit"] },
   { name: "clear", description: "Clear conversation + todos (keep system prompt)", category: "session" },
   { name: "save", description: "Save the session now", category: "session" },

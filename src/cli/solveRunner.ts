@@ -21,6 +21,7 @@ import type { HookEvent } from "../hooks/types.js";
 import { buildReproInstruction } from "../agent/systemPrompt.js";
 import { runExplorer } from "../subagents/contextExplorer.js";
 import { renderExplorerBrief } from "../context/explorerBrief.js";
+import { analyzeSession } from "./sessionInsights.js";
 
 /** Build an advisory solve hook for `event`; null if no such hooks are enabled. */
 function solveHook(session: Session, event: HookEvent, key: string) {
@@ -259,6 +260,19 @@ export async function runSolveCommand(
         (result.lastRunId ? ` · last run ${result.lastRunId}` : "") +
         "\n",
     );
+
+    // Auto-trigger mini-insights (Phase 10I): brief summary after solve completes.
+    try {
+      const i = analyzeSession(session);
+      const toolCalls = i.toolsUsed.reduce((sum, t) => sum + t.count, 0);
+      const errorCount = session.messages.filter(
+        (m) => m.role === "tool" && typeof m.content === "string" && m.content.toLowerCase().includes("error"),
+      ).length;
+      stdout.write(chalk.dim(`\nTask complete. ${toolCalls} tool calls, ${errorCount} errors.\n`));
+      stdout.write(chalk.dim(`⚡ Use /insights for full session analysis.\n`));
+    } catch {
+      /* best-effort — never fail the solve for an analysis glitch */
+    }
   } finally {
     process.removeListener("SIGINT", onSigint);
   }
