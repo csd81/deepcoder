@@ -15,6 +15,7 @@ import { DeepcoderClient } from "../sdk/client.js";
 import { createStdioTransport } from "../server/index.js";
 import { createAgentRunner } from "../server/agentRunner.js";
 import { registerDelegateCommand } from "./delegateCli.js";
+import { registerAuditSweepCommand } from "./auditSweepCli.js";
 
 const program = new Command();
 
@@ -207,6 +208,11 @@ program
 // as a sibling to the default prompt action; runs the built-in pipeline's real
 // validation gates without a TTY. See plans/new/feat-headless-delegate-cli-plan.md.
 registerDelegateCommand(program);
+
+// `deepcoder audit sweep` — composes the delegate pipeline into the hands-off
+// self-maintenance loop (audit → triage → fix → merge). See
+// plans/new/feat-scheduled-audit-fix-merge-plan.md.
+registerAuditSweepCommand(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(chalk.red((err as Error).message ?? String(err)));
