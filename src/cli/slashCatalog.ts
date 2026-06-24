@@ -27,6 +27,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "log", args: "[n]", description: "Show the last N commits", category: "git" },
   { name: "branch", args: "[-c|-d <name>|<name>]", description: "List/create/delete/switch branches", category: "git" },
   { name: "commit", args: "[-m <msg>]", description: "Stage + commit (confirmed)", category: "git" },
+  { name: "commit-msg", description: "Generate a Conventional Commits message from the diff, then commit (confirmed)", category: "git" },
   { name: "amend", args: "[-m <msg>]", description: "Amend the last commit (confirmed)", category: "git" },
   { name: "stash", args: "[save|pop|list|drop]", description: "Stash/unstash changes", category: "git" },
   { name: "revert", args: "<commit>", description: "Revert a commit (confirmed)", category: "git" },
@@ -84,6 +85,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "architect", args: "<task>", description: "Explore then produce a dependency-aware implementation plan (read-only)", category: "context" },
   { name: "memory", args: "[show|remember|forget|inbox|accept|reject]", description: "View or edit project memory", category: "context" },
   { name: "index", args: "[status|rebuild|symbols|references|impact|tests|explain|search]", description: "Inspect the repo index", category: "context" },
+  { name: "document", args: "<glob>", description: "Generate JSDoc blocks for un-documented functions/classes in scope (comments only, idempotent)", category: "context" },
 
   // checks
   { name: "checks", description: "List configured verification checks", category: "checks" },

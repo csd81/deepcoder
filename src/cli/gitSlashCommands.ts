@@ -7,12 +7,14 @@
 import readline from "node:readline";
 import chalk from "chalk";
 import { Git } from "../workspace/git.js";
+import { generateCommitMessage } from "./commitMessage.js";
 import { confirmGitAction } from "./gitConfirm.js";
 import type { Session } from "./repl.js";
+import type { AgentMessage } from "../providers/types.js";
 
 /** Slash commands handled by handleGit. */
 const GIT_COMMANDS = new Set([
-  "log", "branch", "commit", "stash", "revert", "reset", "amend",
+  "log", "branch", "commit", "commit-msg", "stash", "revert", "reset", "amend",
   "blame", "push", "pull", "rebase", "merge", "cherry-pick",
 ]);
 
@@ -21,7 +23,7 @@ export function isGitCommand(cmd: string): boolean {
 }
 
 /** Mutating git commands that must not run while a slice is isolated. */
-const MUTATING = new Set(["commit", "revert", "reset", "amend", "push", "pull", "rebase", "merge", "cherry-pick"]);
+const MUTATING = new Set(["commit", "commit-msg", "revert", "reset", "amend", "push", "pull", "rebase", "merge", "cherry-pick"]);
 
 function ask(promptText: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -62,6 +64,42 @@ export async function handleGit(cmd: string, session: Session, arg: string): Pro
         const ok = await confirmGitAction({ label: `git commit -m "${msg.slice(0, 60)}${msg.length > 60 ? "…" : ""}"`, detail: preview, dangerLevel: "safe" }, ask);
         // safe → confirmGitAction returns true without prompting; commit proceeds.
         if (!ok) return;
+        console.log(chalk.green((await git.commit(msg)).stdout));
+        return;
+      }
+      case "commit-msg": {
+        // 1. Gather the combined staged + unstaged diff (bounded by the generator).
+        const staged = (await git.diffStaged()).trim();
+        const unstaged = (await git.diff()).trim();
+        const combined = [staged, unstaged].filter(Boolean).join("\n");
+        if (!combined) { console.log(chalk.yellow("Nothing to commit (working tree clean).")); return; }
+
+        // 2. Recent history for style reference.
+        const recentHistory = await git.log(10);
+
+        // 3. Generate via the session provider (injected as callLLM).
+        console.log(chalk.dim("Generating commit message…"));
+        const callLLM = async (systemPrompt: string, userPrompt: string): Promise<string> => {
+          const messages: AgentMessage[] = [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ];
+          const res = await session.provider.chat({ messages, tools: [], model: session.config.model });
+          return res.text;
+        };
+        const msg = await generateCommitMessage(combined, recentHistory, callLLM);
+        console.log(chalk.bold(`\nGenerated: ${chalk.green(msg)}\n`));
+
+        // 4. Confirm at "normal" — the user reviews the AI-written message before it lands.
+        const ok = await confirmGitAction({
+          label: `git commit -m "${msg.slice(0, 60)}${msg.length > 60 ? "…" : ""}"`,
+          detail: "AI-generated Conventional Commits message — review before committing.",
+          diff: combined.slice(0, 2000),
+          dangerLevel: "normal",
+        }, ask);
+        if (!ok) return;
+
+        // 5. Commit (stages all tracked modifications, same as /commit).
         console.log(chalk.green((await git.commit(msg)).stdout));
         return;
       }

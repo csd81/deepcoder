@@ -64,6 +64,7 @@ import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillPrompt, type SkillDraft } from "./skillify.js";
 import { loadStartupMemory, listTopics, remember, forget, loadInbox, acceptMemory, rejectMemory } from "../memory/store.js";
 import { buildRepoIndex } from "../index/scanner.js";
+import { documentScope, type DocTarget } from "../doc/documentScope.js";
 import { impactedBy, reverseGraph } from "../index/impact.js";
 import { relevantTests } from "../index/testTargeting.js";
 import { findReferences } from "../index/references.js";
@@ -980,6 +981,44 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
+    case "document": {
+      // Generate JSDoc blocks for un-documented functions/classes in a glob scope.
+      // Comments only — executable code is never touched (insertDocBlock inserts
+      // ABOVE the declaration); re-runs are idempotent (existing blocks skipped).
+      const root = session.executionRoot ?? config.workspaceRoot;
+      const pattern = arg.trim();
+      if (!pattern) {
+        console.log(chalk.dim("usage: /document <glob>   e.g. /document \"src/utils/**/*.ts\""));
+        return { consumed: true };
+      }
+      const generateDoc = async (target: DocTarget): Promise<string> => {
+        const messages: AgentMessage[] = [
+          {
+            role: "system",
+            content:
+              "You write JSDoc. Given a function or class signature, return ONLY a " +
+              "single `/** ... */` block — no code, no fences, no prose. Keep it concise: " +
+              "a one-line summary plus @param/@returns when obvious from the signature.",
+          },
+          { role: "user", content: `${target.symbol.kind} ${target.symbol.name}:\n${target.signature}` },
+        ];
+        const res = await session.provider.chat({ messages, tools: [], model: config.model });
+        return res.text;
+      };
+      console.log(chalk.dim(`Documenting ${pattern}…`));
+      const res = await documentScope(pattern, {
+        listSymbols: async () => (await buildRepoIndex(root, { symbols: true })).symbols,
+        readFile: (rel) => fs.readFile(path.join(root, rel), "utf8"),
+        writeFile: (rel, text) => fs.writeFile(path.join(root, rel), text, "utf8"),
+        generateDoc,
+      });
+      console.log(
+        `Documented ${res.inserted.length} symbol(s) across ${res.filesScanned} file(s); ` +
+          `${res.skipped.length} skipped.`,
+      );
+      for (const i of res.inserted) console.log(chalk.green(`  + ${i.file}:${i.line} ${i.symbol}`));
+      return { consumed: true };
+    }
     case "index": {
       // 8C: ignore-aware scan + classification (+ optional symbol definitions).
       const root = session.executionRoot ?? config.workspaceRoot;
