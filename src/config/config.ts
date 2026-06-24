@@ -364,6 +364,11 @@ export interface ContextConfig {
   preflightMaxBytes: number;
   /** Maximum turns for the explorer subagent during preflight (default 8). */
   explorerMaxTurns: number;
+  /**
+   * Trident deterministic redundancy pass before summarization (default ON).
+   * Kill-switch: DEEPCODER_TRIDENT=0.
+   */
+  tridentCompaction: boolean;
 }
 
 const DEFAULT_CONTEXT: ContextConfig = {
@@ -374,6 +379,7 @@ const DEFAULT_CONTEXT: ContextConfig = {
   preflight: false,
   preflightMaxBytes: 6000,
   explorerMaxTurns: 8,
+  tridentCompaction: true,
 };
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -545,6 +551,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   // Context/instruction-graph: default < config file < env gate.
   const igEnv = (process.env.DEEPCODER_INSTRUCTION_GRAPH ?? "").toLowerCase();
   const pfEnv = (process.env.DEEPCODER_CONTEXT_PREFLIGHT ?? "").toLowerCase();
+  const tridentEnv = (process.env.DEEPCODER_TRIDENT ?? "").toLowerCase();
   const context: ContextConfig = {
     ...DEFAULT_CONTEXT,
     ...(file.context ?? {}),
@@ -552,6 +559,8 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...(["0", "false", "no"].includes(igEnv) ? { instructionGraph: false } : {}),
     ...(["1", "true", "yes"].includes(pfEnv) ? { preflight: true } : {}),
     ...(["0", "false", "no"].includes(pfEnv) ? { preflight: false } : {}),
+    ...(["1", "true", "yes"].includes(tridentEnv) ? { tridentCompaction: true } : {}),
+    ...(["0", "false", "no"].includes(tridentEnv) ? { tridentCompaction: false } : {}),
   };
 
   // Skills: default < config file < env gate.

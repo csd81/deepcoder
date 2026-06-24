@@ -2,6 +2,7 @@ import type { AgentMessage } from "../providers/types.js";
 import type { Todo } from "../tools/types.js";
 import { estimateMessages } from "./tokenBudget.js";
 import { boundLines } from "../tools/outputBound.js";
+import { reduceWithTrident, type TridentStats } from "./trident.js";
 
 /**
  * Max file entries listed in a compaction summary. The summary lands in the kept
@@ -20,12 +21,16 @@ export interface CompactOptions {
   writeTracker: Set<string>;
   /** Force compaction regardless of current size (for /compact). */
   force?: boolean;
+  /** When false (DEEPCODER_TRIDENT=0), Trident is a byte-identical no-op. */
+  tridentEnabled?: boolean;
 }
 
 export interface CompactResult {
   compacted: boolean;
   before: number;
   after: number;
+  /** Set when Trident ran and made changes. */
+  trident?: TridentStats;
 }
 
 const SUMMARY_TAG = "[compacted-summary]";
@@ -52,6 +57,30 @@ export function compactIfNeeded(messages: AgentMessage[], opts: CompactOptions):
     : opts.budgetTokens * 0.3;
   const tailStart = chooseTailMessages(messages, head, tailTarget);
   if (tailStart - head < 2) return { compacted: false, before, after: before };
+
+  // Trident: deterministic redundancy pass BEFORE summarization.
+  if (opts.tridentEnabled !== false) {
+    const trident = reduceWithTrident(messages, tailStart, opts.writeTracker);
+    if (trident.supersede.changed || trident.collapse.changed) {
+      const mid = estimateMessages(messages);
+      if (mid <= trigger) {
+        return { compacted: true, before, after: mid, trident };
+      }
+      // Trident changed the array; recalculate tailStart for the summarization
+      // fallback (indices may have shifted from collapse splicing).
+      const newTailStart = chooseTailMessages(messages, head, tailTarget);
+      if (newTailStart - head >= 2) {
+        const older = messages.slice(head, newTailStart);
+        const summary = buildStructuredSummary(older, opts.readTracker, opts.writeTracker, opts.todos);
+        messages.splice(head, older.length, { role: "user", content: summary });
+        const after2 = estimateMessages(messages);
+        return { compacted: true, before, after: after2, trident };
+      }
+      // Fall through: tail too small after Trident, just return as compacted.
+      return { compacted: true, before, after: mid, trident };
+    }
+    // Trident made no changes — fall through to legacy summarization.
+  }
 
   const older = messages.slice(head, tailStart);
   // WIRED: buildStructuredSummary — deterministic markdown recap with sections

@@ -133,6 +133,7 @@ const contextSchema = z.object({
   preflight: z.boolean().optional(),
   preflightMaxBytes: z.number().int().min(0).optional(),
   explorerMaxTurns: z.number().int().min(1).max(50).optional(),
+  tridentCompaction: z.boolean().optional(),
 });
 
 const skillsSchema = z.object({

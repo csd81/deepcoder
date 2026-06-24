@@ -566,6 +566,24 @@ function defineKeys(ctx: BuildContext): DebugConfigEntry[] {
     );
   }
 
+  // --- context.tridentCompaction ---
+  {
+    const envVal = env["DEEPCODER_TRIDENT"] as string | undefined;
+    const envPresent = envVal !== undefined && envVal !== "";
+    const filePresent = file.context?.tridentCompaction !== undefined;
+    add(
+      "context.tridentCompaction",
+      config.context.tridentCompaction,
+      envPresent ? "env" : filePresent ? "file" : "default",
+      envPresent ? "DEEPCODER_TRIDENT" : filePresent ? `.deepcoder/config.json → context.tridentCompaction` : "hardcoded default",
+      [
+        { source: "env", sourceRef: "DEEPCODER_TRIDENT", present: envPresent, wins: envPresent, value: envPresent ? config.context.tridentCompaction : undefined },
+        { source: "file", sourceRef: `.deepcoder/config.json → context.tridentCompaction`, present: filePresent, wins: !envPresent && filePresent, value: filePresent ? config.context.tridentCompaction : undefined },
+        { source: "default", sourceRef: "hardcoded default (true)", present: true, wins: !envPresent && !filePresent, value: true },
+      ],
+    );
+  }
+
   // --- skills.enabled ---
   {
     const envVal = env["DEEPCODER_SKILLS"] as string | undefined;
