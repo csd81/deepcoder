@@ -25,7 +25,7 @@ import { defaultRegistry } from "../tools/registry.js";
 import { verifyFindings } from "../delegate/verifyFindings.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
-import { systemMessage, resolveInstructions, type Session } from "../cli/repl.js";
+import { systemMessage, resolveInstructions, buildContextSnapshot, type Session } from "../cli/repl.js";
 import { startFileWatcher } from "../workspace/fileWatcher.js";
 import { initPlanMode } from "../cli/planMode.js";
 import {
@@ -511,8 +511,20 @@ export async function buildSession(
     const instr = resolveInstructions(cfg);
     const messages = saved.messages.slice();
     const fresh = systemMessage(cfg, saved.mode, instr.text, skillsCatalog, registry.names());
-    if (messages[0]?.role === "system") messages[0] = fresh;
-    else messages.unshift(fresh);
+    const freshSnapshot = buildContextSnapshot(cfg, saved.mode, instr.text, skillsCatalog);
+    // Cache-Optimized Context: keep the persisted baseline (and its epoch id) when
+    // it is byte-identical to a freshly-rendered one — preserves any still-valid
+    // provider prefix cache across resume. Otherwise fold current state into a
+    // fresh baseline + epoch. Either branch leaves the snapshot in sync with
+    // messages[0], so the first post-resume turn emits no duplicate [context-update].
+    let contextSnapshot = freshSnapshot;
+    if (saved.contextSnapshot && saved.messages[0]?.role === "system" && saved.messages[0].content === fresh.content) {
+      contextSnapshot = saved.contextSnapshot;
+    } else if (messages[0]?.role === "system") {
+      messages[0] = fresh;
+    } else {
+      messages.unshift(fresh);
+    }
     const resumedSession: Session = {
       config: cfg,
       provider,
@@ -534,6 +546,7 @@ export async function buildSession(
       lsp,
       recorder,
       instructionGraph: instr.graph,
+      contextSnapshot,
       tokenUsage: { ...EMPTY_USAGE },
       telemetry: saved.telemetry,
       modelRouter,
@@ -571,6 +584,7 @@ export async function buildSession(
     lsp,
     recorder,
     instructionGraph: instr.graph,
+    contextSnapshot: buildContextSnapshot(config, config.approvalMode, instr.text, skillsCatalog),
     tokenUsage: { ...EMPTY_USAGE },
     modelRouter,
     providerPool,

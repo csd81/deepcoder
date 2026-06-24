@@ -91,7 +91,7 @@ import { stdout } from "node:process";
 import type { SubagentProfile, SubagentResult, SubagentTrace } from "../subagents/types.js";
 import type { AgentMessage } from "../providers/types.js";
 import type { Session } from "./repl.js";
-import { resolveInstructions, skillsRuntime } from "./repl.js";
+import { resolveInstructions, resetSessionContextEpoch, skillsRuntime } from "./repl.js";
 import { activateSkill } from "../skills/activation.js";
 import {
   emptySessionModelOverrides,
@@ -469,7 +469,12 @@ export async function handleSlashCommand(
           ? chalk.dim(`Compacted ~${res.before} → ~${res.after} tokens.`)
           : chalk.dim("Nothing to compact yet."),
       );
-      if (res.compacted) await save();
+      if (res.compacted) {
+        // Start a fresh context epoch so messages[0] reflects current sources and
+        // stale [context-update] messages are dropped.
+        resetSessionContextEpoch(session);
+        await save();
+      }
       return { consumed: true };
     }
 

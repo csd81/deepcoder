@@ -8,6 +8,7 @@ import type { CheckpointFile } from "./checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { PlanRunRecord } from "../context/planBrief.js";
+import type { ContextSnapshot } from "../context/registry.js";
 import type { SessionGoal } from "./goal.js";
 
 export interface PersistedSession {
@@ -41,6 +42,8 @@ export interface PersistedSession {
   goal?: SessionGoal;
   /** Approved plan text + approval timestamp, for plan handoff (`/export plan`). Absent until a plan is approved/exported. */
   plan?: { text: string; approvedAt: string };
+  /** Cache-Optimized Context: active epoch snapshot. Absent in pre-feature sessions. */
+  contextSnapshot?: ContextSnapshot;
   createdAt: string;
   updatedAt: string;
   /** Phase 10 — soft-delete: archived sessions are hidden by default. */
@@ -69,6 +72,8 @@ export interface SessionSnapshot {
   goal?: import("./goal.js").SessionGoal;
   /** Approved plan for handoff (`/export plan`). */
   plan?: { text: string; approvedAt: string };
+  /** Cache-Optimized Context: active epoch snapshot. */
+  contextSnapshot?: ContextSnapshot;
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -116,6 +121,7 @@ export class SessionStore {
       goal: snapshot.goal,
       plan: snapshot.plan,
       title: snapshot.title,
+      contextSnapshot: snapshot.contextSnapshot,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };
