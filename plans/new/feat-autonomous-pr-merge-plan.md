@@ -37,6 +37,16 @@ It is **additive — compose existing infra, don't rebuild it:**
 4. **Merge.** `gh pr merge <n> --merge` only when gate-green AND conflict-free.
    Otherwise leave the PR open with a comment listing the failing gate / unresolved
    files. **Never** `--force`, **never** merge a red gate.
+5. **Cleanup (only after a successful merge).** Tear down everything that merge
+   created, idempotently and scoped to **this PR's own** artifacts:
+   - remote branch: `gh pr merge --delete-branch` (or `git push origin --delete <branch>`);
+   - local worktree + branch: `git worktree remove --force ../deleg-<branch>`,
+     `git branch -D <branch>`, `git worktree prune`;
+   - sync local master: `git fetch origin` + fast-forward/rebase;
+   - drop this run's temp files: `/tmp/deleg-<branch>.log{,.exit,.pr,.prbody}`, task file.
+   **Never blanket-`rm`** `/tmp/deleg-*` or `../deleg-*` (that kills other agents'
+   in-flight runs — parse the exact paths for THIS run only). A failed/skipped merge
+   cleans up nothing (the branch must survive for re-work).
 
 ## Design
 
@@ -73,10 +83,24 @@ conflicted files; `readConflict` produces the `{ base, ours, theirs }` blob the 
 resolves; `filesStillConflicted` is the resolved-signal. The agent step is the same
 read-only-context → produce-resolved-file flow `/resolve` already uses.
 
+## Load-bearing constraint — the MERGE is deterministic CLI, NOT a delegated agent
+
+Dogfood finding: a headless delegated worker **cannot** run the merge. deepcoder's
+command classifier **auto-denies** `gh pr merge`, `git merge`, `git push` (and even
+`gh pr view`) for a non-interactive worker — only read-only `git status/diff/log/show`
+are auto-allowed. **This is the safety model working as designed.** So:
+
+- The **agent decides whether to merge** (the gates) and **resolves conflicts** (the
+  agentic `/resolve` flow) — those are legitimate agent work.
+- The **merge itself runs in deterministic CLI code** (`runDelegateMerge` calling `gh`
+  directly, *outside* the agent loop's permission gate), gated on the validation result.
+  That is exactly why `prMerge.ts`'s `merge` is an **injected seam** — never an agent
+  `run_bash`. `delegate merge` is a CLI command, not a `delegate auto` worker task.
+
 ## Files to change
 - **New:** `src/delegate/prMerge.ts`, `test/adversarial/delegate-merge.test.ts`.
 - **Edit:** `src/cli/delegateCli.ts` — add `runDelegateMerge` + register `delegate merge`.
-- (Resolution reuses `src/cli/mergeConflict.ts` unchanged; merge reuses `gh`.)
+- (Resolution reuses `src/cli/mergeConflict.ts` unchanged; merge reuses `gh` from CLI.)
 
 ## Tests (RED first, all seam-injected — no live model / gh / git)
 - **gate blocks merge:** a non-applyable PR → `skipped-not-applyable`, `merge` NOT called.
