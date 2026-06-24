@@ -17,6 +17,7 @@ import { createStdioTransport } from "../server/index.js";
 import { createAgentRunner } from "../server/agentRunner.js";
 import { registerDelegateCommand } from "./delegateCli.js";
 import { registerAuditSweepCommand } from "./auditSweepCli.js";
+import { registerRefactorCommand } from "./refactorCli.js";
 
 const program = new Command();
 
@@ -233,6 +234,12 @@ registerDelegateCommand(program);
 // self-maintenance loop (audit → triage → fix → merge). See
 // plans/new/feat-scheduled-audit-fix-merge-plan.md.
 registerAuditSweepCommand(program);
+
+// `deepcoder refactor plan|run|validate|pr|auto` — auto-discover structure, draft
+// a behavior-preserving per-area refactor plan, run in isolated worktrees, and
+// PR (gated on the 9-gate validator; never auto-merges). See
+// plans/new/feat-auto-refactor-workflow-plan.md.
+registerRefactorCommand(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(chalk.red((err as Error).message ?? String(err)));
