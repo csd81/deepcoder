@@ -279,6 +279,11 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
     isolationConfig = {
       ...DEFAULT_WORKSPACE_ISOLATION,
       mode: input.keepWorktree ? "keep" : "patch",
+      // A delegated worker works off committed HEAD by design — uncommitted
+      // changes in the real checkout are intentionally NOT included. Without
+      // this, a dirty main tree (e.g. an unrelated WIP) fail-closes the whole
+      // delegation with a swallowed WorkspaceIsolationError.
+      includeDirty: true,
     };
   }
 

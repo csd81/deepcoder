@@ -225,9 +225,18 @@ export async function runRunnable(
       run = await runOne(plan, worker);
       worker.status = run.checkPassed ? "passed" : "failed";
       await savePlan(opts.realRoot, plan);
-    } catch {
+    } catch (err) {
       worker.status = "failed";
       await savePlan(opts.realRoot, plan);
+      // Surface the worker error (was silently dropped) so a failed run is
+      // debuggable instead of validating as a bare `missing_run`.
+      const msg = (err as Error)?.stack ?? String(err);
+      try {
+        const errDir = path.join(opts.realRoot, ".deepcoder", "delegations", plan.id, "runs", workerId);
+        await fs.mkdir(errDir, { recursive: true });
+        await fs.writeFile(path.join(errDir, "error.txt"), msg, "utf8");
+      } catch { /* best-effort */ }
+      opts.onData?.(`\n[delegate] worker ${workerId} errored: ${msg}\n`);
     }
     opts.onUiEvent?.({
       type: "worker_done",
