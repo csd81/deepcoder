@@ -133,6 +133,56 @@ export function buildFindImporters(root: string): (modulePath: string) => string
   };
 }
 
+/** True for a workspace-relative path that is a runtime `src/**` deliverable. */
+function isReachabilityCandidate(p: string): boolean {
+  if (!p.startsWith("src/")) return false;
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(p)) return false; // never a deliverable
+  if (p.endsWith(".d.ts")) return false; // type-only, no runtime call site
+  return /\.[cm]?[jt]sx?$/.test(p);
+}
+
+/**
+ * Anti-orphan auto-wiring: derive reachability rules from a patch so EVERY newly
+ * added non-test `src/**` module is required to have a non-test importer. This
+ * arms the orphaned_deliverable gate automatically in the headless pipeline even
+ * when the plan never declared `expectedReachable` — so a green-but-inert
+ * deliverable (a new module nothing calls) is REJECTED at validate/apply, not
+ * blessed. Without this, "the check passed" can still mean the feature is wired
+ * to nothing — which defeats the point of delegating.
+ *
+ * Conservative + pure (no I/O): only NEW files (added by this patch — a modified
+ * file already had call sites), only under `src/`, only runtime source
+ * extensions, never tests or `.d.ts`.
+ */
+export function deriveReachabilityFromPatch(patchText: string | null): { module: string }[] {
+  if (!patchText) return [];
+  const rules: { module: string }[] = [];
+  const seen = new Set<string>();
+  let pendingPath: string | null = null;
+  let isNew = false;
+  const flush = () => {
+    if (pendingPath && isNew && !seen.has(pendingPath)) {
+      seen.add(pendingPath);
+      rules.push({ module: pendingPath });
+    }
+    pendingPath = null;
+    isNew = false;
+  };
+  for (const line of patchText.split("\n")) {
+    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (m) {
+      flush();
+      if (isReachabilityCandidate(m[2]!)) pendingPath = m[2]!;
+      continue;
+    }
+    if (pendingPath && (/^new file mode /.test(line) || line === "--- /dev/null")) {
+      isNew = true;
+    }
+  }
+  flush();
+  return rules;
+}
+
 export interface ValidateWorkerInput {
   root: string;
   plan: DelegationPlan;
@@ -641,11 +691,23 @@ export async function loadAndValidateWorker(
   // once here so the orphaned_deliverable gate runs against filesystem truth.
   const findImporters = buildFindImporters(root);
 
+  // Anti-orphan auto-wiring (explicit gate, not a manual afterthought): every NEW
+  // non-test src module this patch adds MUST have a non-test importer. Merge the
+  // derived rules into the worker's declared expectedReachable so the
+  // orphaned_deliverable gate fires from the headless validate/apply path.
+  const derivedReachable = deriveReachabilityFromPatch(patchText).filter(
+    (r) => !(worker.expectedReachable ?? []).some((e) => e.module === r.module),
+  );
+  const effectiveWorker: WorkerTask =
+    derivedReachable.length > 0
+      ? { ...worker, expectedReachable: [...(worker.expectedReachable ?? []), ...derivedReachable] }
+      : worker;
+
   // Run validation
   const validation = validateWorkerResult({
     root,
     plan,
-    worker,
+    worker: effectiveWorker,
     run,
     patchText,
     alreadyChangedPaths,

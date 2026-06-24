@@ -18,6 +18,7 @@ import { applyPatchTool } from "./applyPatch.js";
 import { delegateTool } from "./delegateTool.js";
 import { enterWorktreeTool } from "./enterWorktree.js";
 import { exitWorktreeTool } from "./exitWorktree.js";
+import { readManagedOutputTool } from "./readManagedOutput.js";
 
 export class ToolRegistry {
   tools: Record<string, Tool> = {};
@@ -79,6 +80,7 @@ const NATIVE_TOOLS: Tool[] = [
   delegateTool,
   enterWorktreeTool,
   exitWorktreeTool,
+  readManagedOutputTool,
 ];
 
 /** The full native tool set. */

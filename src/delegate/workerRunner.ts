@@ -50,6 +50,21 @@ const ALLOWED_PROVIDER_ENV = [
   "OPENROUTER_MODEL",
 ];
 
+/**
+ * Sandbox-posture env forwarded to the worker, if present. This is an EXPLICIT
+ * operator opt-out, never a default. deepcoder's gate command is `npm run
+ * test:phase`, which itself EXECUTES bwrap. A worker running that check while
+ * already inside the containment sandbox would be bwrap-inside-bwrap — nested
+ * unprivileged user namespaces fail on many kernels. An operator on such a kernel
+ * sets `DEEPCODER_SANDBOX=off` / `DEEPCODER_CONTAIN=0` (mirroring
+ * `scripts/delegate.sh`'s `--sandbox off --no-contain`); without them the worker
+ * keeps the secure default (containment ON). Forwarding these does NOT weaken the
+ * permission model: the runner-owned worktree + `resolveInWorkspace` still confine
+ * file edits, and the command classifier still gates execution — only `run_bash`
+ * runs uncontained, acceptable for a trusted, bounded, in-house slice.
+ */
+const ALLOWED_SANDBOX_ENV = ["DEEPCODER_SANDBOX", "DEEPCODER_CONTAIN"];
+
 /** Providers for which OPENAI_API_KEY is a legitimate credential to forward. */
 const OPENAI_COMPATIBLE = new Set(["openai", "openai-compatible"]);
 
@@ -111,6 +126,7 @@ export function buildWorkerEnv(input: WorkerEnvInput): NodeJS.ProcessEnv {
 
   for (const k of ALLOWED_BASE_ENV) copy(k);
   for (const k of ALLOWED_PROVIDER_ENV) copy(k);
+  for (const k of ALLOWED_SANDBOX_ENV) copy(k);
   if (OPENAI_COMPATIBLE.has(input.provider.toLowerCase())) copy("OPENAI_API_KEY");
 
   // Phase 10F — pin the delegate-role model/backend when a route override is

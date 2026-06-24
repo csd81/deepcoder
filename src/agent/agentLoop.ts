@@ -19,6 +19,7 @@ import { formatFile, shouldFormat } from "../tools/formatOnEdit.js";
 import type { FormatConfig } from "../config/fileConfig.js";
 import { isRateLimit, isAuthError, isModelError, backoffMs, abortableSleep } from "./retry.js";
 import { formatTokenUsageReminder, shouldEmitTokenUsageReminder } from "./tokenUsageReminder.js";
+import { saveManagedOutput } from "../session/managedOutputs.js";
 
 export interface AgentDeps {
   provider: ModelProvider;
@@ -422,7 +423,20 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         lastToolErrorSig = null;
       }
       readBytes += result.output.length;
-      pushToolResult(messages, call.id, call.name, result.output);
+      if (result.output.length > MAX_TOOL_RESULT_BYTES) {
+        const id = await saveManagedOutput(ctx.workspaceRoot, result.output);
+        const preview = result.output.slice(0, MAX_TOOL_RESULT_BYTES);
+        const dropped = result.output.length - MAX_TOOL_RESULT_BYTES;
+        const content =
+          preview +
+          `\n\n[... tool result truncated: ${dropped} of ${result.output.length} bytes omitted to fit context budget ...]\n` +
+          `Complete output offloaded to disk.\n` +
+          `Output ID: ${id}\n` +
+          `Use read_managed_output(outputId: "${id}", startLine: X, endLine: Y) to read specific ranges.`;
+        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content });
+      } else {
+        pushToolResult(messages, call.id, call.name, result.output);
+      }
       await deps.onPersist?.();
 
       // One-shot read-budget focus nudge. A soft nudge only — nothing is
