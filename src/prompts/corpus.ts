@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 /**
- * The adapted prompt corpus: ~197 markdown files under `deepcoder-system-prompts/`
+ * The adapted prompt corpus: ~197 markdown files under `system-prompts/`
  * at the package root, adapted from Claude Code's published system prompts. They are
  * REFERENCE source material, not config: the authoritative live system prompt is built
  * in `src/agent/systemPrompt.ts`. This module is the only sanctioned bridge that pulls
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
  * surfaced. Resolves the same in dev (tsx, `src/prompts/`) and build (`dist/prompts/`)
  * because both sit two levels under the package root.
  */
-export const CORPUS_DIR = fileURLToPath(new URL("../../deepcoder-system-prompts/", import.meta.url));
+export const CORPUS_DIR = fileURLToPath(new URL("../../system-prompts/", import.meta.url));
 
 /** A corpus filename: lowercase, dash/underscore-separated, `.md`. Anything else is
  *  rejected (this is what confines reads to the corpus dir — the rule admits no `/`,

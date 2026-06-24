@@ -9,10 +9,10 @@ follow-up inside `buildDelegateRuntime` (`src/runtime/sessionFactory.ts:241-257`
 — NOT from `/review`. The `reviewer` profile already carries the low-effort
 taxonomy (inverted condition, off-by-one, missing await, copy-paste, swallowed
 error, removed guard, falsy-zero) merged from
-`deepcoder-system-prompts/agent-prompt-code-review-part-2-low-effort-mode.md`.
+`system-prompts/agent-prompt-code-review-part-2-low-effort-mode.md`.
 
 What's missing is the **high-effort** behavior from
-`deepcoder-system-prompts/agent-prompt-code-review-part-7-high-effort-mode.md:2-6`
+`system-prompts/agent-prompt-code-review-part-7-high-effort-mode.md:2-6`
 and `…-part-3-…-modes.md:2-7`: N independent finder angles (correctness × several,
 cleanup, altitude, conventions), each surfacing candidates, then a **recall-biased**
 verify pass where a single un-refuted vote carries a finding, then synthesize ≤N.

@@ -2,7 +2,7 @@ import { listCorpusFiles } from "./corpus.js";
 
 /**
  * How each corpus file relates to the running code. This registry is the systematic
- * "linking" layer: every file in `deepcoder-system-prompts/` resolves to exactly one
+ * "linking" layer: every file in `system-prompts/` resolves to exactly one
  * status, so wiring more files later is a deliberate status change, not archaeology.
  *
  * - `surfaced`        — loaded into the live system prompt right now (see SURFACED_SYSTEM_PROMPT_FILES).

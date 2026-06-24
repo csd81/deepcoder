@@ -1,6 +1,6 @@
 /**
  * The adapted prompt corpus loader + status registry. The loader is the only
- * sanctioned bridge from `deepcoder-system-prompts/` reference files into runtime
+ * sanctioned bridge from `system-prompts/` reference files into runtime
  * text; the registry classifies every file so wiring is deliberate, not ad hoc.
  */
 import { test } from "node:test";

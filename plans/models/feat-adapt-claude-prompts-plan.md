@@ -6,7 +6,7 @@
 
 ## Scope — what was adapted
 
-**197 adapted files** (the behavioral core) written to `deepcoder-system-prompts/`:
+**197 adapted files** (the behavioral core) written to `system-prompts/`:
 
 | Category | Count | Purpose |
 |---|---|---|
@@ -77,9 +77,9 @@ Each gap needs either a plan or direct implementation.
 | `system-prompt-doing-tasks-{ambitious-tasks,security,software-engineering-focus}.md` | **Surfaced via loader** — `src/prompts/corpus.ts` + `src/prompts/manifest.ts`; emitted into the live prompt's `## Engineering discipline` section (`systemPrompt.ts`). These three weren't previously in the prompt at all. |
 
 > **Prompt-corpus loader (2026-06-24).** `src/prompts/corpus.ts` (`loadCorpusPrompt`) is the
-> single sanctioned bridge from `deepcoder-system-prompts/` into runtime text, and
+> single sanctioned bridge from `system-prompts/` into runtime text, and
 > `src/prompts/manifest.ts` (`corpusStatus`/`corpusPlan`) classifies every file so future
-> wiring is a deliberate status change. See `deepcoder-system-prompts/README.md`.
+> wiring is a deliberate status change. See `system-prompts/README.md`.
 > Status of all 197: surfaced 3, wired-inline 4, skills-loadable 13, needs-infra 15
 > (each with a plan, asserted by `test/prompt-corpus.test.ts`), loader-available 48,
 > reference-only 114.
@@ -156,7 +156,7 @@ prompts) are intentionally owned by code — see `docs/claude-prompt-patterns.md
 
 ## Files
 
-- `deepcoder-system-prompts/` — 197 adapted prompt files (+ `README.md` orientation)
+- `system-prompts/` — 197 adapted prompt files (+ `README.md` orientation)
 - `src/prompts/corpus.ts` — loader (`loadCorpusPrompt`, path-confined, cached)
 - `src/prompts/manifest.ts` — per-file status registry (`corpusStatus`/`corpusPlan`)
 - `test/prompt-corpus.test.ts` + `test/adversarial/prompt-corpus-safety.test.ts` — coverage

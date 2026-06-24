@@ -22,7 +22,7 @@ The on-disk precedent already exists for **skills**: `discoverSkills` scans
 `parseFrontmatter` (`src/skills/discovery.ts:14-57`, `src/skills/frontmatter.ts`).
 `/skillify` already does model-draft → write-to-disk (`slashCommands.ts:1146-1200`).
 `/agent-create` is the same shape for delegate profiles. Source prompt:
-`deepcoder-system-prompts/agent-prompt-agent-creation-architect.md` (agent
+`system-prompts/agent-prompt-agent-creation-architect.md` (agent
 architect: extract intent, design persona, output JSON `{identifier, whenToUse,
 systemPrompt}`).
 
@@ -167,4 +167,4 @@ and "available to the `delegate` tool".
   anchor all three wiring points (`sessionFactory.ts:225`, `delegateTool.ts:5`,
   the slash `default:`).
 - Adjacent: this is delegate-profile creation; [[feat-adapt-claude-prompts]] owns
-  the architect source prompt under `deepcoder-system-prompts/`.
+  the architect source prompt under `system-prompts/`.

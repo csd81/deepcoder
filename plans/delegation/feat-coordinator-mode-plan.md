@@ -1,4 +1,4 @@
-<!-- adapted-from: deepcoder-system-prompts/agent-prompt-batch-slash-command.md -->
+<!-- adapted-from: system-prompts/agent-prompt-batch-slash-command.md -->
 # Feature — Coordinator mode (multi-round coordinator/worker orchestration)
 
 ## Context
