@@ -137,6 +137,66 @@ test("a modelOverride cannot reintroduce a forbidden var or weaken the forced po
 });
 
 /* ---------------------------------------------------------------- */
+/*  auto-model defaultModel — fills an EMPTY slot only                */
+/* ---------------------------------------------------------------- */
+
+// Parent with NO pinned model (the only case auto-model is allowed to fill).
+const PARENT_NO_MODEL = (() => {
+  const { DEEPCODER_MODEL, DEEPSEEK_MODEL, ...rest } = PARENT;
+  void DEEPCODER_MODEL; void DEEPSEEK_MODEL;
+  return rest;
+})();
+
+test("defaultModel fills the model slot when the parent pinned no model and there is no override", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: PARENT_NO_MODEL,
+    provider: "deepseek",
+    delegateDepth: 0,
+    defaultModel: "deepseek-v4-flash",
+  });
+  assert.equal(env.DEEPCODER_MODEL, "deepseek-v4-flash");
+});
+
+test("an inherited DEEPCODER_MODEL always wins over defaultModel (explicit beats auto)", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: PARENT, // pins DEEPCODER_MODEL: "deepseek-chat"
+    provider: "deepseek",
+    delegateDepth: 0,
+    defaultModel: "deepseek-v4-pro",
+  });
+  assert.equal(env.DEEPCODER_MODEL, "deepseek-chat");
+});
+
+test("a modelOverride always wins over defaultModel", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: PARENT_NO_MODEL,
+    provider: "deepseek",
+    delegateDepth: 0,
+    modelOverride: { provider: "deepseek", model: "deepseek-reasoner" },
+    defaultModel: "deepseek-v4-flash",
+  });
+  assert.equal(env.DEEPCODER_MODEL, "deepseek-reasoner");
+});
+
+test("defaultModel never touches provider/baseUrl/keys or the forced posture", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: PARENT_NO_MODEL,
+    provider: "deepseek",
+    delegateDepth: 1,
+    defaultModel: "deepseek-v4-pro",
+  });
+  // only the model slot changed; isolation + posture intact
+  assert.equal(env.DEEPCODER_MODEL, "deepseek-v4-pro");
+  assert.equal(env.DEEPCODER_API_KEY, "sk-deepcoder-secret");
+  assert.equal(env.DEEPCODER_BASE_URL, "https://api.example");
+  assert.equal(env.DEEPCODER_APPROVAL_MODE, "auto");
+  assert.equal(env.DEEPCODER_WORKSPACE_ISOLATION, "off");
+  assert.equal(env.DEEPCODER_DELEGATE_DEPTH, "2");
+  assert.equal(env.GITHUB_TOKEN, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+});
+
+/* ---------------------------------------------------------------- */
 /*  buildWorkerCommand — key never in argv                          */
 /* ---------------------------------------------------------------- */
 

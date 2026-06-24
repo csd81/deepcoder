@@ -23,6 +23,7 @@ import {
   type BoundedProcessResult,
 } from "../process/runBoundedProcess.js";
 import { savePlan } from "./store.js";
+import { defaultWorkerModel } from "./workerModel.js";
 import { assertSafeId } from "../workspace/paths.js";
 import type { DelegationPlan, WorkerRun, WorkerTask, WorkerTaskStatus, WorkerIsolationRecord } from "./types.js";
 
@@ -84,6 +85,13 @@ export interface WorkerEnvInput {
    * default, so the child inherits the parent's model byte-identically.
    */
   modelOverride?: WorkerModelOverride;
+  /**
+   * Auto-model — a complexity-derived default model for the worker. Applied
+   * ONLY when there is no `modelOverride` AND the parent did not already pin
+   * `DEEPCODER_MODEL`; it fills an otherwise-empty model slot and never touches
+   * provider/baseUrl/keys. An explicit override or inherited model always wins.
+   */
+  defaultModel?: string;
 }
 
 /**
@@ -113,6 +121,14 @@ export function buildWorkerEnv(input: WorkerEnvInput): NodeJS.ProcessEnv {
     env.DEEPCODER_PROVIDER = input.modelOverride.provider;
     env.DEEPCODER_MODEL = input.modelOverride.model;
     if (input.modelOverride.baseUrl) env.DEEPCODER_BASE_URL = input.modelOverride.baseUrl;
+  }
+
+  // Auto-model: fill the model slot from the task's complexity ONLY when no route
+  // override is pinned and the parent did not already provide DEEPCODER_MODEL. This
+  // never overrides an explicit choice and never touches provider/baseUrl/keys, so
+  // the strict env isolation above is unchanged.
+  if (!input.modelOverride && input.defaultModel && env.DEEPCODER_MODEL === undefined) {
+    env.DEEPCODER_MODEL = input.defaultModel;
   }
 
   // Forced posture — always overrides inherited values.
@@ -238,15 +254,18 @@ async function provisionWorkerWorktree(realRoot: string, isolatedRoot: string): 
   const nmSrc = path.join(realRoot, "node_modules");
   const nmDst = path.join(isolatedRoot, "node_modules");
   try {
+    // Only link when the SOURCE actually exists — symlinking a missing source
+    // creates a DANGLING node_modules link that `git add -A` stages as a 120000
+    // entry, leaking an out-of-scope path into the worker's patch. Link only when
+    // the dest is not already present.
     await fs.access(nmSrc);
-    await fs.access(nmDst);
-  } catch {
-    // Either source doesn't exist, or dest doesn't exist — try symlink.
     try {
-      await fs.symlink(nmSrc, nmDst, "dir");
+      await fs.access(nmDst);
     } catch {
-      /* provisioning is best-effort */
+      await fs.symlink(nmSrc, nmDst, "dir");
     }
+  } catch {
+    /* no node_modules to provision (or symlink failed) — best-effort */
   }
 }
 
@@ -321,7 +340,20 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
 
   let res: BoundedProcessResult;
   try {
-    const env = buildWorkerEnv({ parentEnv, provider: input.provider, delegateDepth: depth, modelOverride: input.modelOverride });
+    // Auto-model (plans/new/feat-auto-model-selection-plan.md): when no route
+    // override is pinned, default the worker model from the slice's complexity
+    // (cheaper Flash unless it needs Pro), unless the parent opted out with
+    // DEEPCODER_MODEL_AUTO=0. buildWorkerEnv applies this only to an empty model
+    // slot, so an explicit modelOverride / inherited DEEPCODER_MODEL still wins.
+    const autoOff = ["0", "false", "off", "no"].includes((parentEnv.DEEPCODER_MODEL_AUTO ?? "").toLowerCase());
+    const defaultModel = autoOff
+      ? undefined
+      : defaultWorkerModel({
+          prompt: input.worker.prompt,
+          fileCount: input.worker.allowedPaths.length,
+          hasCheck: !!input.worker.checkName,
+        });
+    const env = buildWorkerEnv({ parentEnv, provider: input.provider, delegateDepth: depth, modelOverride: input.modelOverride, defaultModel });
     const cmd = buildWorkerCommand({
       mainEntry: input.mainEntry,
       checkName: input.worker.checkName,

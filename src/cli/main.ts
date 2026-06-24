@@ -9,6 +9,7 @@ import { runOneShot, runRepl, runTuiRepl } from "./repl.js";
 import { resolveUiMode } from "../ui/uiMode.js";
 import { listSessions, forkSession, latestSessionId } from "../session/sessionStore.js";
 import { buildSession, setupIsolation, finalizeIsolation } from "../runtime/sessionFactory.js";
+import { resolveAutoModel } from "../models/autoModel.js";
 import { fetchPr, getPrDiff } from "./prFetch.js";
 import { Git } from "../workspace/git.js";
 import { DeepcoderClient } from "../sdk/client.js";
@@ -141,6 +142,25 @@ program
       }
     }
     if (opts.preflight) baseConfig.context.preflight = true;
+
+    // Proactive, up-front model selection (plans/new/feat-auto-model-selection-plan.md):
+    // for a one-shot task, when the model wasn't pinned explicitly and auto-selection
+    // is on, score the task's complexity BEFORE the session starts and prefer the
+    // cheaper Flash unless it genuinely needs Pro. Reactive escalation (escalation.ts)
+    // remains the safety net; interactive turns vary per prompt so they rely on it.
+    const oneShotPrompt = promptParts.join(" ").trim();
+    if (oneShotPrompt && baseConfig.modelAuto && !baseConfig.modelExplicit) {
+      const picked = resolveAutoModel({
+        signals: { prompt: oneShotPrompt },
+        modelAuto: true,
+        flashModel: baseConfig.model,
+        proModel: baseConfig.reasonerModel ?? baseConfig.model,
+      });
+      if (picked.model !== baseConfig.model) {
+        baseConfig.model = picked.model;
+        console.error(chalk.dim(`model: auto-selected ${picked.model} — ${picked.reasons[picked.reasons.length - 1]}`));
+      }
+    }
 
     if (opts.listSessions) {
       const all = await listSessions(baseConfig.workspaceRoot, { includeArchived: !!opts.archived });

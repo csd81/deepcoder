@@ -149,6 +149,7 @@ describe("Fix B — prepareWorkerBranch", () => {
         "@@ -1 +1,2 @@",
         " base",
         "+worker change",
+        "", // trailing newline — git rejects a patch without one ("corrupt patch")
       ].join("\n");
       await writeFile(path.join(runDir, "patch.diff"), patch, "utf8");
 
@@ -188,6 +189,7 @@ describe("Fix B — prepareWorkerBranch", () => {
         "@@ -1 +1,2 @@",
         " base",
         "+new line",
+        "", // trailing newline — git rejects a patch without one ("corrupt patch")
       ].join("\n");
       await writeFile(path.join(runDir, "patch.diff"), patch, "utf8");
 
