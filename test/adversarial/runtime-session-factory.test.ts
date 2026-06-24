@@ -18,7 +18,15 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildSession, setupIsolation, finalizeIsolation, initMcp } from "../../src/runtime/sessionFactory.js";
+import {
+  buildSession,
+  setupIsolation,
+  finalizeIsolation,
+  initMcp,
+  buildEnsureWritableRoot,
+  rekeyTrackers,
+  branchNameForSession,
+} from "../../src/runtime/sessionFactory.js";
 import { loadConfig } from "../../src/config/config.js";
 
 test("[10B1R-export] all four functions are exported from sessionFactory", () => {
@@ -26,6 +34,12 @@ test("[10B1R-export] all four functions are exported from sessionFactory", () =>
   assert.equal(typeof setupIsolation, "function");
   assert.equal(typeof finalizeIsolation, "function");
   assert.equal(typeof initMcp, "function");
+});
+
+test("copy-on-write helpers are exported from sessionFactory", () => {
+  assert.equal(typeof buildEnsureWritableRoot, "function");
+  assert.equal(typeof rekeyTrackers, "function");
+  assert.equal(typeof branchNameForSession, "function");
 });
 
 test("[10B1R-wired] buildSession constructs a wired session offline", async () => {

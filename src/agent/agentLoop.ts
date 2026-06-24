@@ -102,6 +102,17 @@ export interface AgentDeps {
    * After a successful mutating tool, matching files are auto-formatted.
    */
   format?: FormatConfig | null;
+  /**
+   * Copy-on-write hook. Invoked for EACH tool call after the permission policy
+   * allows/approves it and PreToolUse hooks pass, but BEFORE execute(). When the
+   * invocation is a write-effect and no worktree is active yet, the implementation
+   * provisions a disposable worktree and MUTATES ctx.workspaceRoot in place so
+   * this and every later tool in the turn writes into the worktree. No-op for
+   * read-only tools and when already isolated. Throwing aborts only this tool
+   * (turned into a recoverable tool-result), e.g. when the real tree is dirty.
+   * Undefined = disabled (writes go straight to the real root).
+   */
+  ensureWritableRoot?(invocation: ToolInvocation): Promise<void>;
 }
 
 /**
@@ -326,6 +337,26 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
             call.id,
             call.name,
             `Blocked by hook: ${outcome.reason ?? "denied"}. This action was not run.`,
+          );
+          await deps.onPersist?.();
+          continue;
+        }
+      }
+
+      // Copy-on-write: on the FIRST write-effect tool, provision a disposable
+      // worktree and redirect ctx.workspaceRoot into it. Runs after the gate so a
+      // policy-denied / hook-blocked / user-rejected write never creates one; a
+      // failure (e.g. dirty real tree) becomes a recoverable tool-result.
+      if (deps.ensureWritableRoot) {
+        try {
+          await deps.ensureWritableRoot(invocation);
+        } catch (err) {
+          pushSyntheticToolResult(
+            messages,
+            deps,
+            call.id,
+            call.name,
+            `Cannot start writing: ${(err as Error).message ?? String(err)}`,
           );
           await deps.onPersist?.();
           continue;

@@ -19,7 +19,7 @@ import type { MonitorConfig } from "../security/monitor.js";
 const SANDBOX_MODES: SandboxMode[] = [
   "off", "fast", "local", "bubblewrap", "sandbox-exec", "docker", "podman", "runsc",
 ];
-const WS_ISOLATION_MODES: WorkspaceIsolationMode[] = ["off", "patch", "keep"];
+const WS_ISOLATION_MODES: WorkspaceIsolationMode[] = ["off", "patch", "keep", "branch"];
 
 export type ApprovalMode = "ask" | "auto" | "readonly" | "yolo";
 export const VALID_APPROVAL_MODES: readonly ApprovalMode[] = ["ask", "auto", "readonly", "yolo"];
@@ -140,6 +140,14 @@ export interface Config {
    * root (control plane). Precedence: `--workspace-isolation` > env > file > off.
    */
   workspaceIsolation: WorkspaceIsolationConfig;
+  /**
+   * Copy-on-write session lifecycle (default ON). When true and no eager
+   * isolation is active, the first write-effect tool lazily provisions a git
+   * worktree and the session finalizes by committing to a new branch + PR (never
+   * touching the user's checkout). Kill-switch: `DEEPCODER_COW=0` restores the
+   * legacy behavior of editing the working tree directly.
+   */
+  copyOnWrite: boolean;
   /**
    * Lifecycle hooks configuration. Disabled by default. When enabled, matching
    * hooks run before each tool use (PreToolUse) and can deny the action.
@@ -515,6 +523,10 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...(WS_ISOLATION_MODES.includes(envIso as WorkspaceIsolationMode) ? { mode: envIso as WorkspaceIsolationMode } : {}),
   };
 
+  // Copy-on-write lifecycle: default ON; DEEPCODER_COW=0/false/no is the kill-switch.
+  const cowEnv = (process.env.DEEPCODER_COW ?? "").toLowerCase();
+  const copyOnWrite = !["0", "false", "no"].includes(cowEnv);
+
   // Hooks: default < config file < CLI override (applied last via overrides).
   const hooks: HooksConfig = {
     ...DEFAULT_HOOKS,
@@ -850,6 +862,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       : { ...sandbox, ...(sandboxOverride ?? {}) },
     containment,
     workspaceIsolation: { ...workspaceIsolation, ...(wsIsoOverride ?? {}) },
+    copyOnWrite: overrides.copyOnWrite ?? copyOnWrite,
     hooks: { ...hooks, ...(overrides.hooks ?? {}) },
     diagnostics: { ...diagnostics, ...(overrides.diagnostics ?? {}) },
     context: { ...context, ...(overrides.context ?? {}) },

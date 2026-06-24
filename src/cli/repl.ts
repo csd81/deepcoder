@@ -43,7 +43,7 @@ import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { PlanRunRecord } from "../context/planBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
-import { buildDelegateRuntime, buildDelegateAutoRuntime, buildWorktreeRuntime, attachFileWatcher } from "../runtime/sessionFactory.js";
+import { buildDelegateRuntime, buildDelegateAutoRuntime, buildWorktreeRuntime, buildEnsureWritableRoot, branchNameForSession, attachFileWatcher } from "../runtime/sessionFactory.js";
 import { makeDelegationHint } from "../delegate/assess.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
@@ -183,6 +183,9 @@ export interface Session {
   /** File-change watcher (detects external edits). Started on session build,
    *  stopped on session teardown. Passive — never interrupts a turn. */
   fileWatcher?: FileWatcher;
+  /** Notified when copy-on-write lazily provisions a worktree on the first write,
+   *  passing the isolated root. Set by runTask to surface a renderer notice. */
+  onLazyWorktree?(isolatedRoot: string): void;
 }
 
 /**
@@ -462,6 +465,12 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
       renderAssistant: (text) => renderMarkdown(text, { width: stdout.columns ?? 80, theme: plainTheme }),
       raw: session.rawMode,
     });
+  // Surface a notice when copy-on-write provisions a worktree on the first write.
+  session.onLazyWorktree = (isolatedRoot) =>
+    renderer.emit({
+      type: "notice",
+      message: `copy-on-write: writing in an isolated worktree (${isolatedRoot}); changes land on branch ${branchNameForSession(session)} at session end.`,
+    });
   // Phase 10F: route the main agent turn through the model router's "edit" role.
   // With no role override this resolves to the current model on the current
   // backend (byte-identical) and reuses session.provider; a same-backend model
@@ -524,6 +533,12 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     diagnostics: session.config.diagnostics,
     // Format-on-edit (null when not configured).
     format: session.config.format,
+    // Copy-on-write: lazily move writes into a worktree on the first write-effect
+    // tool. Disabled when CoW is off or eager isolation already owns a worktree.
+    ensureWritableRoot:
+      session.config.copyOnWrite && !session.isolation
+        ? buildEnsureWritableRoot(session, ctx)
+        : undefined,
     maxTurns: effectiveMaxTurns({
       configMaxTurns: session.config.maxTurns,
       interactive: session.interactive === true,

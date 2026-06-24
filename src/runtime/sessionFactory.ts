@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import os from "node:os";
-import { stdin, stdout } from "node:process";
-import { writeFile, readFile } from "node:fs/promises";
+import { stdout } from "node:process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, type PrContext } from "../config/config.js";
 import { discoverPlugins } from "../plugins/discovery.js";
@@ -9,8 +9,9 @@ import { composePluginChecks, composePluginSkills } from "../plugins/compose.js"
 import type { PluginTrustStore } from "../plugins/trust.js";
 import type { Plugin } from "../plugins/types.js";
 import type { SkillSummary } from "../skills/types.js";
-import { createIsolatedWorkspace, WorkspaceIsolationError, DEFAULT_WORKSPACE_ISOLATION } from "../workspaceIsolation/index.js";
-import { confirm } from "../permissions/prompt.js";
+import { createIsolatedWorkspace, WorkspaceIsolationError, DEFAULT_WORKSPACE_ISOLATION, isDirty } from "../workspaceIsolation/index.js";
+import { finalizeToBranch } from "../workspaceIsolation/finalizeToBranch.js";
+import { isWriteEffect } from "./writeEffect.js";
 import { createProvider } from "../providers/factory.js";
 import { EMPTY_USAGE } from "../providers/usage.js";
 import { createSemanticTools } from "../tools/semanticTools.js";
@@ -43,7 +44,7 @@ import { ProviderPool } from "../models/providerPool.js";
 import { runSubagent } from "../subagents/runner.js";
 import { PROFILES } from "../subagents/profiles.js";
 import { discoverCustomProfiles, mergeProfiles } from "../subagents/customProfiles.js";
-import type { DelegateRuntime, DelegateAutoRuntime, WorktreeRuntime } from "../tools/types.js";
+import type { DelegateRuntime, DelegateAutoRuntime, WorktreeRuntime, ToolContext, ToolInvocation } from "../tools/types.js";
 import { runDelegateAuto } from "../cli/delegateCli.js";
 
 /** Connect configured MCP servers and register their tools. Returns undefined
@@ -96,54 +97,75 @@ export async function setupIsolation(session: Session): Promise<void> {
   }
 }
 
+/** The branch a session commits its isolated changes onto. Session ids are
+ *  filesystem-safe and unique per run, so parallel agents never collide. */
+export function branchNameForSession(session: Session): string {
+  return `deepcoder/${session.store.id}`;
+}
+
+function commitMessageForSession(session: Session): string {
+  const title = session.title?.trim();
+  const subject = title ? `deepcoder: ${title}` : `deepcoder session ${session.store.id}`;
+  return (
+    `${subject}\n\n` +
+    "Automated changes from a deepcoder copy-on-write session.\n" +
+    "NOT yet human-verified — review before merging.\n\n" +
+    "Co-Authored-By: deepcoder <noreply@deepcoder.local>"
+  );
+}
+
+function prBodyForSession(session: Session): string {
+  return (
+    `Automated changes from deepcoder session \`${session.store.id}\`` +
+    (session.title ? ` — ${session.title}` : "") +
+    ".\n\n" +
+    "**Not yet human-verified.** Review before merging:\n" +
+    "- [ ] Scope: only intended files changed\n" +
+    "- [ ] Tests/checks pass on the merge result\n" +
+    "- [ ] No secrets or generated artifacts committed\n"
+  );
+}
+
 /**
- * After an isolated run, present the patch and either apply it (interactive
- * confirm) or, in non-TTY/headless mode, write a patch artifact and refuse to
- * auto-apply — so CI never silently mutates the live tree. Then clean up unless
- * configured to keep the workspace.
+ * After an isolated run, commit the worktree's changes onto a NEW branch off the
+ * user's current branch and open a PR when a remote exists (otherwise leave the
+ * committed branch locally for review). The user's checkout is NEVER modified and
+ * the branch is NEVER merged. Then clean up the worktree unless configured to
+ * keep it (or unless the branch step failed, so it can be inspected).
  */
 export async function finalizeIsolation(session: Session): Promise<void> {
   const ws = session.isolation;
   if (!ws) return;
   const iso = session.config.workspaceIsolation;
-  let applied = false;
+  let ok = false;
   try {
-    const changed = await ws.changedFiles();
-    if (changed.length === 0) {
+    const res = await finalizeToBranch(ws, {
+      realRoot: session.config.workspaceRoot,
+      branch: branchNameForSession(session),
+      commitMessage: commitMessageForSession(session),
+      prBody: prBodyForSession(session),
+    });
+    ok = true;
+    if (res.changedFiles === 0) {
       stdout.write(chalk.dim("\nworkspace isolation: no changes were made.\n"));
-      return;
-    }
-    stdout.write(chalk.bold(`\nworkspace isolation — ${changed.length} changed file(s):\n`));
-    for (const f of changed) stdout.write(`  ${f}\n`);
-
-    if (!stdin.isTTY) {
-      // Headless: never auto-apply. Persist a patch artifact under the REAL root.
-      const artifact = path.join(session.config.workspaceRoot, ".deepcoder", `isolation-${session.store.id}.patch`);
-      await writeFile(artifact, await ws.diff(), "utf8");
+    } else if (res.prUrl) {
       stdout.write(
-        chalk.yellow(`\nnot applied (headless). patch written to:\n  ${artifact}\n`) +
-          chalk.dim(`apply with: git apply --whitespace=nowarn "${artifact}"\n`),
+        chalk.green(`\nworkspace isolation — ${res.changedFiles} changed file(s) committed to ${res.branch}.\n`) +
+          chalk.cyan(`opened PR: ${res.prUrl}\n`),
       );
-      return;
-    }
-
-    const ok = await confirm("Apply this patch to the real workspace?");
-    if (!ok) {
-      stdout.write(chalk.dim("discarded — the real workspace is unchanged.\n"));
-      return;
-    }
-    try {
-      await ws.applyPatchToRealRoot({ force: false });
-      applied = true;
-      stdout.write(chalk.green("applied to the real workspace.\n"));
-    } catch (err) {
+    } else {
       stdout.write(
-        chalk.red(`\napply failed: ${(err as Error).message}\n`) +
-          chalk.dim("the real workspace is unchanged; keeping the isolated workspace for inspection.\n"),
+        chalk.green(`\nworkspace isolation — ${res.changedFiles} changed file(s) committed to branch ${res.branch}.\n`) +
+          chalk.dim(`no PR opened (no remote or gh unavailable). review locally with:\n  git log ${res.branch}\n`),
       );
     }
+  } catch (err) {
+    stdout.write(
+      chalk.red(`\nworkspace isolation: could not create the branch: ${(err as Error).message}\n`) +
+        chalk.dim("the real workspace is unchanged; keeping the isolated workspace for inspection.\n"),
+    );
   } finally {
-    const keep = applied ? iso.keepOnSuccess : iso.keepOnFailure;
+    const keep = ok ? iso.keepOnSuccess : iso.keepOnFailure;
     if (iso.mode === "keep" || keep) {
       stdout.write(chalk.dim(`isolated workspace kept at: ${ws.isolatedRoot}\n`));
     } else {
@@ -303,6 +325,82 @@ export function buildWorktreeRuntime(session: Session): WorktreeRuntime {
       session.executionRoot = session.config.workspaceRoot;
       return { changed, applied };
     },
+  };
+}
+
+/**
+ * Rekey absolute-path trackers from oldRoot to newRoot, in place. readTracker
+ * and writeTracker keys are absolute lexical paths under the OLD root (readFile.ts
+ * adds resolveInWorkspace(ctx.workspaceRoot, path)). After a copy-on-write root
+ * switch, edit_file's read-before-write check (editFile.ts) must still find a
+ * file that was read pre-switch, so its key has to follow the root. Foreign keys
+ * (outside oldRoot) are preserved. Sets are mutated in place because
+ * session.readTracker and ctx.readTracker are the SAME Set reference.
+ */
+export function rekeyTrackers(ctx: ToolContext, oldRoot: string, newRoot: string): void {
+  for (const set of [ctx.readTracker, ctx.writeTracker]) {
+    if (!set) continue;
+    const remapped: string[] = [];
+    for (const k of set) {
+      remapped.push(
+        k === oldRoot || k.startsWith(oldRoot + path.sep) ? newRoot + k.slice(oldRoot.length) : k,
+      );
+    }
+    set.clear();
+    for (const k of remapped) set.add(k);
+  }
+}
+
+/**
+ * Build the copy-on-write callback for a live session and its live ToolContext.
+ * On the FIRST write-effect tool (see isWriteEffect), it lazily creates a
+ * disposable worktree and mutates the shared ctx in place so this and every
+ * later tool in the turn writes into the worktree, never the user's checkout:
+ *   - ctx.workspaceRoot → the isolated worktree root
+ *   - readTracker/writeTracker rekeyed to the new root
+ *   - checkpoint capture disabled (the worktree is the undo boundary)
+ *   - provisioned dep symlinks bound read-only into the sandbox (mirrors setupIsolation)
+ * Idempotent: once session.isolation is set it is a no-op. Throws (turned into a
+ * recoverable tool-result by the agent loop) when the real tree is dirty — CoW
+ * needs a clean base to branch from, and we must not sweep the user's unsaved
+ * edits onto the agent's branch.
+ */
+export function buildEnsureWritableRoot(
+  session: Session,
+  ctx: ToolContext,
+): (inv: ToolInvocation) => Promise<void> {
+  return async (inv: ToolInvocation): Promise<void> => {
+    if (session.isolation) return; // already isolated (eager setup or a prior lazy entry)
+    if (!isWriteEffect(inv)) return; // read-only / session tool — never provision
+    const realRoot = session.config.workspaceRoot;
+    if (isDirty(realRoot)) {
+      throw new Error(
+        "the working tree has uncommitted changes; commit or stash them before the agent " +
+          "writes (copy-on-write needs a clean base to branch from).",
+      );
+    }
+    const ws = await createIsolatedWorkspace(realRoot, {
+      ...DEFAULT_WORKSPACE_ISOLATION,
+      mode: "patch",
+    });
+    session.isolation = ws;
+    session.executionRoot = ws.isolatedRoot;
+    // Redirect the live ctx — every later execute(ctx) reads ctx.workspaceRoot fresh.
+    rekeyTrackers(ctx, realRoot, ws.isolatedRoot);
+    ctx.workspaceRoot = ws.isolatedRoot;
+    // The worktree is now the undo boundary; checkpointing keyed to the real root
+    // no longer applies.
+    ctx.capturePreImage = undefined;
+    ctx.recordPostWrite = undefined;
+    // Compose with the sandbox (mirror setupIsolation): provisioned dep symlinks
+    // point OUTSIDE the worktree, so sandboxed commands need their targets bound RO.
+    const sb = session.config.sandbox;
+    if (sb.mode !== "off" && ws.provisioned.length) {
+      for (const { target } of ws.provisioned) {
+        if (!sb.extraMounts.some((m) => m.path === target)) sb.extraMounts.push({ path: target, mode: "ro" });
+      }
+    }
+    session.onLazyWorktree?.(ws.isolatedRoot);
   };
 }
 

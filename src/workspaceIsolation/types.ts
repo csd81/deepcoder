@@ -6,8 +6,8 @@
 // slash state); only the *execution* root (file tools, run_bash, checks) moves
 // to the isolated worktree.
 
-export type WorkspaceIsolationMode = "off" | "patch" | "keep";
-export const VALID_ISOLATION_MODES: readonly WorkspaceIsolationMode[] = ["off", "patch", "keep"];
+export type WorkspaceIsolationMode = "off" | "patch" | "keep" | "branch";
+export const VALID_ISOLATION_MODES: readonly WorkspaceIsolationMode[] = ["off", "patch", "keep", "branch"];
 export type WorkspaceIsolationBackend = "auto" | "git-worktree" | "copy";
 
 export interface WorkspaceIsolationConfig {
