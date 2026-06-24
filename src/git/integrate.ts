@@ -17,13 +17,16 @@ export type { GitExecResult } from "./core.js";
 export function merge(
   root: string,
   ref: string,
-  opts?: { noFf?: boolean; squash?: boolean; abort?: boolean },
+  opts?: { noFf?: boolean; squash?: boolean; abort?: boolean; noEdit?: boolean },
 ): Promise<GitExecResult> {
   const args = ["merge"];
   if (opts?.abort) {
     args.push("--abort");
     return gitExec(root, args, { mutating: true });
   }
+  // `--no-edit` keeps a merge that creates a commit from opening an editor
+  // (important when invoked from an interactive terminal, not just a test).
+  if (opts?.noEdit) args.push("--no-edit");
   if (opts?.noFf) args.push("--no-ff");
   if (opts?.squash) args.push("--squash");
   args.push(ref);

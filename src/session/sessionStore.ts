@@ -39,6 +39,8 @@ export interface PersistedSession {
   webTrace?: import("../web/trace.js").WebTraceRecord[];
   /** Phase 10M — persistent session goal. Absent in pre-10M sessions (loads as undefined). */
   goal?: SessionGoal;
+  /** Approved plan text + approval timestamp, for plan handoff (`/export plan`). Absent until a plan is approved/exported. */
+  plan?: { text: string; approvedAt: string };
   createdAt: string;
   updatedAt: string;
   /** Phase 10 — soft-delete: archived sessions are hidden by default. */
@@ -65,6 +67,8 @@ export interface SessionSnapshot {
   webTrace?: import("../web/trace.js").WebTraceRecord[];
   /** Phase 10M — persistent session goal. */
   goal?: import("./goal.js").SessionGoal;
+  /** Approved plan for handoff (`/export plan`). */
+  plan?: { text: string; approvedAt: string };
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -110,6 +114,7 @@ export class SessionStore {
       telemetry: snapshot.telemetry,
       webTrace: snapshot.webTrace,
       goal: snapshot.goal,
+      plan: snapshot.plan,
       title: snapshot.title,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
