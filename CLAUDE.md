@@ -86,16 +86,17 @@ Config comes from env vars (`DEEPCODER_*`, with `DEEPSEEK_*` aliases) and `.deep
 
 ## Delegating work to a DeepSeek worker
 
-When delegating a slice to a DeepSeek worker (deepcoder-as-subagent), follow `docs/delegation-workflow.md`. Key invariants from `AGENTS.md`:
-1. Override **all** provider env vars inline (`DEEPCODER_PROVIDER/MODEL/BASE_URL/API_KEY`) so a stray var can't send the wrong key (→ 401). `scripts/delegate.sh` does this.
-2. **Red-seed first, ON THE BRANCH** — author a tagged failing test (red on baseline); a DeepSeek worker no-ops on a green check. **Never commit the seed to master** (it breaks the shared gate). Leave it uncommitted and pass `DELEGATE_SEED="test/<slice>.test.ts"` so `delegate.sh` commits it on the feature branch. Master only sees the finished feature via the PR.
-3. Cap `--solve-attempts 3`.
-4. **Verify-then-force in house** — a green `--check phase` is necessary, not sufficient. Re-apply to a clean baseline and prove scope + anchors + red-on-baseline + green-on-full `test:phase` yourself.
+Delegation runs through the **headless `deepcoder delegate` CLI** — the built-in pipeline that drives the **real** verification (the 9 gates + red/green proof in `src/delegate/`), not just a `--check phase` pass. The legacy shell launchers (`delegate.sh`/`delegate-finish.sh`) have been removed; everything is now in-tree. Full chain (no live model needed to wire the plan):
 
-**Opt-in PR review** (`DELEGATE_OPEN_PR=1 scripts/delegate.sh …`): on a passing check the worker commits + pushes its branch and opens a PR (via `scripts/delegate-finish.sh`) so you review a PR instead of landing by hand. It never merges (the PR is the gate) and the PR body carries the verify-then-force checklist; the opt-in is the explicit push authorization. Default stays "leave UNCOMMITTED, land by hand."
+`deepcoder delegate plan "<task>" --max-workers 1 --acceptance-first` → prints a plan id → `delegate run <plan>` (workers run in isolated worktrees, nothing applied) → `delegate validate <plan> [worker] --json` (exit 0 iff applyable) → `delegate apply <plan> <worker>` (re-validates, refuses if not applyable). Or `delegate pr <plan> <worker>` to open a PR (never auto-merges; the PR is the gate).
 
-**Headless delegation CLI (preferred; retires `delegate.sh`).** `deepcoder delegate <plan|run|validate|apply>` drives the built-in pipeline without a TTY, so delegation runs through the **real** verification (the 9 gates + red/green proof in `src/delegate/`), not just a `--check phase` pass. Full chain (no live model needed to wire the plan):
-`deepcoder delegate plan "<task>"` → prints a plan id → `delegate run <plan>` (workers run in isolated worktrees, nothing applied) → `delegate validate <plan> [worker] --json` (exit 0 iff applyable) → `delegate apply <plan> <worker>` (re-validates, refuses if not applyable). `scripts/delegate.sh` is the legacy `--solve --check phase` launcher (no gates) and is being retired in favor of this — see `plans/new/feat-headless-delegate-cli-plan.md`.
+Key invariants:
+1. Override **all** provider env vars inline (`DEEPCODER_PROVIDER/MODEL/BASE_URL/API_KEY`) when launching `run`/`validate`, so a stray ambient var can't send the wrong key (→ 401). The DeepSeek key lives in `$DEEPSEEK_API_KEY`; inject it as an env var, never interpolate/log it.
+2. **`--acceptance-first`** is the forcing function (replaces the old manual red-seed): it stamps every worker TDD-required + production-change-required, so the worker self-seeds a test that the gates validate red→green. A worker no-ops on a green check, so this is what makes it actually implement.
+3. **The pipeline enforces wiring.** `validate`/`apply` auto-derive reachability rules from the patch (`deriveReachabilityFromPatch`): every NEW non-test `src/**` module must have a non-test importer, else `orphaned_deliverable` → not applyable. A green-but-inert deliverable is rejected, not blessed.
+4. **Verify-then-force in house** — a green check is necessary, not sufficient (it trusts the worker's recorded `checkPassed`). Re-apply to a clean baseline and prove scope + red-on-baseline + green-on-full `test:phase` yourself before landing. Push only when the human asks.
+
+Local setup (both env-specific, not in the repo): (a) `.deepcoder/config.json` must define the `phase` check (`{ "checks": { "phase": { "command": "npm run test:phase", "timeoutMs": 600000 } } }`) or the worker no-ops with `Unknown check "phase"`; (b) on kernels without nested user namespaces, pass `DEEPCODER_SANDBOX=off DEEPCODER_CONTAIN=0` (the gate command itself runs bwrap; a contained worker would be bwrap-in-bwrap). The runner forwards these via its env allowlist.
 
 ## Workflow conventions
 
