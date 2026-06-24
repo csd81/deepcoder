@@ -155,7 +155,9 @@ function buildWorker(
 ): WorkerTask {
   const id = `worker-${index}`;
   const title = total === 1 ? task.slice(0, 80) : `Part ${index}: ${task.slice(0, 60)}`;
-  const allowedPaths = changedFiles.length > 0 ? [...changedFiles] : ["src"];
+  // Always allow the test dirs — a worker (especially TDD) must be able to write
+  // its tests, or the scope gate rejects the patch as out_of_scope.
+  const allowedPaths = [...(changedFiles.length > 0 ? changedFiles : ["src"]), "test/", "tests/"];
   const forbiddenPaths = ["node_modules", ".deepcoder"];
 
   return {
