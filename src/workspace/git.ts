@@ -1,11 +1,19 @@
-import { gitExec, type GitExecResult } from "../git/core.js";
+import { gitExec } from "../git/core.js";
+import * as gitRead from "../git/read.js";
+import * as gitCommit from "../git/commit.js";
+import * as gitBranch from "../git/branch.js";
+import * as gitIntegrate from "../git/integrate.js";
 
 /**
  * Git helpers: read-only inspection plus structured workflow commands.
  *
- * All execution flows through the native git core (`gitExec`) — the single
- * deterministic primitive deepcoder owns — rather than spawning git directly,
- * so there is one git surface, not two (plans/new/feat-native-git-core-plan.md).
+ * This is the single git SURFACE for the CLI. Every operation delegates to the
+ * native git core modules (`src/git/{read,commit,branch,integrate}.ts`), which in
+ * turn run through `gitExec` — the one deterministic primitive deepcoder owns —
+ * so there is one git surface, not two (plans/tools/feat-native-git-core-plan.md).
+ * A handful of raw `this.run` calls remain only where no typed wrapper covers the
+ * exact form needed (e.g. `status --short --branch`, `reset --hard`, stash with a
+ * message), keeping behaviour identical to before the migration.
  */
 export class Git {
   constructor(private cwd: string) {}
@@ -17,15 +25,6 @@ export class Git {
       throw new Error(res.stderr.trim() || `git ${args.join(" ")} failed (code ${res.code})`);
     }
     return res.stdout;
-  }
-
-  /**
-   * Like {@link run} but returns the combined stdout+stderr and exit code
-   * instead of throwing on a non-zero exit. Used by merge/rebase which exit
-   * non-zero on conflicts — a non-error condition we want to inspect, not throw.
-   */
-  private async runStatus(args: string[]): Promise<GitExecResult> {
-    return gitExec(this.cwd, args);
   }
 
   /** Workspace-relative paths with unmerged (conflicting) entries, if any. */
@@ -47,119 +46,145 @@ export class Git {
   }
 
   async status(): Promise<string> {
+    // `--short --branch` is a display format with no typed wrapper; keep raw.
     return (await this.run(["status", "--short", "--branch"])).trim();
   }
 
   async diff(paths?: string[]): Promise<string> {
-    // `--` ensures any paths are treated as pathspecs, not git options.
-    const args = paths?.length ? ["diff", "--", ...paths] : ["diff"];
-    return (await this.run(args)).trim();
+    return (await gitRead.diff(this.cwd, paths?.length ? { paths } : undefined)).trim();
   }
 
   /**
-   * Workspace-relative paths of changed files (staged, unstaged, and untracked)
-   * from `git status --porcelain`. Rename entries (`old -> new`) report the new
-   * path. Returns [] on a clean tree.
+   * Workspace-relative paths of changed files (staged, unstaged, and untracked).
+   * Rename entries report the new path. Returns [] on a clean tree.
    */
   async changedFiles(): Promise<string[]> {
-    // Do NOT trim the whole output: porcelain lines for an unstaged change start
-    // with a space (" M path"), and a leading trim would eat the first line's
-    // status column and corrupt its path. Split first, parse each line from the
-    // fixed 3-char (XY + space) prefix.
-    const out = await this.run(["status", "--porcelain"]);
-    const files: string[] = [];
-    for (const line of out.split("\n")) {
-      if (line.length < 4) continue; // blank line or too short to carry a path
-      let p = line.slice(3).trim(); // drop the 2-char status code + separator
-      const arrow = p.indexOf(" -> ");
-      if (arrow >= 0) p = p.slice(arrow + 4).trim(); // rename: take the destination
-      // Strip surrounding quotes git adds for paths with special chars.
-      if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
-      if (p) files.push(p);
-    }
-    return files;
+    const { entries } = await gitRead.status(this.cwd);
+    return entries.map((e) => e.path);
   }
 
   /** One-line summary of how dirty the tree is. */
   async dirtySummary(): Promise<string> {
-    const out = (await this.run(["status", "--porcelain"])).trim();
-    if (!out) return "clean working tree";
-    const files = out.split("\n").length;
-    return `${files} file${files === 1 ? "" : "s"} changed`;
+    const { entries } = await gitRead.status(this.cwd);
+    if (entries.length === 0) return "clean working tree";
+    return `${entries.length} file${entries.length === 1 ? "" : "s"} changed`;
   }
 
   // ── Read-only workflow ──
 
-  /** Last `count` commits, one line each (decorated, colored). */
+  /** Last `count` commits, one line each. */
   async log(count = 10): Promise<string> {
-    return this.run(["log", `--max-count=${count}`, "--oneline", "--decorate"]);
+    return gitRead.log(this.cwd, { oneline: true, n: count });
   }
 
   /** Current branch plus all local and remote branch names. */
   async branches(): Promise<{ current: string; local: string[]; remote: string[] }> {
     const current = (await this.run(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-    const parse = (out: string): string[] =>
-      out
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean);
-    const local = parse(await this.run(["branch", "--format=%(refname:short)"]));
+    const local = await gitRead.listBranches(this.cwd);
     // Skip the symbolic "origin/HEAD -> origin/main" pointer line.
-    const remote = parse(await this.run(["branch", "-r", "--format=%(refname:short)"])).filter(
-      (r) => !r.includes("->"),
-    );
+    const remote = (await this.run(["branch", "-r", "--format=%(refname:short)"]))
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .filter((r) => !r.includes("->"));
     return { current, local, remote };
   }
 
   /** Blame annotation for a file. */
   async blame(file: string): Promise<string> {
-    return this.run(["blame", "--", file]);
+    return gitRead.blame(this.cwd, file);
+  }
+
+  /** `git show [<ref>]` — full diff/metadata for a commit or object. */
+  async show(ref?: string): Promise<string> {
+    return gitRead.show(this.cwd, ref);
+  }
+
+  /** Tracked files (optionally limited to `paths`). */
+  async lsFiles(paths?: string[]): Promise<string[]> {
+    return gitRead.lsFiles(this.cwd, paths);
+  }
+
+  /** Number of commits in `range` (e.g. `origin/main..HEAD`). */
+  async revListCount(range: string): Promise<number> {
+    return gitRead.revListCount(this.cwd, range);
   }
 
   /** Raw `git stash list` output. */
   async stashList(): Promise<string> {
-    return (await this.run(["stash", "list"])).trim();
+    return (await gitIntegrate.stash(this.cwd, { list: true })).stdout.trim();
   }
 
   /** Diff of staged (cached) changes only. */
   async diffStaged(): Promise<string> {
-    return (await this.run(["diff", "--cached"])).trim();
+    return (await gitRead.diff(this.cwd, { cached: true })).trim();
   }
 
   // ── Mutating workflow ──
 
   /**
-   * Commit changes. With `paths`, commits only those paths; otherwise stages
-   * all tracked modifications (`-a`) and commits. Returns the new commit hash
-   * and raw stdout.
+   * Commit changes. With `paths`, stages and commits only those paths; otherwise
+   * stages all tracked modifications (`add -u`, matching `commit -a` semantics)
+   * and commits. Returns the new commit hash and a summary line.
    */
   async commit(message: string, paths?: string[]): Promise<{ hash: string; stdout: string }> {
-    const args = paths?.length
-      ? ["commit", "-m", message, "--", ...paths]
-      : ["commit", "-a", "-m", message]; // stage all tracked modifications
-    const stdout = await this.run(args);
-    return { hash: this.commitHash(stdout), stdout };
+    if (paths?.length) {
+      // Pathspec commit: record ONLY these paths, regardless of what else is
+      // staged. (add+commit would also sweep up other already-staged changes.)
+      const stdout = await this.run(["commit", "-m", message, "--", ...paths]);
+      return { hash: stdout.match(/\[[^\]]*?\s([0-9a-f]+)\]/)?.[1] ?? "unknown", stdout };
+    }
+    await this.run(["add", "-u"]); // stage tracked modifications (== commit -a, no untracked)
+    const { hash } = await gitCommit.commit(this.cwd, { message });
+    const h = hash ?? "unknown";
+    return { hash: h, stdout: `[${h}] ${message}` };
+  }
+
+  /** Stage paths (or everything with `all`). */
+  async stage(opts: { all?: boolean; paths?: string[] }): Promise<void> {
+    await gitCommit.add(this.cwd, opts);
+  }
+
+  /** Restore working-tree (or, with `staged`, index) entries for `paths`. */
+  async restore(paths: string[], staged?: boolean): Promise<void> {
+    await gitCommit.restore(this.cwd, { staged, paths });
   }
 
   /** Create a revert commit for `commit` (uses --no-edit for a default message). */
   async revert(commit: string): Promise<string> {
-    return this.run(["revert", "--no-edit", commit]);
+    const res = await gitIntegrate.revert(this.cwd, commit, { noEdit: true });
+    if (res.code !== 0) throw new Error(res.stderr.trim() || res.stdout.trim() || `git revert ${commit} failed`);
+    return res.stdout;
   }
 
   /** Reset HEAD to `commit` with the given mode. */
   async reset(commit: string, mode: "soft" | "mixed" | "hard"): Promise<string> {
-    return this.run(["reset", `--${mode}`, commit]);
+    // `--hard` has no typed wrapper by design (commit.reset never discards work);
+    // run it raw so the existing hard-reset behaviour is preserved.
+    if (mode === "hard") return this.run(["reset", "--hard", commit]);
+    await gitCommit.reset(this.cwd, { [mode]: true, ref: commit });
+    return "";
   }
 
   /** Amend the last commit with a new message. Returns the rewritten hash. */
   async amend(message: string): Promise<{ hash: string; stdout: string }> {
-    const stdout = await this.run(["commit", "--amend", "-m", message]);
-    return { hash: this.commitHash(stdout), stdout };
+    const { hash } = await gitCommit.commit(this.cwd, { amend: true, message });
+    const h = hash ?? "unknown";
+    return { hash: h, stdout: `[${h}] ${message}` };
   }
 
   /** Cherry-pick a commit onto the current branch. */
   async cherryPick(commit: string): Promise<string> {
-    return this.run(["cherry-pick", commit]);
+    const res = await gitIntegrate.cherryPick(this.cwd, commit);
+    if (res.code !== 0) throw new Error(res.stderr.trim() || res.stdout.trim() || `git cherry-pick ${commit} failed`);
+    return res.stdout;
+  }
+
+  /** Apply a patch file. `check` validates only; `threeWay` enables 3-way merge. */
+  async applyPatch(patchFile: string, opts?: { check?: boolean; threeWay?: boolean }): Promise<string> {
+    const res = await gitIntegrate.apply(this.cwd, { patchFile, check: opts?.check, threeWay: opts?.threeWay });
+    if (res.code !== 0) throw new Error(res.stderr.trim() || res.stdout.trim() || `git apply ${patchFile} failed`);
+    return res.stdout || res.stderr;
   }
 
   /** Push `branch` to `remote`. `force` uses --force-with-lease for safety. */
@@ -183,7 +208,7 @@ export class Git {
    * `{ ok: false, conflicts }` rather than throwing.
    */
   async merge(branch: string): Promise<{ ok: boolean; conflicts?: string[] }> {
-    const res = await this.runStatus(["merge", "--no-edit", branch]);
+    const res = await gitIntegrate.merge(this.cwd, branch, { noEdit: true });
     if (res.code === 0) return { ok: true };
     const conflicts = await this.unmergedPaths();
     if (conflicts.length) return { ok: false, conflicts };
@@ -196,7 +221,7 @@ export class Git {
    * `{ ok: false, conflicts }` rather than throwing.
    */
   async rebase(target: string): Promise<{ ok: boolean; conflicts?: string[] }> {
-    const res = await this.runStatus(["rebase", target]);
+    const res = await gitIntegrate.rebase(this.cwd, { upstream: target });
     if (res.code === 0) return { ok: true };
     const conflicts = await this.unmergedPaths();
     if (conflicts.length) return { ok: false, conflicts };
@@ -205,33 +230,78 @@ export class Git {
 
   /** Check out an existing branch. */
   async checkout(branch: string): Promise<string> {
-    return this.run(["checkout", branch]);
+    await gitBranch.switchBranch(this.cwd, branch);
+    return "";
   }
 
-  /** Create and switch to a new branch (`git checkout -b`). */
+  /** Create and switch to a new branch (`git switch -c`). */
   async createBranch(name: string): Promise<string> {
-    return this.run(["checkout", "-b", name]);
+    await gitBranch.createBranch(this.cwd, name, { switch: true });
+    return "";
   }
 
   /** Delete a branch (`-d`, or `-D` to force-delete an unmerged branch). */
   async deleteBranch(name: string, force = false): Promise<string> {
-    return this.run(["branch", force ? "-D" : "-d", name]);
+    await gitBranch.deleteBranch(this.cwd, name, { force });
+    return "";
+  }
+
+  /** Rename a branch (`git branch -m <from> <to>`). */
+  async renameBranch(from: string, to: string): Promise<void> {
+    await gitBranch.renameBranch(this.cwd, from, to);
+  }
+
+  // ── Worktrees ──
+
+  /** Add a linked worktree, optionally creating a new branch for it. */
+  async worktreeAdd(dir: string, branch?: string): Promise<void> {
+    await gitBranch.worktreeAdd(this.cwd, dir, branch ? { branch } : undefined);
+  }
+
+  /** Remove a linked worktree (force only when explicitly requested). */
+  async worktreeRemove(dir: string, force = false): Promise<void> {
+    await gitBranch.worktreeRemove(this.cwd, dir, { force });
+  }
+
+  /** List linked worktrees. */
+  async worktreeList(): Promise<string> {
+    return (await gitBranch.worktreeList(this.cwd)).trim();
+  }
+
+  /** Prune stale worktree administrative files. */
+  async worktreePrune(): Promise<void> {
+    await gitBranch.worktreePrune(this.cwd);
+  }
+
+  // ── Tags ──
+
+  /** Create a tag (lightweight, or annotated when `message` is given). */
+  async createTag(name: string, message?: string): Promise<void> {
+    await gitBranch.createTag(this.cwd, name, message ? { annotate: true, message } : undefined);
+  }
+
+  /** Delete a tag. */
+  async deleteTag(name: string): Promise<void> {
+    await gitBranch.deleteTag(this.cwd, name);
   }
 
   // ── Stash ──
 
   /** Stash working-tree changes, optionally with a message. */
   async stashSave(message?: string): Promise<string> {
-    const args = ["stash", "push"];
-    if (message) args.push("-m", message);
-    return this.run(args);
+    // The typed wrapper has no message form, so a labelled stash stays raw.
+    if (message) return this.run(["stash", "push", "-m", message]);
+    const res = await gitIntegrate.stash(this.cwd, { push: true });
+    if (res.code !== 0) throw new Error(res.stderr.trim() || "git stash push failed");
+    return res.stdout;
   }
 
   /** Pop a stash entry (default: most recent) back onto the working tree. */
   async stashPop(index?: number): Promise<string> {
-    const args = ["stash", "pop"];
-    if (index != null) args.push(`stash@{${index}}`);
-    return this.run(args);
+    if (index != null) return this.run(["stash", "pop", `stash@{${index}}`]);
+    const res = await gitIntegrate.stash(this.cwd, { pop: true });
+    if (res.code !== 0) throw new Error(res.stderr.trim() || "git stash pop failed");
+    return res.stdout;
   }
 
   /** Drop a stash entry (default: most recent) without applying it. */
@@ -239,11 +309,6 @@ export class Git {
     const args = ["stash", "drop"];
     if (index != null) args.push(`stash@{${index}}`);
     return this.run(args);
-  }
-
-  /** Extract the short hash from a `git commit` summary line "[branch <hash>] ...". */
-  private commitHash(stdout: string): string {
-    return stdout.match(/\[[^\]]*?\s([0-9a-f]+)\]/)?.[1] ?? "unknown";
   }
 
   // ── PR-fetch helpers ──
@@ -258,6 +323,6 @@ export class Git {
 
   /** Resolve a git ref to its full SHA. */
   async revParse(ref: string): Promise<string> {
-    return (await this.run(["rev-parse", ref])).trim();
+    return gitRead.revParse(this.cwd, ref);
   }
 }

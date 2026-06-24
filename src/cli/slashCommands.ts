@@ -1,7 +1,6 @@
 import { promises as fs, openSync, readSync, fstatSync, closeSync, statSync } from "node:fs";
 import chalk from "chalk";
 import type { ApprovalMode } from "../config/config.js";
-import { estimateCost } from "../providers/pricing.js";
 import { enterPlanMode, exitPlanMode, initPlanMode } from "./planMode.js";
 import { initLearnState } from "./learnMode.js";
 import { Git } from "../workspace/git.js";
@@ -16,17 +15,25 @@ import { summarizeRepo } from "../context/understand.js";
 import { computeRepoKey, readUnderstandCache, writeUnderstandCache } from "../context/understandCache.js";
 import os from "node:os";
 import { discoverPlugins } from "../plugins/discovery.js";
-import { webStatus, webSearch, webFetch, webTrace, webClear } from "../web/webCommands.js";
+import { webSearch, webFetch, webTrace, webClear } from "../web/webCommands.js";
 import { createWebSearchProviderFromConfig } from "../web/providerFactory.js";
 import { renderSlashResultPlain } from "./slashResult.js";
+import {
+  usageResult,
+  costResult,
+  telemetryResult,
+  contextResult,
+  webResult,
+  todosResult,
+  pluginsResult,
+  checksResult,
+} from "./slashReadOnlyResults.js";
 import { buildDebugConfig, formatDebugConfig } from "../config/debugConfig.js";
 import { buildPermissionSummary, formatPermissionSummary } from "../permissions/summary.js";
 import { buildSemanticIndex } from "../semantic/indexer.js";
 import { createEmbeddingProvider } from "../semantic/provider.js";
-import { pluginTrustKey, resolvePluginTrust, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
-import { renderTodos } from "../tools/todoWrite.js";
+import { pluginTrustKey, applyTrust, type PluginTrustStore } from "../plugins/trust.js";
 import type { HookEvent } from "../hooks/types.js";
-import { estimateMessages } from "../context/tokenBudget.js";
 import { compactIfNeeded } from "../context/compaction.js";
 import {
   setGoal,
@@ -40,6 +47,9 @@ import {
 import { loadSession, forkSession, SessionStore, newSessionId, deleteSession, archiveSession, listSessions, type PersistedSession } from "../session/sessionStore.js";
 import { searchSessions } from "../session/sessionSearch.js";
 import { serializeSession, validateImport } from "../session/sessionExport.js";
+import { serializePlanHandoff, planFromImport, type PlanHandoffSession } from "../session/planHandoff.js";
+import { scaffold, type GenerateFn, type ScaffoldOutput } from "./scaffold.js";
+import { resolveInWorkspace } from "../workspace/paths.js";
 import { renderTable } from "../ui/table.js";
 import { initState, undo, redo } from "./undoRedo.js";
 import { applyUndoEntry } from "../session/undoApply.js";
@@ -271,7 +281,7 @@ export async function handleSlashCommand(
         session.webTrace = trace;
         console.log(renderSlashResultPlain(result));
       } else {
-        console.log(renderSlashResultPlain(webStatus(config.web)));
+        console.log(renderSlashResultPlain(webResult(session)));
       }
       return { consumed: true };
     }
@@ -325,7 +335,7 @@ export async function handleSlashCommand(
       return { consumed: true };
 
     case "todos":
-      console.log(renderTodos(session.todos));
+      console.log(renderSlashResultPlain(todosResult(session)));
       return { consumed: true };
 
     case "instructions": {
@@ -418,7 +428,7 @@ export async function handleSlashCommand(
       }
       const all = await listSessions(config.workspaceRoot);
       if (all.length === 0) {
-        console.log(chalk.dim("No saved sessions."));
+        console.log(chalk.dim("No saved sessions. (`/sessions search <query>` to search transcripts.)"));
       } else {
         for (const s of all) {
           const label = s.title ? `${s.title} ${chalk.dim(`(${s.id})`)}` : s.id;
@@ -429,52 +439,21 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
-    case "usage": {
-      const u = session.tokenUsage;
-      const est = estimateCost(u, { provider: config.provider, model: config.model, pricing: config.telemetry.pricing });
-      const costStr = est.pricingKnown ? ` · est ~$${est.totalUsd.toFixed(4)} (${est.rateLabel})` : " · cost: pricing unknown";
-      console.log(
-        chalk.dim(
-          `Session tokens — total ${u.totalTokens} (prompt ${u.promptTokens}, completion ${u.completionTokens})${config.telemetry.costs ? costStr : ""}. ` +
-            `Provider-reported estimate; not a remote quota.`,
-        ),
-      );
+    case "usage":
+      console.log(renderSlashResultPlain(usageResult(session)));
       return { consumed: true };
-    }
 
-    case "cost": {
-      const u = session.tokenUsage;
-      const est = estimateCost(u, { provider: config.provider, model: config.model, pricing: config.telemetry.pricing });
-      if (!est.pricingKnown) {
-        console.log(chalk.dim(`Cost: pricing unknown for ${config.provider}/${config.model} — showing tokens only (total ${u.totalTokens}).`));
-      } else {
-        console.log(chalk.dim(
-          `Estimated cost (${est.rateLabel}): ~$${est.totalUsd.toFixed(4)} ` +
-            `(input ~$${est.inputUsd.toFixed(4)}, output ~$${est.outputUsd.toFixed(4)}) for ${u.totalTokens} tokens. Estimate only.`,
-        ));
-      }
+    case "cost":
+      console.log(renderSlashResultPlain(costResult(session)));
       return { consumed: true };
-    }
 
-    case "telemetry": {
-      const t = session.telemetry;
-      const u = session.tokenUsage;
-      const est = estimateCost(u, { provider: config.provider, model: config.model, pricing: config.telemetry.pricing });
-      console.log(chalk.dim(
-        `Telemetry — tokens ${u.totalTokens} · ` +
-          `model calls ${t?.modelCalls ?? 0} · tool calls ${t?.toolCalls ?? 0} · check runs ${t?.checkRuns ?? 0} · ` +
-          `warnings ${t?.warnings.length ?? 0}${est.pricingKnown ? ` · est ~$${est.totalUsd.toFixed(4)}` : ""}`,
-      ));
+    case "telemetry":
+      console.log(renderSlashResultPlain(telemetryResult(session)));
       return { consumed: true };
-    }
 
-    case "context": {
-      const used = estimateMessages(session.messages);
-      const budget = config.contextBudgetTokens;
-      const pct = Math.round((used / budget) * 100);
-      console.log(chalk.dim(`~${used} / ${budget} tokens (${pct}%), compacts at ${Math.round(config.compactAt * 100)}%`));
+    case "context":
+      console.log(renderSlashResultPlain(contextResult(session)));
       return { consumed: true };
-    }
 
     case "compact": {
       const res = compactIfNeeded(session.messages, {
@@ -578,6 +557,29 @@ export async function handleSlashCommand(
       const toStdout = parts.includes("--stdout");
       await save(); // flush current session state to its store first
       const persisted = await loadSession(config.workspaceRoot, session.store.id);
+
+      // `/export plan` — hand off the session WITH its approved plan attached, so
+      // it can be resumed/executed elsewhere. Always sanitized (secrets redacted).
+      if (parts[0] === "plan") {
+        const planText = session.planState?.plan;
+        if (!planText) {
+          console.log(chalk.yellow("No approved plan to export. Approve a plan (plan mode) first."));
+          return { consumed: true };
+        }
+        const handoff: PlanHandoffSession = { ...persisted, plan: { text: planText, approvedAt: new Date().toISOString() } };
+        const planJson = JSON.stringify(serializePlanHandoff(handoff), null, 2);
+        if (toStdout) {
+          console.log(planJson);
+        } else {
+          const dir = path.join(config.workspaceRoot, ".deepcoder", "exports");
+          await fs.mkdir(dir, { recursive: true });
+          const file = path.join(dir, `plan-${session.store.id}.json`);
+          await fs.writeFile(file, planJson, "utf8");
+          console.log(chalk.dim(`Exported plan handoff to ${path.relative(config.workspaceRoot, file)} (sanitized). Resume with /import.`));
+        }
+        return { consumed: true };
+      }
+
       const json = JSON.stringify(serializeSession(persisted, sanitize), null, 2);
       if (toStdout) {
         console.log(json);
@@ -626,13 +628,19 @@ export async function handleSlashCommand(
       if (!v.ok || !v.session) { console.log(chalk.red(`import: invalid session blob — ${v.error}`)); return { consumed: true }; }
       const newId = newSessionId();
       const s = v.session;
+      // Carry an approved plan through the handoff, if the blob has one.
+      const importedPlanText = planFromImport(s as PlanHandoffSession);
+      const importedPlan = importedPlanText
+        ? { text: importedPlanText, approvedAt: (s as PlanHandoffSession).plan?.approvedAt ?? new Date().toISOString() }
+        : undefined;
       await new SessionStore(config.workspaceRoot, newId).save({
         provider: s.provider ?? "", baseUrl: s.baseUrl ?? "", model: s.model, mode: s.mode,
         messages: s.messages, todos: s.todos ?? [], readTracker: new Set(s.readTracker ?? []),
         writeTracker: new Set(s.writeTracker ?? []), pendingCheckpoint: [], reviews: [], briefs: [], plans: [],
-        activatedSkills: [], telemetry: s.telemetry, webTrace: s.webTrace, goal: s.goal, title: s.title,
+        activatedSkills: [], telemetry: s.telemetry, webTrace: s.webTrace, goal: s.goal, plan: importedPlan, title: s.title,
       });
       console.log(chalk.dim(`Imported as ${newId}. Use --resume ${newId} to open it.`));
+      if (importedPlan) console.log(chalk.green(`Imported an approved plan (${importedPlan.text.length} chars) — resume to execute it.`));
       return { consumed: true };
     }
 
@@ -898,23 +906,9 @@ export async function handleSlashCommand(
       return { consumed: true };
     }
 
-    case "checks": {
-      const names = Object.keys(config.checks);
-      if (names.length === 0) {
-        console.log(
-          chalk.dim(
-            'No checks configured. Add to .deepcoder/config.json, e.g.:\n  { "checks": { "unit": { "command": "npm run test:unit" } } }',
-          ),
-        );
-        return { consumed: true };
-      }
-      for (const n of names.sort()) {
-        const c = config.checks[n]!;
-        const gate = classifyCommand(c.command) === "deny" ? chalk.red(" [blocked by policy]") : "";
-        console.log(`${n.padEnd(16)} ${chalk.dim(c.command)}${gate}`);
-      }
+    case "checks":
+      console.log(renderSlashResultPlain(checksResult(session)));
       return { consumed: true };
-    }
 
     case "check": {
       const name = arg.trim();
@@ -1348,6 +1342,55 @@ export async function handleSlashCommand(
       await fs.writeFile(path.join(skillDir, "SKILL.md"), skillContent, "utf8");
 
       console.log(chalk.green(`Skill "${name}" created. Activate with /skills activate ${name}`));
+      return { consumed: true };
+    }
+
+    case "scaffold": {
+      // `/scaffold <kind> <name> [sample-path]` — generate a NEW file matching a
+      // sample's style. The model-supplied targetPath is confined to the
+      // workspace and never overwrites an existing file.
+      const parts = arg.trim().split(/\s+/).filter(Boolean);
+      const [kind, name, samplePath] = parts;
+      if (!kind || !name) {
+        console.log(chalk.red("Usage: /scaffold <kind> <name> [sample-path] — generate a new file matching a sample's style"));
+        return { consumed: true };
+      }
+      let sample = "";
+      if (samplePath) {
+        try {
+          sample = await fs.readFile(resolveInWorkspace(config.workspaceRoot, samplePath), "utf8");
+        } catch (err) {
+          console.log(chalk.red(`Cannot read sample "${samplePath}": ${(err as Error).message}`));
+          return { consumed: true };
+        }
+      }
+      console.log(chalk.dim(`Scaffolding ${kind} "${name}"…`));
+      const generate: GenerateFn = async (prompt) => {
+        const res = await session.provider.chat({ messages: [{ role: "user", content: prompt }], tools: [], model: config.model });
+        return res.text;
+      };
+      let out: ScaffoldOutput;
+      try {
+        out = await scaffold({ kind, name, sample }, generate);
+      } catch (err) {
+        console.log(chalk.red(`Scaffold failed: ${(err as Error).message}`));
+        return { consumed: true };
+      }
+      let dest: string;
+      try {
+        dest = resolveInWorkspace(config.workspaceRoot, out.targetPath);
+      } catch (err) {
+        console.log(chalk.red(`Refusing to write outside workspace: ${(err as Error).message}`));
+        return { consumed: true };
+      }
+      const exists = await fs.stat(dest).then(() => true, () => false);
+      if (exists) {
+        console.log(chalk.yellow(`Refusing to overwrite existing file ${out.targetPath} (scaffold only creates new files).`));
+        return { consumed: true };
+      }
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.writeFile(dest, out.content, "utf8");
+      console.log(chalk.green(`Scaffolded ${out.targetPath} (${out.content.length} bytes).`));
       return { consumed: true };
     }
 
@@ -1874,6 +1917,63 @@ ${desc}
         console.log(chalk.dim(`Review with /delegate review ${batchPlan.id}; apply with /delegate apply ${batchPlan.id} <worker-id>.`));
       } catch (err) {
         console.log(chalk.red(`Batch run failed: ${(err as Error).message}`));
+      }
+      return { consumed: true };
+    }
+
+    case "pipeline": {
+      // `/pipeline <task>` — role-specialized RESEARCH → DEVELOP pipeline.
+      // A read-only researcher gathers context first; its output is fed as an
+      // explicit argument to the develop phase (the live agent), never silently
+      // merged. Refused when already nested (delegate depth guard).
+      const task = arg.trim();
+      if (!task) {
+        console.log(chalk.dim("usage: /pipeline <task>  — research the task (read-only), then implement it with that research as context"));
+        return { consumed: true };
+      }
+      const { runHeteroPipeline } = await import("../delegate/heteroPipeline.js");
+      const controller = new AbortController();
+      const onSigint = () => controller.abort();
+      process.once("SIGINT", onSigint);
+      try {
+        const subOpts = {
+          workspaceRoot: config.workspaceRoot,
+          provider: session.provider,
+          parentModel: config.model,
+          subagentModel: config.subagentModel,
+          contextBudgetTokens: config.contextBudgetTokens,
+          compactAt: config.compactAt,
+          signal: controller.signal,
+        };
+        const result = await runHeteroPipeline({
+          task,
+          delegateDepth: delegateDepthFromEnv(process.env),
+          runResearch: async (t) => {
+            console.log(chalk.dim("Research phase (read-only researcher subagent)…"));
+            const { result: r, trace } = await runSubagent(researcher, `Research this task using only read-only inspection; cite file:line evidence: ${t}`, subOpts);
+            // Untrusted, model-authored → quarantined metadata only.
+            session.reviews.push({ createdAt: new Date().toISOString(), result: r, trace });
+            await save();
+            return [r.summary, ...r.findings.map((f) => `- ${f.claim} (${f.evidence})`)].join("\n");
+          },
+          runDevelop: async (t, research) => {
+            if (!runAgent) {
+              console.log(chalk.yellow("Develop phase needs an interactive session — research output shown above; run the task manually."));
+              console.log(research);
+              return "";
+            }
+            console.log(chalk.dim("Develop phase (agent)…"));
+            session.messages.push({
+              role: "user",
+              content: `Implement the following task. Use this prior research as context (do not re-research):\n\n--- RESEARCH ---\n${research}\n--- END RESEARCH ---\n\nTASK: ${t}`,
+            });
+            await runAgent();
+            return "developed";
+          },
+        });
+        if (result.blocked) console.log(chalk.yellow(result.blockReason));
+      } finally {
+        process.removeListener("SIGINT", onSigint);
       }
       return { consumed: true };
     }
@@ -3806,18 +3906,8 @@ async function runPlugins(session: Session, arg: string): Promise<void> {
     return;
   }
 
-  if (plugins.length === 0) {
-    console.log(chalk.dim("No plugins discovered (.deepcoder/plugins, .agents/plugins, ~/.deepcoder/plugins)."));
-    return;
-  }
-  const store = await loadStore();
-  console.log(chalk.bold(`\nPlugins (${plugins.length}):`));
-  for (const p of plugins) {
-    const t = resolvePluginTrust(p, store);
-    const mark = t.enabled ? chalk.green("●") : chalk.dim("○");
-    console.log(`  ${mark} ${p.manifest.name} ${chalk.dim(`[${p.source}] ${t.state}`)} — ${p.manifest.description}`);
-  }
-  console.log(chalk.dim("  /plugins trust <name> · /plugins untrust <name>"));
+  console.log(renderSlashResultPlain(await pluginsResult(session, arg)));
+  if (plugins.length > 0) console.log(chalk.dim("  /plugins trust <name> · /plugins untrust <name>"));
 }
 
 /**
