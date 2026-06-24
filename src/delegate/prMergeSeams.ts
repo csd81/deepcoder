@@ -284,9 +284,12 @@ async function cleanupLocalArtifacts(
     /* best-effort */
   }
 
-  // Sync local master: fetch + fast-forward.
+  // Sync local master + prune the now-deleted remote branch. `gh pr merge
+  // --delete-branch` deletes the remote branch, but a plain fetch leaves the
+  // stale `origin/<branch>` remote-tracking ref dangling locally — `--prune`
+  // drops it so the local view matches the remote.
   try {
-    await runGit(["fetch", "origin"], { cwd: root });
+    await runGit(["fetch", "--prune", "origin"], { cwd: root });
     await runGit(["merge", "--ff-only", "origin/master"], { cwd: root });
   } catch {
     /* best-effort */
