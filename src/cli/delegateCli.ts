@@ -20,6 +20,16 @@ import { savePlan } from "../delegate/store.js";
 import { openPr, prepareWorkerBranch } from "../delegate/openPr.js";
 import { loadConfig } from "../config/config.js";
 import type { DelegationPlan, WorkerValidation } from "../delegate/types.js";
+import { mergePr } from "../delegate/prMerge.js";
+import type { PrMergeResult } from "../delegate/prMerge.js";
+import {
+  createValidateSeam,
+  createConflictsSeam,
+  createMergeSeam,
+  defaultRunGh,
+  defaultRunGit,
+} from "../delegate/prMergeSeams.js";
+import type { RunGh, RunGit } from "../delegate/prMergeSeams.js";
 
 export interface DelegateValidateResult {
   /** 0 = all selected workers applyable; 1 = some not applyable; 2 = plan/usage error. */
@@ -372,6 +382,74 @@ export async function runDelegateAuto(
   return { exitCode: allApplyable ? 0 : 1, planId, prUrls };
 }
 
+/* ------------------------------------------------------------------ */
+/*  delegate merge — gate-checked PR merge                             */
+/* ------------------------------------------------------------------ */
+
+export interface DelegateMergeResult {
+  /** 0 = all merged; 1 = some not merged (skipped/conflicts/error); 2 = usage error. */
+  exitCode: number;
+  results: PrMergeResult[];
+}
+
+interface MergeDeps {
+  mergePr?: typeof mergePr;
+  runGh?: RunGh;
+  runGit?: RunGit;
+}
+
+/**
+ * Merge one or more PRs, each gated on applyable + conflict-free.
+ *
+ * - validate: gh pr view → state=OPEN && mergeable=MERGEABLE && no failing checks.
+ * - conflicts: git merge-tree → conflicting file paths.
+ * - resolve: OUT OF SCOPE — conflicts → conflicts-unresolved, no merge attempted.
+ * - merge: gh pr merge --merge --delete-branch + scoped post-merge cleanup.
+ *
+ * The merge gate is non-negotiable: a non-applyable PR is NEVER merged.
+ */
+export async function runDelegateMerge(
+  root: string,
+  prs: number[],
+  opts: { dryRun?: boolean } = {},
+  deps: MergeDeps = {},
+): Promise<DelegateMergeResult> {
+  if (prs.length === 0) return { exitCode: 2, results: [] };
+
+  const runGh = deps.runGh ?? defaultRunGh;
+  const runGit = deps.runGit ?? defaultRunGit;
+  const mergePrFn = deps.mergePr ?? mergePr;
+
+  const results: PrMergeResult[] = [];
+  for (const pr of prs) {
+    // Derive branch from gh pr view so conflicts + cleanup are scoped.
+    let branch = "";
+    try {
+      const viewResult = await runGh(["pr", "view", String(pr), "--json", "headRefName"]);
+      if (viewResult.exitCode === 0) {
+        branch = JSON.parse(viewResult.stdout).headRefName ?? "";
+      }
+    } catch {
+      /* best-effort — proceed without branch info */
+    }
+
+    const seamDeps = {
+      validate: createValidateSeam(runGh),
+      conflicts: createConflictsSeam(runGit, { branch, base: "master" }),
+      // resolve: NOT provided — conflicts → conflicts-unresolved.
+      merge: createMergeSeam(runGh, runGit, { root }),
+    };
+
+    const result = await mergePrFn(pr, seamDeps, { dryRun: opts.dryRun });
+    results.push(result);
+  }
+
+  const allMerged = results.every(
+    (r) => r.outcome === "merged" || r.outcome === "resolved-and-merged",
+  );
+  return { exitCode: allMerged ? 0 : 1, results };
+}
+
 /** Render a human-readable validation summary (used when --json is absent). */
 export function formatValidateSummary(results: DelegateValidateResult["results"]): string {
   const lines: string[] = [];
@@ -508,6 +586,33 @@ export function registerDelegateCommand(program: Command, deps: { root?: string 
         process.stdout.write(`exit: ${res.exitCode}\n`);
         for (const url of res.prUrls) {
           process.stdout.write(`PR: ${url}\n`);
+        }
+      }
+      process.exit(res.exitCode);
+    });
+
+  delegate
+    .command("merge <pr...>")
+    .description("gate-checked PR merge: validates, detects conflicts, merges (resolve out of scope)")
+    .option("--dry-run", "report outcomes, do not merge or resolve")
+    .option("--json", "print results as JSON")
+    .action(async (prs: string[], o: { dryRun?: boolean; json?: boolean }) => {
+      const numbers = prs.map((p) => parseInt(p, 10)).filter((n) => !isNaN(n));
+      if (numbers.length === 0) {
+        process.stderr.write("delegate merge: at least one PR number required\n");
+        process.exit(2);
+      }
+      const res = await runDelegateMerge(root, numbers, { dryRun: o.dryRun });
+      if (o.json) {
+        process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+      } else {
+        for (const r of res.results) {
+          const extra = r.failingGates
+            ? ` (${r.failingGates.join(", ")})`
+            : r.unresolvedFiles
+              ? ` (${r.unresolvedFiles.join(", ")})`
+              : "";
+          process.stdout.write(`PR #${r.pr}: ${r.outcome}${extra}\n`);
         }
       }
       process.exit(res.exitCode);
