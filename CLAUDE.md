@@ -49,7 +49,7 @@ Tests run with **fake providers** (`src/providers/fauxProvider.ts`) — no API k
 The agent loop (`src/agent/agentLoop.ts`) drives: build system prompt (`systemPrompt.ts`) → call provider → stream tool calls → each tool passes the **permission gate** before executing → feed results back → repeat until done or turn budget hit.
 
 ```
-src/cli/         entry (main.ts), REPL (repl.ts), slash commands (slashCommands.ts)
+src/cli/         entry (main.ts), REPL (repl.ts), slash commands (slashCommands.ts: /plan /review /research /triage /checks /mode /compact /mcp …)
 src/agent/       agent loop, system prompt, retry
 src/providers/   vendor-neutral ModelProvider + factory; deepseek + openaiCompatible (both OpenAI-compatible engine), fauxProvider (tests only)
 src/tools/       Tool -> build(args) -> ToolInvocation -> execute(); registry.ts wires them
@@ -64,7 +64,7 @@ src/solve/       closed-loop: edit -> run named check -> feed redacted failure s
 src/sandbox/     OS sandbox (bubblewrap/local) for run_bash + checks
 src/workspaceIsolation/  disposable git worktree for agent edits + patch apply
 src/delegate/    Phase 9: decompose a task into isolated worker subprocesses; 8-gate patch validation
-src/session/     session persistence/resume, checkpoints, check-run store
+src/session/     session persistence/resume; checkpoints.ts = local undo (roll back a run of agent edits incl. files it created — not git, no commits); check-run store
 src/sdk/         public embedding API (DeepcoderClient); src/server/ HTTP policy helpers
 ```
 
