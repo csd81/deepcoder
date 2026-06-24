@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { gitExec } from "../git/core.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,19 +58,11 @@ export async function defaultRunGh(args: string[]): Promise<RunResult> {
 }
 
 export async function defaultRunGit(args: string[], opts?: { cwd?: string }): Promise<RunResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync("git", args, {
-      cwd: opts?.cwd,
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    return { stdout, stderr, exitCode: 0 };
-  } catch (err: any) {
-    return {
-      stdout: err.stdout ?? "",
-      stderr: err.stderr ?? "",
-      exitCode: typeof err.code === "number" ? err.code : 1,
-    };
-  }
+  // Route through the native git core (the single deterministic git primitive)
+  // rather than spawning git directly. gitExec never throws on a non-zero exit,
+  // so the {code, stdout, stderr} shape maps straight onto RunResult.
+  const res = await gitExec(opts?.cwd ?? process.cwd(), args);
+  return { stdout: res.stdout, stderr: res.stderr, exitCode: res.code };
 }
 
 /* ------------------------------------------------------------------ */

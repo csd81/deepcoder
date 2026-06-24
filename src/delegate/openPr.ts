@@ -13,8 +13,18 @@ import { promises as fs } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { gitExec } from "../git/core.js";
 
 const execFileAsync = promisify(execFile);
+
+/** Run git through the native core; throw on non-zero so callers can rely on it. */
+async function git(cwd: string, args: string[]): Promise<string> {
+  const res = await gitExec(cwd, args);
+  if (res.code !== 0) {
+    throw new Error(res.stderr.trim() || `git ${args.join(" ")} failed (code ${res.code})`);
+  }
+  return res.stdout;
+}
 
 export interface OpenPrOpts {
   root: string;
@@ -41,10 +51,7 @@ export async function openPr(
   const { root, branch, base = "master" } = opts;
 
   // 1. Push the prepared branch.
-  await execFileAsync("git", ["push", "-u", "origin", branch], {
-    cwd: root,
-    maxBuffer: 8 * 1024 * 1024,
-  });
+  await git(root, ["push", "-u", "origin", branch]);
 
   // 2. Write body to a temp file (avoid argv quoting issues).
   const bodyFile = path.join(root, `.prbody-${branch}`);
@@ -101,21 +108,15 @@ export async function prepareWorkerBranch(
   const wt = path.join(tmpDir, "wt");
 
   try {
-    await execFileAsync("git", ["worktree", "add", wt, "-b", opts.branch, base], {
-      cwd: root,
-    });
+    await git(root, ["worktree", "add", wt, "-b", opts.branch, base]);
 
     // Apply the worker's patch in the worktree (never touches real root).
-    await execFileAsync("git", ["apply", "--check", "--whitespace=nowarn", patchFile], {
-      cwd: wt,
-    });
-    await execFileAsync("git", ["apply", "--whitespace=nowarn", patchFile], {
-      cwd: wt,
-    });
+    await git(wt, ["apply", "--check", "--whitespace=nowarn", patchFile]);
+    await git(wt, ["apply", "--whitespace=nowarn", patchFile]);
 
     // Commit on the branch.
-    await execFileAsync("git", ["add", "-A"], { cwd: wt });
-    await execFileAsync("git", [
+    await git(wt, ["add", "-A"]);
+    await git(wt, [
       "-c", "commit.gpgsign=false", "commit", "-qm",
       `feat: delegated worker result (${opts.branch})
 
@@ -123,12 +124,12 @@ Produced by a deepcoder worker via --solve --check phase.
 NOT yet human-verified — see the PR review checklist.
 
 Co-Authored-By: deepcoder-worker <noreply@deepcoder.local>`,
-    ], { cwd: wt });
+    ]);
   } finally {
     // Clean up the temp worktree (the branch retains the commit).
     try {
-      await execFileAsync("git", ["worktree", "remove", "--force", wt], { cwd: root });
-      await execFileAsync("git", ["worktree", "prune"], { cwd: root });
+      await git(root, ["worktree", "remove", "--force", wt]);
+      await git(root, ["worktree", "prune"]);
     } catch {
       /* best-effort */
     }

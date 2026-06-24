@@ -1,21 +1,22 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { gitExec, type GitExecResult } from "../git/core.js";
 
-const execFileAsync = promisify(execFile);
-
-/** Git helpers: read-only inspection plus structured workflow commands. */
+/**
+ * Git helpers: read-only inspection plus structured workflow commands.
+ *
+ * All execution flows through the native git core (`gitExec`) — the single
+ * deterministic primitive deepcoder owns — rather than spawning git directly,
+ * so there is one git surface, not two (plans/new/feat-native-git-core-plan.md).
+ */
 export class Git {
   constructor(private cwd: string) {}
 
   /** Run an arbitrary git command, returning stdout. Throws on non-zero exit. */
   async run(args: string[]): Promise<string> {
-    try {
-      const { stdout } = await execFileAsync("git", args, { cwd: this.cwd, maxBuffer: 8 * 1024 * 1024 });
-      return stdout;
-    } catch (err) {
-      const e = err as { stderr?: string; code?: number };
-      throw new Error(e.stderr?.trim() || `git ${args.join(" ")} failed (code ${e.code ?? "?"})`);
+    const res = await gitExec(this.cwd, args);
+    if (res.code !== 0) {
+      throw new Error(res.stderr.trim() || `git ${args.join(" ")} failed (code ${res.code})`);
     }
+    return res.stdout;
   }
 
   /**
@@ -23,14 +24,8 @@ export class Git {
    * instead of throwing on a non-zero exit. Used by merge/rebase which exit
    * non-zero on conflicts — a non-error condition we want to inspect, not throw.
    */
-  private async runStatus(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-    try {
-      const { stdout, stderr } = await execFileAsync("git", args, { cwd: this.cwd, maxBuffer: 8 * 1024 * 1024 });
-      return { code: 0, stdout, stderr };
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; code?: number };
-      return { code: e.code ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
-    }
+  private async runStatus(args: string[]): Promise<GitExecResult> {
+    return gitExec(this.cwd, args);
   }
 
   /** Workspace-relative paths with unmerged (conflicting) entries, if any. */

@@ -43,6 +43,18 @@ export interface Config {
   model: string;
   reasonerModel?: string;
   /**
+   * When true (DEFAULT), the agent automatically selects between Flash and Pro
+   * per task. Gate: DEEPCODER_MODEL_AUTO (1/true/on/yes on; 0/false/off/no off).
+   * An explicit DEEPCODER_MODEL still always wins downstream.
+   */
+  modelAuto: boolean;
+  /**
+   * True when `model` was pinned explicitly (CLI/env/override) rather than left
+   * at the provider default. When true, automatic Flash-vs-Pro selection is
+   * skipped — an explicit model always wins.
+   */
+  modelExplicit: boolean;
+  /**
    * Sampling temperature sent to the provider. Defaults to 0 (deterministic).
    * `undefined` means OMIT the field entirely so the model uses its own default
    * — required by GPT-5 reasoning models, which reject a non-default temperature.
@@ -697,8 +709,11 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   // The faux smoke-harness provider makes no network calls, so it needs no key.
   const apiKey = provider === "faux" ? (apiKeyRaw ?? "") : req("API key (DEEPCODER_API_KEY)", apiKeyRaw);
   const baseUrl = process.env.DEEPCODER_BASE_URL ?? providerEnv("BASE_URL") ?? "";
-  const model =
-    process.env.DEEPCODER_MODEL ?? providerEnv("MODEL") ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-v4-flash";
+  const explicitModelRaw = overrides.model ?? process.env.DEEPCODER_MODEL ?? providerEnv("MODEL");
+  const model = explicitModelRaw ?? PROVIDER_DEFAULT_MODELS[provider] ?? "deepseek-v4-flash";
+  // Whether the model was pinned explicitly (CLI/env/override) vs left at the
+  // provider default. An explicit model ALWAYS wins over automatic selection.
+  const modelExplicit = explicitModelRaw !== undefined && explicitModelRaw !== "";
 
   // Temperature: a number, or omitted ("default"/"omit"/"none") so reasoning
   // models can use their own default. Unset → 0 (deterministic, back-compat).
@@ -710,6 +725,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     const n = Number(tempRaw);
     temperature = Number.isFinite(n) ? n : 0;
   }
+
+  // Automatic Flash-vs-Pro model selection: default ON; explicit opt-out via
+  // DEEPCODER_MODEL_AUTO (or provider alias *_MODEL_AUTO). "0"/"false"/"off"/"no"
+  // → false; anything else (incl. "1"/"true"/"on"/"yes") → true. An explicit
+  // DEEPCODER_MODEL still wins downstream (precedence handled elsewhere).
+  const modelAutoRaw = (process.env.DEEPCODER_MODEL_AUTO ?? providerEnv("MODEL_AUTO"))?.toLowerCase();
+  const modelAuto = overrides.modelAuto ?? (modelAutoRaw !== undefined
+    ? !["0", "false", "off", "no"].includes(modelAutoRaw)
+    : true);
 
   const reEff = (process.env.DEEPCODER_REASONING_EFFORT ?? "").toLowerCase();
   const reasoningEffort = (["low", "medium", "high"].includes(reEff) ? reEff : "medium") as
@@ -763,6 +787,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     apiKey,
     baseUrl,
     model,
+    modelExplicit,
     temperature,
     reasoningEffort,
     semanticSearch,
@@ -773,6 +798,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     // Planning/reasoning role defaults to DeepSeek's reasoning model (Pro);
     // other roles use `model` (Flash) via the model router.
     reasonerModel: process.env.DEEPCODER_REASONER_MODEL ?? providerEnv("REASONER_MODEL") ?? "deepseek-v4-pro",
+    modelAuto,
     planFirst:
       ["1", "true", "yes"].includes((process.env.DEEPCODER_PLAN_FIRST ?? "").toLowerCase()) ||
       ["1", "true", "yes"].includes((process.env.DEEPCODER_SOLVE_PLAN_FIRST ?? "").toLowerCase()),
