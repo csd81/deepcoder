@@ -59,7 +59,7 @@ export function buildSystemPrompt(opts: {
     "- When the task is done, stop calling tools and reply with a short summary of what you changed.",
     "",
     `Workspace root: ${opts.workspaceRoot}`,
-    `Approval mode: ${opts.mode} (read-only tools always run; mutating/executing tools follow this mode).`,
+    renderApprovalModeLine(opts.mode),
   ];
 
   base.push(
@@ -106,18 +106,18 @@ export function buildSystemPrompt(opts: {
 
   let text = base.join("\n");
 
-  if (opts.instructions?.trim()) {
-    text += "\n\n## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + opts.instructions.trim();
-  }
   // Project memory is recall, not policy — it never overrides instructions or the
   // permission model. Absent → nothing is appended (zero change to existing runs).
-  if (opts.memory?.trim()) {
-    text += "\n\n## Project memory\nRemembered facts/preferences (recall only — not authoritative; verify before relying on any item):\n\n" + opts.memory.trim();
-  }
   // Skills are opt-in guidance bundles: list what's available, but they must be
-  // explicitly activated (activate_skill) before their instructions apply.
-  if (opts.skillsCatalog?.trim()) {
-    text += "\n\n## Available skills (activate before use)\nThese are NOT active yet — call activate_skill(name) to load one's instructions:\n\n" + opts.skillsCatalog.trim();
+  // explicitly activated (activate_skill) before their instructions apply. These
+  // overlay blocks are extracted into helpers so the Context Registry can reuse
+  // them verbatim when rendering a mid-conversation `[context-update]`.
+  for (const block of [
+    renderProjectInstructions(opts.instructions),
+    renderProjectMemory(opts.memory),
+    renderSkillsCatalog(opts.skillsCatalog),
+  ]) {
+    if (block) text += "\n\n" + block;
   }
   // Dynamic tool summary: render only the tools actually registered this
   // session, bucketed by category. Conditionally-registered tools mean this
@@ -126,6 +126,31 @@ export function buildSystemPrompt(opts: {
     text += "\n\n" + renderAvailableTools(opts.toolNames);
   }
   return text;
+}
+
+// ── Dynamic-context overlay blocks ────────────────────────────────────────
+// Single source of truth for the project-context sections of messages[0]. The
+// Context Registry (src/context/registry.ts) reuses these verbatim so a
+// mid-conversation `[context-update]` renders byte-identically to the baseline.
+// Each returns "" when its input is empty, so callers can append unconditionally.
+
+export function renderApprovalModeLine(mode: ApprovalMode): string {
+  return `Approval mode: ${mode} (read-only tools always run; mutating/executing tools follow this mode).`;
+}
+
+export function renderProjectInstructions(instructions?: string): string {
+  if (!instructions?.trim()) return "";
+  return "## Project instructions\nThe following come from the project and take priority over your defaults:\n\n" + instructions.trim();
+}
+
+export function renderProjectMemory(memory?: string): string {
+  if (!memory?.trim()) return "";
+  return "## Project memory\nRemembered facts/preferences (recall only — not authoritative; verify before relying on any item):\n\n" + memory.trim();
+}
+
+export function renderSkillsCatalog(catalog?: string): string {
+  if (!catalog?.trim()) return "";
+  return "## Available skills (activate before use)\nThese are NOT active yet — call activate_skill(name) to load one's instructions:\n\n" + catalog.trim();
 }
 
 /** Ordered tool buckets. Within a category, tools list in this declared order. */

@@ -15,6 +15,7 @@ import { redactSecrets } from "../workspace/redact.js";
 import { evaluateAction } from "../security/monitor.js";
 import type { HookEvent } from "../hooks/types.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
+import { contextRegistry, isContextUpdateMessage, type ContextSnapshot } from "../context/registry.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import {
   buildInstructionGraph,
@@ -162,6 +163,12 @@ export interface Session {
    * the JIT injector read it. Undefined under the legacy first-match loader.
    */
   instructionGraph?: import("../context/instructionGraph.js").InstructionGraph;
+  /**
+   * Cache-Optimized Context: the active epoch snapshot. messages[0] is the
+   * immutable baseline for this epoch; reconciliation appends `[context-update]`
+   * messages instead of mutating it. Re-minted on create/resume/compaction.
+   */
+  contextSnapshot: ContextSnapshot;
   /** Cumulative token usage across this session's model calls. */
   tokenUsage: import("../providers/types.js").TokenUsage;
   /** Phase 10F — model router for role-based model selection. */
@@ -394,6 +401,86 @@ function loadStartupMemorySync(workspaceRoot: string): string {
   }
 }
 
+/**
+ * Cache-Optimized Context: build the epoch snapshot that mirrors a freshly-built
+ * messages[0]. Memory is read with the SAME sync loader systemMessage uses, so
+ * the snapshot and the baseline stay in lockstep. `skillsCatalog` is the
+ * startup-scanned catalog (skills are epoch-fixed; reconciliation carries it
+ * forward rather than re-scanning the filesystem every turn).
+ */
+export function buildContextSnapshot(
+  config: Config,
+  mode: ApprovalMode,
+  instructionsText: string,
+  skillsCatalog: string,
+): ContextSnapshot {
+  return contextRegistry.snapshot({
+    instructions: instructionsText,
+    memory: loadStartupMemorySync(config.workspaceRoot),
+    skills: skillsCatalog,
+    mode,
+  });
+}
+
+/**
+ * Cache-Optimized Context: diff the live dynamic sources against the session's
+ * epoch snapshot. On a change, return a single `[context-update]` system message
+ * and advance the snapshot (keeping the epoch id) — messages[0] is never touched,
+ * so the cached prefix survives. Returns [] when nothing changed.
+ */
+export function reconcileSessionContext(session: Session): AgentMessage[] {
+  // A session built outside sessionFactory (SDK/embedder/test) may lack a
+  // snapshot. Lazily seed it from current sources and emit nothing this turn.
+  if (!session.contextSnapshot) {
+    session.contextSnapshot = buildContextSnapshot(
+      session.config,
+      session.mode,
+      resolveInstructions(session.config).text,
+      "",
+    );
+    return [];
+  }
+  const prev = session.contextSnapshot;
+  const next = contextRegistry.snapshot(
+    {
+      // Instructions and skills are scanned once at epoch start and carried
+      // forward: re-resolving instructions would rebuild the instruction graph
+      // (a filesystem walk) on every tool iteration, and they don't change
+      // mid-session today. They refresh at the next epoch (resume/compaction).
+      instructions: prev.sources.instructions ?? "",
+      skills: prev.sources.skills ?? "",
+      // mode (via /mode) and memory (via the memory tool) can change within a
+      // session; both are cheap to read, so reconcile them every turn.
+      memory: loadStartupMemorySync(session.config.workspaceRoot),
+      mode: session.mode,
+    },
+    prev.epochId,
+  );
+  const changed = contextRegistry.diff(prev, next);
+  if (changed.length === 0) return [];
+  const content = contextRegistry.renderUpdate(next, changed);
+  session.contextSnapshot = next;
+  return [{ role: "system", content }];
+}
+
+/**
+ * Cache-Optimized Context: start a fresh epoch (after compaction). Rebuild
+ * messages[0] from current sources, strip stale `[context-update]` messages now
+ * folded into the new baseline, and re-mint the snapshot. The skills catalog is
+ * reused from the prior snapshot (epoch-fixed).
+ */
+export function resetSessionContextEpoch(session: Session): void {
+  const instr = resolveInstructions(session.config);
+  const skills = session.contextSnapshot?.sources.skills ?? "";
+  const fresh = systemMessage(session.config, session.mode, instr.text, skills, session.registry.names());
+  if (session.messages[0]?.role === "system") session.messages[0] = fresh;
+  else session.messages.unshift(fresh);
+  for (let i = session.messages.length - 1; i > 0; i--) {
+    if (isContextUpdateMessage(session.messages[i])) session.messages.splice(i, 1);
+  }
+  session.contextSnapshot = buildContextSnapshot(session.config, session.mode, instr.text, skills);
+}
+
 function snapshot(session: Session): SessionSnapshot {
   return {
     provider: session.config.provider,
@@ -411,6 +498,7 @@ function snapshot(session: Session): SessionSnapshot {
     activatedSkills: session.activatedSkills,
     webTrace: session.webTrace,
     title: session.title,
+    contextSnapshot: session.contextSnapshot,
   };
 }
 
@@ -562,6 +650,8 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     onPreToolUse: preToolUseHook(session),
     onPostTool: postToolHook(session),
     jitContext: jitContext(session),
+    reconcileContext: () => reconcileSessionContext(session),
+    onContextEpochReset: () => resetSessionContextEpoch(session),
     onPersist: () => session.store.save(snapshot(session)),
     onUsage: (u) => addUsage(session.tokenUsage, u),
     onAssistantTextDelta: (chunk) => renderer.emit({ type: "assistant_delta", text: chunk }),
@@ -1006,8 +1096,10 @@ export async function runRepl(session: Session): Promise<void> {
       );
       if (slash.exit) break;
       if (slash.consumed) {
-        // Keep the system prompt in sync if the mode changed.
-        session.messages[0] = systemMessage(session.config, session.mode, undefined, undefined, session.registry.names());
+        // A consumed slash command may have changed a dynamic source (e.g. /mode).
+        // We deliberately do NOT rebuild messages[0]: that would invalidate the
+        // entire prefix cache. The next turn's reconciliation emits a single
+        // [context-update] instead, keeping the cached prefix intact.
         continue;
       }
 

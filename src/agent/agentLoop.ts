@@ -83,6 +83,21 @@ export interface AgentDeps {
    */
   delegationHint?(): string[];
   /**
+   * Cache-Optimized Context: reconcile dynamic context sources (approval mode,
+   * instructions, memory) against the session's epoch snapshot. Called at the
+   * top of every turn; returns zero or one persisted `[context-update]` system
+   * message(s) to append when a source changed — NEVER rewrites messages[0], so
+   * the prefix cache survives. The closure updates the session snapshot.
+   */
+  reconcileContext?(): AgentMessage[];
+  /**
+   * Cache-Optimized Context: start a fresh context epoch after compaction —
+   * rebuild messages[0] from current sources, strip stale `[context-update]`
+   * messages, and reset the session snapshot. Invoked only when a compaction
+   * actually fired.
+   */
+  onContextEpochReset?(): void | Promise<void>;
+  /**
    * Model-escalation hook. Called when the SAME tool produces the SAME error
    * twice in a row. Returns a stronger model id to switch to for the rest of
    * the run (sticky), or undefined to stay put (e.g. already escalated, or a
@@ -193,6 +208,19 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
     });
     if (compaction.compacted) {
       deps.onNotice?.(`Compacted context (~${compaction.before} → ~${compaction.after} tokens).`);
+      // Start a fresh context epoch: rebuild messages[0] from current sources and
+      // drop stale [context-update]s now folded into the new baseline.
+      await deps.onContextEpochReset?.();
+      await deps.onPersist?.();
+    }
+
+    // Cache-Optimized Context: emit a single [context-update] at the tail when a
+    // dynamic source changed (e.g. /mode), leaving messages[0] — and thus the
+    // whole cached prefix — untouched. Runs every turn but only appends on a real
+    // change (the closure diffs against the session snapshot).
+    const contextUpdates = deps.reconcileContext?.() ?? [];
+    if (contextUpdates.length) {
+      messages.push(...contextUpdates);
       await deps.onPersist?.();
     }
 

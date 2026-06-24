@@ -8,6 +8,7 @@ import type { CheckpointFile } from "./checkpoints.js";
 import type { SubagentRunRecord } from "../subagents/types.js";
 import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { PlanRunRecord } from "../context/planBrief.js";
+import type { ContextSnapshot } from "../context/registry.js";
 import type { SessionGoal } from "./goal.js";
 
 export interface PersistedSession {
@@ -39,6 +40,8 @@ export interface PersistedSession {
   webTrace?: import("../web/trace.js").WebTraceRecord[];
   /** Phase 10M — persistent session goal. Absent in pre-10M sessions (loads as undefined). */
   goal?: SessionGoal;
+  /** Cache-Optimized Context: active epoch snapshot. Absent in pre-feature sessions. */
+  contextSnapshot?: ContextSnapshot;
   createdAt: string;
   updatedAt: string;
   /** Phase 10 — soft-delete: archived sessions are hidden by default. */
@@ -65,6 +68,8 @@ export interface SessionSnapshot {
   webTrace?: import("../web/trace.js").WebTraceRecord[];
   /** Phase 10M — persistent session goal. */
   goal?: import("./goal.js").SessionGoal;
+  /** Cache-Optimized Context: active epoch snapshot. */
+  contextSnapshot?: ContextSnapshot;
 }
 
 function sessionsDir(workspaceRoot: string): string {
@@ -111,6 +116,7 @@ export class SessionStore {
       webTrace: snapshot.webTrace,
       goal: snapshot.goal,
       title: snapshot.title,
+      contextSnapshot: snapshot.contextSnapshot,
       createdAt: this.createdAt,
       updatedAt: new Date().toISOString(),
     };
