@@ -26,10 +26,11 @@ import {
   createValidateSeam,
   createConflictsSeam,
   createMergeSeam,
+  createUpdateBranchSeam,
   defaultRunGh,
   defaultRunGit,
 } from "../delegate/prMergeSeams.js";
-import type { RunGh, RunGit } from "../delegate/prMergeSeams.js";
+import type { RunGh, RunGit, Sleep } from "../delegate/prMergeSeams.js";
 
 export interface DelegateValidateResult {
   /** 0 = all selected workers applyable; 1 = some not applyable; 2 = plan/usage error. */
@@ -396,6 +397,7 @@ interface MergeDeps {
   mergePr?: typeof mergePr;
   runGh?: RunGh;
   runGit?: RunGit;
+  sleep?: Sleep;
 }
 
 /**
@@ -419,6 +421,7 @@ export async function runDelegateMerge(
   const runGh = deps.runGh ?? defaultRunGh;
   const runGit = deps.runGit ?? defaultRunGit;
   const mergePrFn = deps.mergePr ?? mergePr;
+  const sleep = deps.sleep;
 
   const results: PrMergeResult[] = [];
   for (const pr of prs) {
@@ -433,8 +436,23 @@ export async function runDelegateMerge(
       /* best-effort — proceed without branch info */
     }
 
+    // 1. Pre-validate — UNKNOWN is polled inside the seam.
+    const validateSeam = createValidateSeam(runGh, sleep);
+
+    // 2. If BEHIND (structurally ok but out-of-date), try update-branch.
+    if (!opts.dryRun) {
+      const preVal = await validateSeam(pr);
+      if (preVal.applyable && preVal.mergeStateStatus === "BEHIND") {
+        await createUpdateBranchSeam(runGh)(pr);
+      }
+    }
+
+    // 3. Proceed with full merge gate. Wrap validate to match mergePr's type.
     const seamDeps = {
-      validate: createValidateSeam(runGh),
+      validate: async (p: number) => {
+        const v = await validateSeam(p);
+        return { applyable: v.applyable, failures: v.failures };
+      },
       conflicts: createConflictsSeam(runGit, { branch, base: "master" }),
       // resolve: NOT provided — conflicts → conflicts-unresolved.
       merge: createMergeSeam(runGh, runGit, { root }),

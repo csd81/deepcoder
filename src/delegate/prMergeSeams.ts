@@ -28,6 +28,14 @@ export interface RunResult {
 
 export type RunGh = (args: string[]) => Promise<RunResult>;
 export type RunGit = (args: string[], opts?: { cwd?: string }) => Promise<RunResult>;
+export type Sleep = (ms: number) => Promise<void>;
+
+/* ------------------------------------------------------------------ */
+/*  Default sleep (real setTimeout) — swapped in tests                 */
+/* ------------------------------------------------------------------ */
+
+const defaultSleep: Sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 /* ------------------------------------------------------------------ */
 /*  Default runGh / runGit (spawn real binaries)                      */
@@ -69,62 +77,77 @@ export async function defaultRunGit(args: string[], opts?: { cwd?: string }): Pr
 /* ------------------------------------------------------------------ */
 
 /**
- * gh pr view <pr> --json state,mergeable,statusCheckRollup →
+ * gh pr view <pr> --json state,mergeable,mergeStateStatus,statusCheckRollup →
  * applyable iff state=OPEN && mergeable=MERGEABLE && no failing checks.
+ *
+ * When mergeable=UNKNOWN (GitHub computing mergeability async after the base
+ * moves), retry up to 5 times with backoff (1s, 2s, 4s, 8s). Only PERSISTENT
+ * non-MERGEABLE is a failure.
  */
-export function createValidateSeam(runGh: RunGh) {
+export function createValidateSeam(runGh: RunGh, sleep: Sleep = defaultSleep) {
   return async (
     pr: number,
-  ): Promise<{ applyable: boolean; failures: { code: string }[] }> => {
-    const result = await runGh([
-      "pr",
-      "view",
-      String(pr),
-      "--json",
-      "state,mergeable,statusCheckRollup",
-    ]);
+  ): Promise<{ applyable: boolean; failures: { code: string }[]; mergeStateStatus?: string }> => {
+    const maxAttempts = 5;
 
-    if (result.exitCode !== 0) {
-      return {
-        applyable: false,
-        failures: [{ code: "pr_view_failed" }],
-      };
-    }
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const result = await runGh([
+        "pr",
+        "view",
+        String(pr),
+        "--json",
+        "state,mergeable,mergeStateStatus,statusCheckRollup",
+      ]);
 
-    let data: {
-      state?: string;
-      mergeable?: string;
-      statusCheckRollup?: Array<{ name?: string; conclusion?: string }>;
-    };
-    try {
-      data = JSON.parse(result.stdout);
-    } catch {
-      return { applyable: false, failures: [{ code: "pr_view_parse_failed" }] };
-    }
-
-    const failures: { code: string }[] = [];
-
-    if (data.state !== "OPEN") {
-      failures.push({ code: "pr_not_open" });
-    }
-    if (data.mergeable !== "MERGEABLE") {
-      failures.push({ code: "pr_not_mergeable" });
-    }
-
-    for (const check of data.statusCheckRollup ?? []) {
-      if (
-        check.conclusion === "FAILURE" ||
-        check.conclusion === "ACTION_REQUIRED" ||
-        check.conclusion === "CANCELLED" ||
-        check.conclusion === "TIMED_OUT"
-      ) {
-        failures.push({
-          code: `check_${(check.name ?? "unknown").replace(/\s+/g, "_")}_${check.conclusion.toLowerCase()}`,
-        });
+      if (result.exitCode !== 0) {
+        return { applyable: false, failures: [{ code: "pr_view_failed" }] };
       }
+
+      let data: {
+        state?: string;
+        mergeable?: string;
+        mergeStateStatus?: string;
+        statusCheckRollup?: Array<{ name?: string; conclusion?: string }>;
+      };
+      try {
+        data = JSON.parse(result.stdout);
+      } catch {
+        return { applyable: false, failures: [{ code: "pr_view_parse_failed" }] };
+      }
+
+      // UNKNOWN: GitHub is still computing mergeability — retry with backoff.
+      if (data.mergeable === "UNKNOWN" && attempt < maxAttempts - 1) {
+        await sleep(1000 * Math.pow(2, attempt));
+        continue;
+      }
+
+      const failures: { code: string }[] = [];
+
+      if (data.state !== "OPEN") {
+        failures.push({ code: "pr_not_open" });
+      }
+      if (data.mergeable !== "MERGEABLE") {
+        failures.push({ code: "pr_not_mergeable" });
+      }
+
+      for (const check of data.statusCheckRollup ?? []) {
+        if (
+          check.conclusion === "FAILURE" ||
+          check.conclusion === "ACTION_REQUIRED" ||
+          check.conclusion === "CANCELLED" ||
+          check.conclusion === "TIMED_OUT"
+        ) {
+          failures.push({
+            code: `check_${(check.name ?? "unknown").replace(/\s+/g, "_")}_${check.conclusion.toLowerCase()}`,
+          });
+        }
+      }
+
+      return { applyable: failures.length === 0, failures, mergeStateStatus: data.mergeStateStatus };
     }
 
-    return { applyable: failures.length === 0, failures };
+    // Should not be reached, but satisfy the type checker.
+    return { applyable: false, failures: [{ code: "pr_view_failed" }] };
   };
 }
 
@@ -181,6 +204,24 @@ function parseConflictedFiles(output: string): string[] {
     }
   }
   return [...files];
+}
+
+/* ------------------------------------------------------------------ */
+/*  update-branch — merge base into PR branch for behind-but-clean PRs  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * gh pr update-branch <pr> — merges the base branch into the PR branch.
+ * For a PR that is behind master but NOT truly conflicting.
+ */
+export function createUpdateBranchSeam(runGh: RunGh) {
+  return async (pr: number): Promise<{ ok: boolean; error?: string }> => {
+    const result = await runGh(["pr", "update-branch", String(pr)]);
+    return {
+      ok: result.exitCode === 0,
+      error: result.exitCode !== 0 ? result.stderr || undefined : undefined,
+    };
+  };
 }
 
 /* ------------------------------------------------------------------ */
