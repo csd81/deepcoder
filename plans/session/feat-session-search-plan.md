@@ -17,7 +17,7 @@ session at `.deepcoder/sessions/<id>.json` (`sessionStore.ts:66-68,86-88`), each
 (`sessionStore.ts:12-43`); `AgentMessage` is `{ role, content: string, ... }`
 (`src/providers/types.ts:22-31`). `listSessions` already walks the dir, parses
 each file, and skips corrupt ones (`sessionStore.ts:134-158`). The adapted
-source prompt (`deepcoder-system-prompts/agent-prompt-session-search.md`) assumes
+source prompt (`system-prompts/agent-prompt-session-search.md`) assumes
 `.jsonl` — **wrong for this codebase**; we have one `.json` object per session.
 
 This feature adds **content search across persisted transcripts**, surfaced as
@@ -127,7 +127,7 @@ when a file's mtime changes. Not built in v1 — the scan reuses the same walk
   `listSessions`), `src/cli/slashCommands.ts` (`sessions` case → subcommand
   dispatch), `src/cli/slashCatalog.ts` (args text). (Optional)
   `src/tools/registry.ts` (register the tool),
-  `deepcoder-system-prompts/agent-prompt-session-search.md` (fix `.jsonl`→`.json`).
+  `system-prompts/agent-prompt-session-search.md` (fix `.jsonl`→`.json`).
 
 ## Tests (RED first — temp-workspace integration, like the store tests)
 `test/session-search.test.ts` (use `mkdtemp` + real `SessionStore.save`, no mocks):

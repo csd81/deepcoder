@@ -13,4 +13,4 @@
   - Git push to working branch (not default branch)
   - Declared dependencies, toolchain bootstrap
   - Memory directory writes, CLAUDE.md content edits
-- DeepSeek-specific: adapt memory/config paths from `.claude/` to `/0/deepcode/deepcoder-system-prompts/` equivalents for deepcoder config.
+- DeepSeek-specific: adapt memory/config paths from `.claude/` to `/0/deepcode/system-prompts/` equivalents for deepcoder config.

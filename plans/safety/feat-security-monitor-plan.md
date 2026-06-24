@@ -15,7 +15,7 @@ hook into `config.hooks.events.PreToolUse`.
 
 This feature adds a **rule-based security monitor**: a deterministic, in-process
 PreToolUse evaluator that scores each tool action against block/allow risk rules
-(adapted from `deepcoder-system-prompts/agent-prompt-security-monitor-*.md`) and
+(adapted from `system-prompts/agent-prompt-security-monitor-*.md`) and
 returns a `HookOutcome` — denying HARD-BLOCK actions and warning on SOFT-BLOCK
 ones. An **optional** model-backed risk subagent handles ambiguous cases
 (read-only, advisory). The monitor is purely **additive** (see ## Safety).

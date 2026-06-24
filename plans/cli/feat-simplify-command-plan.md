@@ -7,7 +7,7 @@ over-engineering cleanups in the current diff (or a target path), then optionall
 applies the fixes. It does NOT hunt for correctness bugs — that's `/review`
 (`src/cli/slashCommands.ts:644`, dispatching the read-only `reviewer` profile at
 `src/subagents/profiles.ts:10`). The adapted behavior spec is
-`deepcoder-system-prompts/agent-prompt-simplify-slash-command.md`: improve quality
+`system-prompts/agent-prompt-simplify-slash-command.md`: improve quality
 (not bugs), fan out review across four angles (Reuse / Simplification / Efficiency /
 Altitude), dedup findings, fix each remaining one, skip fixes that change intended
 behavior or reach outside the diff, then summarize fixed-vs-skipped.
