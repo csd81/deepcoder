@@ -56,7 +56,7 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
   { name: "new", description: "Save the current session and start a fresh one", category: "session" },
   { name: "archive", args: "[id]", description: "Archive a session (defaults to current) and exit", category: "session" },
   { name: "delete", args: "[id]", description: "Permanently delete a session (defaults to current)", category: "session" },
-  { name: "sessions", description: "List saved sessions", category: "session" },
+  { name: "sessions", args: "[search <query>]", description: "List or search saved sessions", category: "session" },
   { name: "title", args: "[name]", description: "Show or set a human-readable session title", category: "session" },
   { name: "clear-title", description: "Remove the session title", category: "session" },
   { name: "status", description: "Show git status", category: "session" },
@@ -97,8 +97,10 @@ export const SLASH_CATALOG: SlashCommandInfo[] = [
 
   // delegate
   { name: "delegate", args: "[full|plan|run|status|review|review-ui|apply|discard|autopilot]", description: "Plan and run delegated workers (full = classify + route)", category: "delegate" },
+  { name: "batch", args: "<goal> [--max-concurrency <n>]", description: "Decompose a goal and fan out workers in parallel (no auto-apply)", category: "delegate" },
   { name: "review", args: "<scope>", description: "Run a read-only reviewer subagent over files/topic", category: "delegate" },
   { name: "research", args: "<question>", description: "Run a read-only researcher subagent to explain the codebase", category: "delegate" },
+  { name: "simplify", args: "<scope> [--fix]", description: "Quality-only review (reuse/simplify/efficiency/altitude); --fix applies", category: "delegate" },
 
   // web
   { name: "web", description: "Show web access status and trace", category: "web" },

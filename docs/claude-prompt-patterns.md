@@ -1,9 +1,10 @@
 # Claude Code prompt patterns — what we adapted for DeepSeek
 
-Curated reference distilled from Claude Code's published system-prompt corpus
-(kept OUT of this repo for IP/size reasons — consult it externally if needed). This
-file records which patterns we adopted, which we strengthened for DeepSeek, and which
-were already in place. It is a reference for future prompt work, not runtime config.
+Curated reference distilled from Claude Code's published system-prompt corpus. The
+adapted corpus itself lives in `deepcoder-system-prompts/` (see its `README.md` for what
+each file is and how files reach runtime via `src/prompts/`). This file records which
+patterns we adopted, which we strengthened for DeepSeek, and which were already in place.
+It is a reference for future prompt work, not runtime config.
 
 ## Behavioral rules
 

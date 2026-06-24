@@ -1,4 +1,6 @@
 import type { ApprovalMode } from "../config/config.js";
+import { loadCorpusPrompt } from "../prompts/corpus.js";
+import { SURFACED_SYSTEM_PROMPT_FILES } from "../prompts/manifest.js";
 
 export function buildSystemPrompt(opts: {
   workspaceRoot: string;
@@ -82,6 +84,14 @@ export function buildSystemPrompt(opts: {
     "- `delegate` is READ-ONLY (profiles: explorer, researcher, reviewer, testTriage). Use it to gather and verify; then make the edits yourself. It never modifies files.",
     "- Don't delegate a single-file or tightly-localized change — just do it directly.",
   );
+
+  // Surface adapted behavioral rules that aren't otherwise expressed inline above
+  // (ambitious-scope, security, software-engineering focus). Sourced from the adapted
+  // prompt corpus via the loader — see src/prompts/manifest.ts (SURFACED_SYSTEM_PROMPT_FILES).
+  const corpusRules = SURFACED_SYSTEM_PROMPT_FILES.map((f) => loadCorpusPrompt(f)).filter((b) => b.length > 0);
+  if (corpusRules.length > 0) {
+    base.push("", "## Engineering discipline", ...corpusRules);
+  }
 
   if (opts.solve) {
     base.push(

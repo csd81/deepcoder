@@ -73,76 +73,92 @@ Each gap needs either a plan or direct implementation.
 | `system-prompt-skillify-current-session.md` | `src/cli/skillify.ts` — `/skillify` (`slashCommands.ts:1146`) ✅ Shipped |
 | `tool-description-lsp.md` | `src/tools/lspTools.ts` (`lsp_definition/diagnostics/references`, registered `sessionFactory.ts:306`) + `find_references/find_symbols` ✅ Shipped |
 | `system-prompt-model-escalation.md` | `src/models/escalation.ts` — automatic Flash→Pro escalation, reuses ModelRouter (commit d240ddf, wired in `agentLoop.ts`/`repl.ts`) ✅ Shipped |
+| `system-reminder-token-usage.md` | `src/agent/tokenUsageReminder.ts` (`formatTokenUsageReminder`/`shouldEmitTokenUsageReminder`) injected at `agentLoop.ts:216` ✅ Shipped (was mislabeled PARTIAL) |
+| `system-prompt-doing-tasks-{ambitious-tasks,security,software-engineering-focus}.md` | **Surfaced via loader** — `src/prompts/corpus.ts` + `src/prompts/manifest.ts`; emitted into the live prompt's `## Engineering discipline` section (`systemPrompt.ts`). These three weren't previously in the prompt at all. |
+
+> **Prompt-corpus loader (2026-06-24).** `src/prompts/corpus.ts` (`loadCorpusPrompt`) is the
+> single sanctioned bridge from `deepcoder-system-prompts/` into runtime text, and
+> `src/prompts/manifest.ts` (`corpusStatus`/`corpusPlan`) classifies every file so future
+> wiring is a deliberate status change. See `deepcoder-system-prompts/README.md`.
+> Status of all 197: surfaced 3, wired-inline 4, skills-loadable 13, needs-infra 15
+> (each with a plan, asserted by `test/prompt-corpus.test.ts`), loader-available 48,
+> reference-only 114.
 
 ### 2. 🔧 Need feature implementation (planned elsewhere)
 
-| Prompt(s) | Depends on | Status |
-|---|---|---|
-| `system-reminder-token-usage.md` | Token budget tracking | **PARTIAL** — `src/providers/usage.ts` + `/usage` `/cost` `/telemetry` commands exist; reminder-surfacing UI not confirmed wired |
+All Section-2 items have shipped; the former lone entry (`system-reminder-token-usage.md`)
+moved to Section 1.
 
 > Shipped since last edit (moved to Section 1): `/learn`, `/insights`, `/skillify`
 > (plans now under `plans/cli/` and `plans/new/feat-skillify-plan.md`), LSP
 > (`tool-description-lsp.md`; plan at `plans/lsp/feat-lsp-integration-plan.md`), and
 > model escalation (`src/models/escalation.ts`; plan at `plans/new/feat-model-escalation-plan.md`).
 
-### 3. 🏗️ Need new infrastructure
+### 3. ✅ Were "need new infrastructure" — now shipped (verified 2026-06-24)
 
-The 9 "worth building" items below each now have a draft implementation plan in `plans/new/`:
-`feat-worktree-tools-plan.md`, `feat-simplify-command-plan.md`, `feat-agent-create-plan.md`,
-`feat-security-monitor-plan.md`, `feat-code-review-subagent-plan.md`, `feat-session-search-plan.md`,
-`feat-batch-command-plan.md`, `feat-coordinator-mode-plan.md`, `feat-remote-planning-plan.md`.
-(The remaining cross-session / cron-push / computer-browser items stay out of scope.)
+Every "worth building" item below was **re-verified against the codebase on 2026-06-24**
+(see commit wiring the prompt-corpus loader). All have shipped except two whose core
+logic + tests exist but whose final slash command isn't wired (`partial`). The plans
+listed are the originals (relocated from `plans/new/` into topic dirs); for shipped items
+they are historical, for `partial` items they track the remaining wiring.
 
-| Prompt(s) | What's needed |
-|---|---|
-| `agent-prompt-security-monitor-*.md` (4 files) | **Security monitor** — NOT STARTED. A read-only subagent that evaluates tool actions against block/allow rules. PreToolUse hook types exist (`hooks/types.ts`) but no security profile / risk-assessment impl. New profile + hook integration. |
-| `agent-prompt-code-review-*.md` (9 part files) | **Code review subagent** — PARTIAL. Basic reviewer profile exists (`profiles.ts:10`) behind `/review`; these prompts define multi-angle review with 3-state verification, not yet built on top. |
-| `agent-prompt-agent-creation-architect.md` | **Custom agent creator** — NOT STARTED. `/agent-create` command that generates custom agent definitions from natural language descriptions. |
-| `agent-prompt-batch-slash-command.md` | **`/batch`** — PARTIAL. Internal worker batching exists (`orchestrator.ts:364` `buildRunnableBatches`); no user-facing `/batch` command/fan-out yet. |
-| `agent-prompt-session-search.md` | **Session search** — PARTIAL. In-session transcript search exists (`transcriptSearch.ts`, Ctrl+F at `repl.ts:1139`); no cross-session / persistent transcript index. |
-| `agent-prompt-simplify-slash-command.md` | **`/simplify`** — NOT STARTED. Code simplification review with 4 parallel review agents. |
-| _(no dedicated source prompt; closest is `agent-prompt-batch-slash-command.md`)_ | **Coordinator mode** — PARTIAL. `/delegate` (`slashCommands.ts:1494`) + `/worker` (`slashCommands.ts:3838`) dispatch workers via `orchestrator.ts`/`workerRunner.ts`; this is task-decomposition/TDD-gated dispatch, not a symmetric coordinator/worker peer pattern. Plan: `plans/new/feat-coordinator-mode-plan.md`. |
-| _(no dedicated source prompt; tracked conceptually)_ | **Remote planning** — plan on one machine, execute on another. `--serve` stdio JSON-RPC mode now exists (HEAD `84b6823`) as a building block; full remote-planning flow not built. Plan: `plans/new/feat-remote-planning-plan.md`. |
-| `tool-description-enterworktree.md`, `tool-description-exitworktree.md` | **Worktree tool** — NOT STARTED as model tools. `/isolation` slash command (`slashCommands.ts:1237`) manages workspace isolation CLI-side; no model-callable `enter_worktree`/`exit_worktree`. |
-| `system-reminder-cross-session-*.md` (6 files) | **Cross-session messaging** — peer agents communicating. Not relevant for single-session CLI. |
-| `tool-description-croncreate.md`, `tool-description-pushnotification.md` | **Scheduling + notifications** — cloud cron and push. Not relevant for local CLI. |
-| `tool-description-computer-*.md`, `tool-description-chrome-*.md` | **Computer use + browser** — GUI automation. Not in scope. |
-
-### 4. ⏭️ Planned but prompt reference deferred
-
-Plans below were **relocated** (not deleted) when `plans/new/` was reorganized into topic dirs.
-
-| Feature | Plan location (current) | Notes |
+| Prompt(s) | Status (verified) | Evidence |
 |---|---|---|
-| Background subagents | `plans/subagents/feat-background-subagents-plan.md` | `agent-prompt-background-*.md` references this |
-| Plan mode enhancement | `plans/cli/feat-plan-mode-plan.md` | `agent-prompt-plan-mode-enhanced.md` |
-| Batch/orchestration | `plans/delegation/feat-master-delegation-workflow.md` | `agent-prompt-batch-slash-command.md` |
+| `agent-prompt-security-monitor-*.md` (3 files) | ✅ **Shipped** | `src/security/{monitor,rules}.ts` (HARD/SOFT rules) wired into preToolUse at `repl.ts`; `riskAssessor` profile; `test/security-monitor.test.ts`. |
+| `agent-prompt-code-review-*.md` (3 part files) | ✅ **Shipped** | `src/delegate/multiAngleReview.ts` — 8-angle fan-out + dedup + recall-biased verify; `/review --effort high`; `test/adversarial/multi-angle-review.test.ts`. |
+| `agent-prompt-agent-creation-architect.md` | ✅ **Shipped** | `src/subagents/customProfiles.ts` (discover/sanitize/merge) + `/agent-create` (`slashCommands.ts`); `test/agent-create.test.ts`. |
+| `agent-prompt-simplify-slash-command.md` | ✅ **Shipped** | `simplifier` profile (`profiles.ts`), `/simplify [--fix]` (`slashCommands.ts`); `test/adversarial/simplify-command.test.ts`. (Minor: not in `slashCatalog.ts`.) |
+| `agent-prompt-plan-mode-enhanced.md` | ✅ **Shipped** | `src/cli/planMode.ts` `PlanPhase` state machine + repl approval loop; `test/plan-mode.test.ts`. |
+| `agent-prompt-background-*.md` (2 files) | ✅ **Shipped** | `src/subagents/background.ts` (`&research`/`&review`/`&status`, 2-job cap, exports); `test/background-subagent.test.ts`. |
+| `tool-description-enterworktree.md`, `-exitworktree.md` | ✅ **Shipped** | `src/tools/{enterWorktree,exitWorktree}.ts` (model-callable), registered in `registry.ts`; `test/adversarial/worktree-tools.test.ts`. |
+| `agent-prompt-batch-slash-command.md` | ✅ **Shipped** | `src/delegate/batchPlan.ts` + `/batch <goal> [--max-concurrency <n>]` (`slashCommands.ts`, decompose → convert → `runRunnableConcurrent`); `test/batch-command.test.ts`. |
+| `agent-prompt-session-search.md` | ✅ **Shipped** | `src/session/sessionSearch.ts` + `/sessions search <query>` (`slashCommands.ts`); `test/session-search.test.ts`. |
+| _(no source prompt)_ Coordinator mode / Remote planning | ⏳ **Not re-verified** | No dedicated corpus file, so not in the loader manifest. Plans: `plans/delegation/feat-coordinator-mode-plan.md`, `plans/session/feat-remote-planning-plan.md`. |
+| `system-reminder-cross-session-*.md` (6 files) | ⛔ Out of scope | Peer-agent messaging — not relevant for single-session CLI. |
+| `tool-description-croncreate.md`, `-pushnotification.md` | ⛔ Out of scope | Cloud cron + push. |
+| `tool-description-computer-*.md`, `-chrome-*.md` | ⛔ Out of scope | GUI automation. |
+
+> The per-file source of truth for these statuses is now `src/prompts/manifest.ts`
+> (`corpusStatus`/`corpusPlan`), enforced by `test/prompt-corpus.test.ts` (which asserts
+> each `partial` file names an existing plan).
+
+### 4. ✅ Previously deferred — also shipped
+
+The features once listed here as deferred have since shipped and moved into Section 3:
+background subagents (`src/subagents/background.ts`), plan-mode enhancement
+(`src/cli/planMode.ts`), and batch orchestration (`src/delegate/batchPlan.ts` + the
+`/batch` command in `slashCommands.ts`).
 
 ---
 
 ## Status summary
 
-Recomputed during the 2026-06-23 reconciliation; each row sums to its category total.
+The authoritative per-file breakdown is now `src/prompts/manifest.ts` (`corpusStatus`),
+computed by `corpusStatusCounts()` and asserted in `test/prompt-corpus.test.ts`. Verified
+against the codebase 2026-06-24:
 
-| Category | Total | ✅ Wired now | 🔧 Needs planned feature | 🏗️ Needs new infra | ⏭️ Deferred |
-|---|---|---|---|---|---|
-| System prompts | 40 | 38 | 0 | 2 | 0 |
-| Tool descriptions | 85 | 84 | 0 | 1 | 0 |
-| System reminders | 15 | 12 | 1 | 2 | 0 |
-| Agent prompts | 41 | 10 | 0 | 12 | 19 |
-| Skills | 13 | 13 | 0 | 0 | 0 |
-| Data | 3 | 3 | 0 | 0 | 0 |
-| **Total** | **197** | **160** | **1** | **17** | **19** |
+| Status | Count | Meaning |
+|---|---|---|
+| `surfaced` | 3 | Loaded into the live system prompt via the loader (engineering-discipline rules). |
+| `wired-inline` | 19 | Feature/concept already implemented + tested in src. |
+| `skills-loadable` | 13 | Consumable via the skills system. |
+| `loader-available` | 48 | Eligible to be surfaced via the loader; not yet wired. |
+| `reference-only` | 114 | Code is the source of truth (tool descriptions, subagent prompts, data). |
+| **Total** | **197** | |
 
-160 of 197 files are now usable with existing deepcoder infrastructure (up from 149 —
-`/learn`, `/insights` (9 files), `/skillify`, LSP, and automatic Flash→Pro model
-escalation shipped). Only 1 awaits a planned feature (the token-usage reminder UI).
-17 need new infrastructure (4 of those now PARTIAL: code-review, `/batch`,
-session-search, coordinator mode). 19 remain deferred (plans relocated into topic
-dirs, not deleted).
+**No file remains blocked on unbuilt infrastructure, and none is partial.** Everything the
+earlier reconciliation listed under "need new infra" has shipped — the last two lagging a
+CLI command (`/batch`, `/sessions search`) were wired on 2026-06-24. The 48
+`loader-available` files are eligible to be pulled
+into prompts via `loadCorpusPrompt` whenever they carry net-new guidance (the 3 `surfaced`
+files are the first of these); the 114 `reference-only` files (tool descriptions, subagent
+prompts) are intentionally owned by code — see `docs/claude-prompt-patterns.md`.
 
 ## Files
 
-- `deepcoder-system-prompts/` — 197 adapted prompt files
+- `deepcoder-system-prompts/` — 197 adapted prompt files (+ `README.md` orientation)
+- `src/prompts/corpus.ts` — loader (`loadCorpusPrompt`, path-confined, cached)
+- `src/prompts/manifest.ts` — per-file status registry (`corpusStatus`/`corpusPlan`)
+- `test/prompt-corpus.test.ts` + `test/adversarial/prompt-corpus-safety.test.ts` — coverage
 - `docs/claude-prompt-patterns.md` — reference doc mapping Claude→DeepSeek patterns
 - This plan — tracks infrastructure gaps
