@@ -38,6 +38,7 @@ import {
   type SessionGoal,
 } from "../session/goal.js";
 import { loadSession, forkSession, SessionStore, newSessionId, deleteSession, archiveSession, listSessions, type PersistedSession } from "../session/sessionStore.js";
+import { searchSessions } from "../session/sessionSearch.js";
 import { serializeSession, validateImport } from "../session/sessionExport.js";
 import { renderTable } from "../ui/table.js";
 import { initState, undo, redo } from "./undoRedo.js";
@@ -98,6 +99,7 @@ import { ALL_ROLES } from "../models/types.js";
 import { buildPlan } from "../delegate/planner.js";
 import { buildContextAwarePlan } from "../delegate/contextPlan.js";
 import { savePlan, loadPlan } from "../delegate/store.js";
+import { planFromDecomposition } from "../delegate/batchPlan.js";
 import { runWorker, delegateDepthFromEnv, type WorkerModelOverride } from "../delegate/workerRunner.js";
 import { runWorkerTdd } from "../delegate/tdd.js";
 import { readTddRecord } from "../delegate/tddArtifacts.js";
@@ -394,6 +396,26 @@ export async function handleSlashCommand(
     }
 
     case "sessions": {
+      const [sub, ...rest] = arg.trim().split(/\s+/).filter(Boolean);
+      if (sub === "search") {
+        const q = rest.join(" ").trim();
+        if (!q) {
+          console.log(chalk.dim("usage: /sessions search <query>"));
+          return { consumed: true };
+        }
+        const hits = await searchSessions(config.workspaceRoot, q);
+        if (hits.length === 0) {
+          console.log(chalk.dim(`No sessions match "${q}".`));
+          return { consumed: true };
+        }
+        for (const h of hits) {
+          const label = h.title ? `${h.title} ${chalk.dim(`(${h.id})`)}` : h.id;
+          console.log(`${label}  ${chalk.dim(`${h.score} hit(s) · ${h.matchedRoles.join("/")} · ${h.updatedAt}`)}`);
+          console.log(chalk.dim(`    ${h.snippet}`));
+          console.log(chalk.dim(`    → resume with: --resume ${h.id}`));
+        }
+        return { consumed: true };
+      }
       const all = await listSessions(config.workspaceRoot);
       if (all.length === 0) {
         console.log(chalk.dim("No saved sessions."));
@@ -1739,6 +1761,122 @@ ${desc}
     case "coordinate":
       // Alias: /coordinate <task> → /delegate coordinate <task>
       return await handleSlashCommand(`/delegate coordinate ${arg}`, session, save, runAgent);
+
+    case "batch": {
+      // One-shot front door: decompose a goal → convert to a DelegationPlan →
+      // fan out through the EXISTING orchestrator. No new scheduler/spawn path.
+      const tokens = arg.trim().split(/\s+/).filter(Boolean);
+      const mcIdx = tokens.indexOf("--max-concurrency");
+      const rawMc = mcIdx !== -1 ? Number(tokens[mcIdx + 1]) : NaN;
+      const maxConcurrency = Number.isFinite(rawMc) ? Math.min(8, Math.max(1, Math.trunc(rawMc))) : 2;
+      const goal = tokens
+        .filter((t, i) => !t.startsWith("--") && !(mcIdx !== -1 && i === mcIdx + 1))
+        .join(" ")
+        .trim();
+      if (!goal) {
+        console.log(chalk.dim("usage: /batch <goal> [--max-concurrency <n>]"));
+        return { consumed: true };
+      }
+      const root = config.workspaceRoot;
+      // Nested-delegation guard: a worker process must not spawn workers. Fail closed.
+      const depth = delegateDepthFromEnv(process.env);
+      if (depth > 0) {
+        console.log(chalk.red(`Refusing nested delegation: this process is itself a delegated worker (depth ${depth}).`));
+        return { consumed: true };
+      }
+      // Spawning live workers is gated to interactive sessions.
+      if (!process.stdin.isTTY) {
+        console.log(chalk.red("Refusing to spawn workers in a non-interactive session — run /batch from an interactive terminal."));
+        return { consumed: true };
+      }
+      const { proposeDecomposition, validateDecomposition } = await import("../delegate/decompose.js");
+      const { DECOMPOSE_PROMPT } = await import("../delegate/decomposePrompts.js");
+      const deps = {
+        generate: async (t: string) => {
+          const prompt = `${DECOMPOSE_PROMPT}\n\nTASK:\n${t}\n\nAVAILABLE CHECKS:\n${Object.keys(config.checks).join(", ")}`;
+          const route = session.modelRouter.resolve("plan");
+          const provider = session.providerPool.providerFor(route);
+          const res = await provider.chat({ messages: [{ role: "user", content: prompt }], tools: [], model: route.model });
+          return res.text;
+        },
+      };
+      console.log(chalk.dim("Decomposing…"));
+      const decomp = await proposeDecomposition(goal, {}, deps, { checks: Object.keys(config.checks), maxSubTasks: 12 });
+      const validation = validateDecomposition(decomp, { checks: Object.keys(config.checks), maxSubTasks: 12 });
+      if (!validation.ok) {
+        console.log(chalk.red("Decomposition is invalid:"));
+        for (const e of validation.errors) console.log(chalk.red(`  - ${e}`));
+        return { consumed: true };
+      }
+      const batchPlan = planFromDecomposition(decomp);
+      await savePlan(root, batchPlan);
+      console.log(chalk.bold(`\nBatch ${batchPlan.id} — ${batchPlan.workers.length} sub-task(s):`));
+      for (const w of batchPlan.workers) {
+        const after = w.dependsOn.length ? ` (after ${w.dependsOn.join(", ")})` : "";
+        console.log(`  ${chalk.cyan(w.id)}: ${w.title.slice(0, 60)}${after} · check ${w.checkName}`);
+      }
+      console.log(chalk.yellow(`\nThis spawns live workers (provider: ${config.provider}) in parallel (max ${maxConcurrency}) in isolated worktrees; nothing is auto-applied.`));
+      if (!(await confirm(`Fan out ${batchPlan.workers.length} sub-task(s)?`))) {
+        console.log(chalk.dim("Cancelled."));
+        return { consumed: true };
+      }
+      const mainEntry = fileURLToPath(new URL("./main.ts", import.meta.url));
+      const modelOverride = resolveDelegateOverride(session);
+      const ac = new AbortController();
+      // A sub-task with a testCommand carries tdd.required → run it through the
+      // red→green TDD lifecycle, exactly as `/delegate run --parallel` does.
+      const isTddBatch = batchPlan.workers.some((w) => w.tdd?.required);
+      const runOne = isTddBatch
+        ? async (runPlan: DelegationPlan, worker: WorkerTask): Promise<WorkerRun> => {
+            const out = await runWorkerTdd({
+              realRoot: root,
+              plan: runPlan,
+              worker,
+              signal: ac.signal,
+              mainEntry,
+              provider: config.provider,
+              modelOverride,
+              delegateDepth: depth,
+              onData: (c) => process.stdout.write(c),
+              checks: config.checks,
+            });
+            return out.run;
+          }
+        : undefined;
+      try {
+        const res = await runRunnableConcurrent(batchPlan, {
+          realRoot: root,
+          signal: ac.signal,
+          mainEntry,
+          provider: config.provider,
+          modelOverride,
+          delegateDepth: depth,
+          onData: (c: string) => process.stdout.write(c),
+          runOne,
+          maxConcurrency,
+        });
+        console.log("");
+        for (const r of res.ran) {
+          const icon = r.passed ? chalk.green("✓") : chalk.red("✗");
+          const status = r.passed ? chalk.green("passed") : chalk.red("failed");
+          console.log(`${icon} ${chalk.cyan(r.workerId)} ${status}`);
+        }
+        if (res.skipped.length > 0) {
+          console.log(chalk.dim("\nskipped:"));
+          for (const s of res.skipped) console.log(chalk.dim(`  - ${s.workerId}: ${s.reason}`));
+        }
+        if (res.conflicts.length > 0) {
+          console.log(chalk.yellow("\nconflicts:"));
+          for (const c of res.conflicts) console.log(chalk.yellow(`  - ${c.a} ↔ ${c.b}: ${c.paths.slice(0, 20).join(", ")}`));
+        }
+        const passed = res.ran.filter((r) => r.passed).length;
+        console.log(chalk.bold(`\n${passed}/${batchPlan.workers.length} sub-tasks passed.`));
+        console.log(chalk.dim(`Review with /delegate review ${batchPlan.id}; apply with /delegate apply ${batchPlan.id} <worker-id>.`));
+      } catch (err) {
+        console.log(chalk.red(`Batch run failed: ${(err as Error).message}`));
+      }
+      return { consumed: true };
+    }
 
     case "delegate": {
       const [sub, ...subArgs] = arg.split(/\s+/);
