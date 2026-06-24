@@ -217,6 +217,40 @@ function newSessionId(): string {
 }
 
 /**
+ * Provision gitignored deps that a `git worktree` of HEAD lacks:
+ * - `.deepcoder/config.json` (defines checks like `phase`) copied from the real root
+ * - `node_modules` symlinked from the real root when absent
+ *
+ * Best-effort: a missing config or node_modules is non-fatal here; the worker
+ * will surface a clear error if it needs them.
+ */
+async function provisionWorkerWorktree(realRoot: string, isolatedRoot: string): Promise<void> {
+  const configSrc = path.join(realRoot, ".deepcoder", "config.json");
+  const configDst = path.join(isolatedRoot, ".deepcoder");
+  try {
+    await fs.access(configSrc);
+    await fs.mkdir(configDst, { recursive: true });
+    await fs.copyFile(configSrc, path.join(configDst, "config.json"));
+  } catch {
+    /* missing config is ok — worker will fail with a clear "unknown check" */
+  }
+
+  const nmSrc = path.join(realRoot, "node_modules");
+  const nmDst = path.join(isolatedRoot, "node_modules");
+  try {
+    await fs.access(nmSrc);
+    await fs.access(nmDst);
+  } catch {
+    // Either source doesn't exist, or dest doesn't exist — try symlink.
+    try {
+      await fs.symlink(nmSrc, nmDst, "dir");
+    } catch {
+      /* provisioning is best-effort */
+    }
+  }
+}
+
+/**
  * Run one delegated worker as a Deepcoder subprocess in an isolated worktree the
  * runner owns. Captures a redacted log + a patch artifact and records a
  * `WorkerRun`. NEVER applies the patch (apply is Phase 9C) and never mutates the
@@ -265,6 +299,11 @@ export async function runWorker(input: RunWorkerInput): Promise<RunWorkerResult>
     input.realRoot,
     isolationConfig,
   );
+
+  // Provision gitignored deps into the worktree so checks/builds can run.
+  // node_modules is a symlink (fast, never copied); .deepcoder/config.json is
+  // copied so the phase check (and any configured checks) resolve.
+  await provisionWorkerWorktree(input.realRoot, iso.isolatedRoot);
 
   const isolation: WorkerIsolationRecord = {
     backend: iso.backend,

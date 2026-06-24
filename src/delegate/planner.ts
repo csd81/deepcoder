@@ -13,6 +13,8 @@
  */
 
 import type { DelegationPlan, WorkerTask } from "./types.js";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
 /* ------------------------------------------------------------------ */
 /*  Options                                                            */
@@ -31,6 +33,13 @@ export interface BuildPlanOptions {
    * production change (rejects test-only fixes). Implies `tdd`.
    */
   acceptanceFirst?: boolean;
+  /**
+   * Repo root path. When provided, inferred areas are validated against real
+   * paths under the repo — only areas that map to existing `src/<area>` dirs
+   * (or files named in the task) count toward multi-worker splitting.
+   * Omitted → conservative: produce exactly 1 worker (no over-splitting).
+   */
+  root?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -60,8 +69,12 @@ export function buildPlan(task: string, opts: BuildPlanOptions = {}): Delegation
   // Extract meaningful terms from the task to infer file boundaries.
   const terms = extractTerms(taskTrimmed);
 
-  // Infer file areas from the task text.
-  const areas = inferAreas(terms);
+  // Infer file areas from the task text, then filter to only real paths
+  // when the repo root is known. Without a root, never over-split.
+  const rawAreas = inferAreas(terms);
+  const areas = opts.root
+    ? rawAreas.filter((a) => areaExists(opts.root!, a, taskTrimmed))
+    : [];
 
   // Decide how many workers to create.
   const workerCount = areas.length >= 2 && areas.length <= maxWorkers ? areas.length : 1;
@@ -299,6 +312,29 @@ function inferAreas(terms: string[]): string[] {
 
   // If no areas were inferred, return an empty list (caller will use 1 worker).
   return areas;
+}
+
+/**
+ * Check whether an inferred area term maps to a real path under the repo root.
+ * An area is "real" if `src/<area>` exists as a directory, or if the task text
+ * names a file path whose directory components contain the area term (e.g. task
+ * mentions `src/util/strings.ts` → "util" and "strings" are real for that file).
+ */
+function areaExists(root: string, area: string, task: string): boolean {
+  // 1. Check if src/<area> directory exists.
+  if (existsSync(path.join(root, "src", area))) return true;
+
+  // 2. Check if the task mentions a file path containing the area term as a
+  //    path component (e.g. "src/util/strings.ts" → "util" is a component).
+  const pathPattern = /[a-z][a-z0-9_/-]*\.[a-z]{1,6}/gi;
+  let m: RegExpExecArray | null;
+  while ((m = pathPattern.exec(task)) !== null) {
+    const filePath = m[0];
+    const parts = filePath.split("/");
+    if (parts.includes(area)) return true;
+  }
+
+  return false;
 }
 
 const STOP_WORDS = new Set([
