@@ -17,7 +17,7 @@ import { runRunnable, runRunnableConcurrent, type OrchestrationResult } from "..
 import { applyWorker, type ApplyResult } from "../delegate/apply.js";
 import { buildPlan } from "../delegate/planner.js";
 import { savePlan } from "../delegate/store.js";
-import { openPr } from "../delegate/openPr.js";
+import { openPr, prepareWorkerBranch } from "../delegate/openPr.js";
 import { loadConfig } from "../config/config.js";
 import type { DelegationPlan, WorkerValidation } from "../delegate/types.js";
 
@@ -113,6 +113,7 @@ export async function runDelegatePlan(
     maxWorkers: opts.maxWorkers,
     tdd: opts.tdd,
     acceptanceFirst: opts.acceptanceFirst,
+    root,
   });
   await savePlanFn(root, plan);
   return { exitCode: 0, planId: plan.id };
@@ -232,6 +233,7 @@ export interface DelegatePrResult {
 interface PrDeps {
   validate?: (root: string, planId: string, workerId: string) => Promise<WorkerValidation>;
   openPr?: (body: string) => Promise<string>;
+  prepareBranch?: typeof prepareWorkerBranch;
 }
 
 /**
@@ -241,8 +243,9 @@ interface PrDeps {
  * - validateFn = deps.validate ?? loadAndValidateWorker.
  * - If `!validation.applyable` → print failing gate codes to stderr, return
  *   { exitCode: 1 } and do NOT call openPr.
- * - If applyable → build a PR body with the gate verdict, call
- *   openPrFn = deps.openPr ?? openPr(root), and return the PR url.
+ * - If applyable → prepare a new branch with the worker's patch applied,
+ *   build a PR body with the gate verdict, call openPrFn, and return the PR url.
+ *   The branch is created via prepareWorkerBranch (never touches the current branch).
  */
 export async function runDelegatePr(
   root: string,
@@ -251,8 +254,20 @@ export async function runDelegatePr(
   opts: { base?: string } = {},
   deps: PrDeps = {},
 ): Promise<DelegatePrResult> {
+  const base = opts.base ?? "master";
   const validateFn = deps.validate ?? loadAndValidateWorker;
-  const openPrFn = deps.openPr ?? ((body: string) => openPr(body, { root, base: opts.base }));
+  const prepareBranchFn = deps.prepareBranch ?? prepareWorkerBranch;
+  const injectedOpenPr = deps.openPr;
+  // When a test injects openPr, don't prepare a branch (the test handles the full
+  // PR step itself). In production, prepare the worker's patch on a NEW branch
+  // before pushing (never touches the current branch).
+  const openPrFn = injectedOpenPr ?? (async (body: string) => {
+    const branch = await prepareBranchFn(root, planId, workerId, {
+      branch: `deleg-${planId}-${workerId}`,
+      base,
+    });
+    return openPr(body, { root, branch, base });
+  });
 
   const validation = await validateFn(root, planId, workerId);
 
