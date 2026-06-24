@@ -91,6 +91,46 @@ test("forced posture overrides any inherited value (can't be poisoned by parent 
 });
 
 /* ---------------------------------------------------------------- */
+/*  buildWorkerEnv — sandbox-posture opt-out (nested-bwrap escape)   */
+/* ---------------------------------------------------------------- */
+
+test("does NOT forward sandbox-posture vars when the parent did not set them (secure default)", async () => {
+  // PARENT has no DEEPCODER_SANDBOX / DEEPCODER_CONTAIN — the worker must inherit
+  // neither, so it keeps containment ON by default.
+  const env = buildWorkerEnv({ parentEnv: PARENT, provider: "deepseek", delegateDepth: 0 });
+  assert.equal(env.DEEPCODER_SANDBOX, undefined);
+  assert.equal(env.DEEPCODER_CONTAIN, undefined);
+});
+
+test("forwards an EXPLICIT sandbox opt-out (DEEPCODER_SANDBOX=off / DEEPCODER_CONTAIN=0)", async () => {
+  // The gate command `npm run test:phase` itself runs bwrap; a contained worker
+  // would be bwrap-inside-bwrap. An operator on such a kernel opts out explicitly.
+  const env = buildWorkerEnv({
+    parentEnv: { ...PARENT, DEEPCODER_SANDBOX: "off", DEEPCODER_CONTAIN: "0" },
+    provider: "deepseek",
+    delegateDepth: 0,
+  });
+  assert.equal(env.DEEPCODER_SANDBOX, "off");
+  assert.equal(env.DEEPCODER_CONTAIN, "0");
+});
+
+test("forwarding the sandbox opt-out neither leaks forbidden vars nor weakens the forced posture", async () => {
+  const env = buildWorkerEnv({
+    parentEnv: { ...PARENT, DEEPCODER_SANDBOX: "off", DEEPCODER_CONTAIN: "0" },
+    provider: "deepseek",
+    delegateDepth: 1,
+  });
+  // posture intact
+  assert.equal(env.DEEPCODER_APPROVAL_MODE, "auto");
+  assert.equal(env.DEEPCODER_WORKSPACE_ISOLATION, "off");
+  assert.equal(env.DEEPCODER_DELEGATE_DEPTH, "2");
+  // secrets still stripped
+  assert.equal(env.GITHUB_TOKEN, undefined);
+  assert.equal(env.NODE_OPTIONS, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+});
+
+/* ---------------------------------------------------------------- */
 /*  buildWorkerEnv — Phase 10F delegate-role model override          */
 /* ---------------------------------------------------------------- */
 
