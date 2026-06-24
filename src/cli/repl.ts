@@ -43,7 +43,7 @@ import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { PlanRunRecord } from "../context/planBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
-import { buildDelegateRuntime, buildWorktreeRuntime, attachFileWatcher } from "../runtime/sessionFactory.js";
+import { buildDelegateRuntime, buildDelegateAutoRuntime, buildWorktreeRuntime, attachFileWatcher } from "../runtime/sessionFactory.js";
 import { makeDelegationHint } from "../delegate/assess.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
@@ -442,6 +442,7 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     history: session.messages,
     skills: skillsRuntime(session),
     delegate: buildDelegateRuntime(session),
+    delegateAuto: buildDelegateAutoRuntime(session),
     worktree: buildWorktreeRuntime(session),
   };
 

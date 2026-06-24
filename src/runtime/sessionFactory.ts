@@ -43,7 +43,8 @@ import { ProviderPool } from "../models/providerPool.js";
 import { runSubagent } from "../subagents/runner.js";
 import { PROFILES } from "../subagents/profiles.js";
 import { discoverCustomProfiles, mergeProfiles } from "../subagents/customProfiles.js";
-import type { DelegateRuntime, WorktreeRuntime } from "../tools/types.js";
+import type { DelegateRuntime, DelegateAutoRuntime, WorktreeRuntime } from "../tools/types.js";
+import { runDelegateAuto } from "../cli/delegateCli.js";
 
 /** Connect configured MCP servers and register their tools. Returns undefined
  *  when none are configured; never throws (bad servers warn and are skipped). */
@@ -301,6 +302,24 @@ export function buildWorktreeRuntime(session: Session): WorktreeRuntime {
       session.isolation = undefined;
       session.executionRoot = session.config.workspaceRoot;
       return { changed, applied };
+    },
+  };
+}
+
+/**
+ * Build a DelegateAutoRuntime for a running session. Wraps runDelegateAuto so
+ * the delegate tool never imports the CLI module directly. The runtime is
+ * deliberately NOT passed into subagent ToolContexts, preventing nested
+ * autonomous delegation.
+ */
+export function buildDelegateAutoRuntime(session: Session): DelegateAutoRuntime {
+  return {
+    async runAuto(task, opts) {
+      return runDelegateAuto(session.config.workspaceRoot, task, {
+        concurrent: opts?.concurrent,
+        noPr: opts?.noPr,
+        base: opts?.base,
+      });
     },
   };
 }

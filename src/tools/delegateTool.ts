@@ -1,12 +1,17 @@
 import { z } from "zod";
 import type { Tool, ToolContext, ToolInvocation, ToolResult } from "./types.js";
 import { parseArgs } from "./types.js";
+import { delegateDepthFromEnv } from "../delegate/workerRunner.js";
 
 const PROFILES = ["reviewer", "researcher", "explorer", "testTriage", "verifier"] as const;
 
 const schema = z.object({
-  profile: z.string().describe(`Which read-only subagent to run. Built-ins: ${PROFILES.join(", ")}, plus any custom disk-loaded agents.`),
+  profile: z.string().optional().describe(`Which read-only subagent to run. Built-ins: ${PROFILES.join(", ")}, plus any custom disk-loaded agents. Required unless auto mode.`),
   task: z.string().min(1).describe("The focused task/question for the subagent."),
+  auto: z.boolean().optional().describe(
+    "Fire the full autonomous delegate-to-PR chain (plan → run → validate → pr). " +
+    "Depth-guarded: refuses at delegateDepth > 0."
+  ),
 });
 
 /**
@@ -56,11 +61,59 @@ export const delegateTool: Tool = {
     "Reach for this when a task spans multiple files/subsystems or has independent parts (audits, broad surveys, " +
     "\"check every X\") — delegating one subagent per area keeps your context clean and runs them in parallel, " +
     "instead of grinding through everything serially. For a single-file or localized change, just edit directly. " +
-    "Once you delegate an investigation, don't also run it yourself — wait for the result, then relay what matters.",
+    "Once you delegate an investigation, don't also run it yourself — wait for the result, then relay what matters. " +
+    "Set auto: true to fire the full autonomous delegate-to-PR chain (plan → run → validate → pr).",
   kind: "read-only",
   schema,
   build(raw: unknown): ToolInvocation {
     const args = parseArgs("delegate", schema, raw);
+
+    if (args.auto) {
+      // Depth guard: a delegated worker cannot launch auto.
+      const depth = delegateDepthFromEnv(process.env);
+      if (depth > 0) {
+        return {
+          kind: "execute",
+          describe: () => `delegate auto (refused: already at depth ${depth})`,
+          async execute(_ctx: ToolContext): Promise<ToolResult> {
+            return {
+              output: `Autonomous delegation refused: already running at delegate depth ${depth}. ` +
+                `A delegated worker cannot launch another autonomous delegation.`,
+              isError: true,
+            };
+          },
+        };
+      }
+
+      return {
+        kind: "execute",
+        describe: () =>
+          `delegate auto: ${args.task.slice(0, 60)}${args.task.length > 60 ? "…" : ""}`,
+        async execute(ctx: ToolContext): Promise<ToolResult> {
+          if (!ctx.delegateAuto) {
+            return { output: "Autonomous delegation unavailable in this context.", isError: true };
+          }
+          const res = await ctx.delegateAuto.runAuto(args.task);
+          if (res.exitCode === 2) {
+            return {
+              output: `delegate auto: plan creation failed for task "${args.task.slice(0, 80)}"`,
+              isError: true,
+            };
+          }
+          const lines = [
+            `Plan: ${res.planId}`,
+            `Exit code: ${res.exitCode}`,
+            ...res.prUrls.map((u) => `PR: ${u}`),
+          ];
+          if (res.exitCode !== 0 && res.prUrls.length === 0) {
+            lines.push("No PRs opened — some workers were not applyable.");
+          }
+          return { output: lines.join("\n"), isError: res.exitCode !== 0 };
+        },
+      };
+    }
+
+    // Read-only path (auto: false or absent).
     return {
       kind: "read-only",
       describe: () =>
@@ -69,7 +122,7 @@ export const delegateTool: Tool = {
         if (!ctx.delegate) {
           return { output: "Delegation unavailable in this context.", isError: true };
         }
-        const r = await ctx.delegate.run(args.profile, args.task, ctx.signal);
+        const r = await ctx.delegate.run(args.profile!, args.task, ctx.signal);
         return { output: r.summary + renderFindings(r.findings) };
       },
     };
