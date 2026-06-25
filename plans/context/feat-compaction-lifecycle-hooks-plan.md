@@ -86,4 +86,25 @@ Phase 2:
 
 ## Status
 
-Proposed.
+**Phase 1 IMPLEMENTED** (PreCompact + PostCompact advisory hooks). Phase 2
+(deep-compact instruction injection) and `/hooks` diagnostics remain proposed.
+
+Implementation notes:
+- `HookEvent` gained `PreCompact` and `PostCompact` (`src/hooks/types.ts`);
+  `PostCompact` is in `CONTEXT_EVENTS` (may inject a bounded advisory note).
+  Added `PreCompactInput` / `PostCompactInput` payload types.
+- `AgentDeps.onPreCompact?` / `onPostCompact?` (advisory; return `AdvisoryOutcome`).
+  Fired in `runAgentLoop` around the pipeline: PreCompact when history is over the
+  trigger (`beforeTokens > triggerTokens`), PostCompact after with real
+  `before/after` tokens + per-stage `stages` + a redacted `summaryPreview`.
+- PostCompact's returned `context` is injected as a **one-shot** system guidance
+  note into THIS model call only (reassigned, not pushed — `messagesForQuery` can
+  alias canonical `messages`, so a push would wrongly persist it). Warnings surface
+  via `onNotice`.
+- **Advisory-only / cannot block:** a throwing or hostile hook is swallowed
+  (notice emitted) and the model call + compaction still proceed. Wired in `repl.ts`
+  via `runAdvisoryHooks` (bounded, redacted, timed-out by the existing engine).
+- Tests: `test/compaction-hooks.test.ts` (5 — both fire with real stats on auto
+  compaction, don't fire under budget, PostCompact context reaches the model but is
+  not persisted, warnings surfaced, and `[SECURITY]` throwing/blocking hook cannot
+  break or block compaction).

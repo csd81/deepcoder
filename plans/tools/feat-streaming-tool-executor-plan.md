@@ -280,4 +280,33 @@ streaming paths, then add concurrency around it.
 
 ## Status
 
-Proposed.
+**Phase 2 IMPLEMENTED** (standalone executor + tests; unwired). Phases 1, 3–7
+(serial-body helper extraction, streaming consume path, loop integration behind
+`DEEPCODER_STREAMING_TOOLS`, sibling abort wiring, renderer events) remain proposed.
+
+Implementation notes:
+
+- New `src/agent/streamingToolExecutor.ts` — `StreamingToolExecutor` with a
+  dependency-injected execution surface (`StreamingToolExecutorDeps`:
+  `classify`/`authorize`/`execute` + `readConcurrency`/`abortSiblingExecuteOnError`/
+  `signal`/`isExecuteError`), plus `ToolExecutionUpdate` / `ExecutionLane`. A single
+  sequential scheduler pump (condition-variable + FIFO semaphore, no timers) with a
+  child `AbortController` linked to the parent signal. **Not imported anywhere yet**
+  — it is a tested unit awaiting the integration phases.
+- Lanes are derived purely from the injected `classify()` seam, so the optional
+  `concurrency?` field on `Tool` (`src/tools/types.ts`) was **not** needed and not
+  added — it belongs to the integration phase.
+- Tests: `test/streamingToolExecutor.test.ts` (8 unit — concurrent read start,
+  out-of-order→in-order results, exclusive serialization, read-concurrency cap,
+  barrier, authorize-before-schedule, sibling abort, zero-calls) +
+  `test/adversarial/streaming-tool-executor.test.ts` (6 `[SECURITY]` — execute⊆
+  authorized-ok, no inherited approval, parent-abort stops in-flight + no new starts,
+  result-order fuzz, serialization-holds, no-leak-past-barrier).
+
+**⚠️ Reconcile at integration:** the standalone executor lets an exclusive call
+**start while earlier reads are still in flight** (it only prevents exclusive/exclusive
+overlap and barriers *later* calls). This plan's prose (§Dispatch rules: "bash waits
+for prior ordered gate") is more conservative — the exclusive should wait for prior
+in-flight reads to drain before a real mutate/execute runs, to avoid read↔write races
+on the working tree. Harmless today (unwired, injected fake execute), but the loop
+integration MUST enforce drain-before-exclusive, with an adversarial test.

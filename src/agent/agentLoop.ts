@@ -9,11 +9,12 @@ import type {
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext, ToolInvocation, ToolPreview, ToolResult } from "../tools/types.js";
 import { InvalidArgumentsError } from "../tools/types.js";
-import { renderTodos } from "../tools/todoWrite.js";
 import type { ApprovalMode } from "../config/config.js";
 import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import { checkPermission } from "../permissions/policy.js";
-import { compactIfNeeded } from "../context/compaction.js";
+import { buildMessagesForQuery } from "../context/queryProjection.js";
+import { estimateMessages } from "../context/tokenBudget.js";
+import { isSummary } from "../context/compaction.js";
 import { runPostWriteDiagnostics } from "../diagnostics/runner.js";
 import { formatFile, shouldFormat } from "../tools/formatOnEdit.js";
 import type { FormatConfig } from "../config/fileConfig.js";
@@ -31,6 +32,10 @@ export interface AgentDeps {
   /** Token budget + trigger fraction for history compaction. */
   contextBudgetTokens: number;
   compactAt: number;
+  /** Run the Trident redundancy pass before summarizing (default via env). */
+  tridentCompaction?: boolean;
+  /** Five-stage context pipeline feature toggles (optional stages default off). */
+  contextPipeline?: { budgetReduce: boolean; snip: boolean; autoCompact: boolean };
   /** Whether execute-kind MCP tools may run (off in Phase 4A). */
   mcpExecuteEnabled?: boolean;
   /** Streaming text hook (fired per chunk when the provider supports streaming). */
@@ -114,6 +119,15 @@ export interface AgentDeps {
    * actually fired.
    */
   onContextEpochReset?(): void | Promise<void>;
+  /**
+   * Compaction lifecycle hooks (advisory; cannot block). `onPreCompact` fires
+   * before the pipeline reduces history; `onPostCompact` after, and its returned
+   * `context` lines are injected as a bounded one-shot guidance note into THIS
+   * call only. Both surface `warnings` via `onNotice`; failures never break the
+   * loop.
+   */
+  onPreCompact?(input: import("../hooks/types.js").PreCompactInput): Promise<import("../hooks/types.js").AdvisoryOutcome | undefined>;
+  onPostCompact?(input: import("../hooks/types.js").PostCompactInput): Promise<import("../hooks/types.js").AdvisoryOutcome | undefined>;
   /**
    * Model-escalation hook. Called when the SAME tool produces the SAME error
    * twice in a row. Returns a stronger model id to switch to for the rest of
@@ -216,13 +230,28 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       return "";
     }
 
-    const compaction = compactIfNeeded(messages, {
-      budgetTokens: deps.contextBudgetTokens,
-      compactAt: deps.compactAt,
-      todos: ctx.todos,
-      readTracker: ctx.readTracker,
-      writeTracker: ctx.writeTracker ?? new Set(),
-    });
+    // Build the per-call provider projection: canonical `messages` →
+    // `messagesForQuery`. This is the single pre-model chokepoint — it runs the
+    // durable stages (deterministic compaction, then cache-optimized context
+    // reconciliation, both mutating `messages` in place) and layers ephemeral
+    // context onto a fresh array. The async durable side-effects below stay here,
+    // driven by the returned flags, so persistence ordering is unchanged.
+    // Compaction lifecycle: PreCompact fires (advisory) when the pipeline is about
+    // to reduce history (over the trigger). It can warn but never block.
+    const beforeTokens = estimateMessages(messages);
+    const triggerTokens = Math.floor(deps.contextBudgetTokens * deps.compactAt);
+    const willReduce = beforeTokens > triggerTokens;
+    if (willReduce && deps.onPreCompact) {
+      try {
+        const out = await deps.onPreCompact({ beforeTokens, triggerTokens, force: false, stage: "auto" });
+        out?.warnings.forEach((w) => deps.onNotice?.(`PreCompact hook: ${w}`));
+      } catch (err) {
+        deps.onNotice?.(`hook PreCompact error: ${(err as Error)?.message ?? String(err)}`);
+      }
+    }
+
+    const projection = buildMessagesForQuery({ messages, ctx, deps });
+    const compaction = projection.compaction;
     if (compaction.compacted) {
       deps.onNotice?.(`Compacted context (~${compaction.before} → ~${compaction.after} tokens).`);
       // Start a fresh context epoch: rebuild messages[0] from current sources and
@@ -230,15 +259,35 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       await deps.onContextEpochReset?.();
       await deps.onPersist?.();
     }
-
-    // Cache-Optimized Context: emit a single [context-update] at the tail when a
-    // dynamic source changed (e.g. /mode), leaving messages[0] — and thus the
-    // whole cached prefix — untouched. Runs every turn but only appends on a real
-    // change (the closure diffs against the session snapshot).
-    const contextUpdates = deps.reconcileContext?.() ?? [];
-    if (contextUpdates.length) {
-      messages.push(...contextUpdates);
+    // Cache-Optimized Context: reconciliation appended a single [context-update]
+    // at the tail (a dynamic source like /mode changed), leaving messages[0] —
+    // and thus the whole cached prefix — untouched. Persist that durable append.
+    if (projection.contextUpdatesAppended) {
       await deps.onPersist?.();
+    }
+
+    // PostCompact fires after the reduction with real stats; its advisory context
+    // is injected as a one-shot guidance note into THIS call only (never persisted).
+    if (willReduce && deps.onPostCompact) {
+      try {
+        const out = await deps.onPostCompact({
+          beforeTokens,
+          afterTokens: estimateMessages(messages),
+          stages: projection.stageStats,
+          summaryPreview: messages.find(isSummary)?.content?.slice(0, 200),
+        });
+        out?.warnings.forEach((w) => deps.onNotice?.(`PostCompact hook: ${w}`));
+        if (out?.context.length) {
+          // Reassign (not push): messagesForQuery may alias canonical `messages`
+          // when there is no ephemeral context — a push would persist the note.
+          projection.messagesForQuery = [
+            ...projection.messagesForQuery,
+            { role: "system", content: out.context.join("\n") },
+          ];
+        }
+      } catch (err) {
+        deps.onNotice?.(`hook PostCompact error: ${(err as Error)?.message ?? String(err)}`);
+      }
     }
 
     // Track whether ANY streaming delta actually fired for this turn's response.
@@ -263,7 +312,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         : {}),
     };
 
-    const response = await getResponseWithRetry(turnDeps, withEphemeralContext(messages, ctx, deps));
+    const response = await getResponseWithRetry(turnDeps, projection.messagesForQuery);
     deps.onUsage?.(response.usage);
 
     // One-shot token-usage system reminder: fire when the provider-reported
@@ -530,29 +579,6 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
 
   deps.onNotice?.(`Reached max turns (${maxTurns}).`);
   return "";
-}
-
-/**
- * Append ephemeral context (todo list + newly-relevant JIT path-local
- * instructions + a one-shot delegation-assessment hint) for the upcoming model
- * call, without mutating persisted history. JIT blocks are pulled once via
- * `deps.jitContext()`; the delegation hint via `deps.delegationHint()`.
- */
-function withEphemeralContext(messages: AgentMessage[], ctx: ToolContext, deps: AgentDeps): AgentMessage[] {
-  const extra: AgentMessage[] = [];
-  if (ctx.todos.length > 0) {
-    extra.push({ role: "system", content: `Current todo list:\n${renderTodos(ctx.todos)}` });
-  }
-  for (const block of deps.jitContext?.() ?? []) {
-    extra.push({ role: "system", content: block });
-  }
-  for (const block of deps.delegationHint?.() ?? []) {
-    extra.push({ role: "system", content: block });
-  }
-  for (const block of deps.playbookContext?.() ?? []) {
-    extra.push({ role: "system", content: block });
-  }
-  return extra.length ? [...messages, ...extra] : messages;
 }
 
 /**

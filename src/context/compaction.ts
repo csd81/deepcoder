@@ -2,6 +2,7 @@ import type { AgentMessage } from "../providers/types.js";
 import type { Todo } from "../tools/types.js";
 import { estimateMessages } from "./tokenBudget.js";
 import { boundLines } from "../tools/outputBound.js";
+import { reduceWithTrident, type TridentStats } from "./trident.js";
 
 /**
  * Max file entries listed in a compaction summary. The summary lands in the kept
@@ -20,12 +21,26 @@ export interface CompactOptions {
   writeTracker: Set<string>;
   /** Force compaction regardless of current size (for /compact). */
   force?: boolean;
+  /**
+   * Run the Trident redundancy pass before summarizing. Defaults to the
+   * `DEEPCODER_TRIDENT` env (on unless "0"/"off"/"false"); an explicit value
+   * (config-wired or test) overrides it.
+   */
+  trident?: boolean;
 }
 
 export interface CompactResult {
   compacted: boolean;
   before: number;
   after: number;
+  /** Stats from the Trident pass, when it ran. */
+  trident?: TridentStats;
+}
+
+function tridentEnabled(opts: CompactOptions): boolean {
+  if (opts.trident !== undefined) return opts.trident;
+  const env = process.env.DEEPCODER_TRIDENT;
+  return !(env === "0" || env === "off" || env === "false");
 }
 
 const SUMMARY_TAG = "[compacted-summary]";
@@ -50,8 +65,25 @@ export function compactIfNeeded(messages: AgentMessage[], opts: CompactOptions):
   const tailTarget = opts.force
     ? Math.min(opts.budgetTokens * 0.3, before * 0.4)
     : opts.budgetTokens * 0.3;
-  const tailStart = chooseTailMessages(messages, head, tailTarget);
-  if (tailStart - head < 2) return { compacted: false, before, after: before };
+  let tailStart = chooseTailMessages(messages, head, tailTarget);
+
+  // Trident: shed provably-redundant turns from the compactible region BEFORE
+  // summarizing. If that alone brings us under the trigger (non-force), skip
+  // summarization entirely and keep the recent context verbatim.
+  let trident: TridentStats | undefined;
+  if (tridentEnabled(opts) && tailStart - head >= 1) {
+    trident = reduceWithTrident(messages, head, tailStart, { writeTracker: opts.writeTracker });
+    tailStart = trident.newTailStart;
+    const mid = estimateMessages(messages);
+    if (!opts.force && mid <= trigger) {
+      return { compacted: !!trident.changed, before, after: mid, trident };
+    }
+  }
+
+  if (tailStart - head < 2) {
+    const after = estimateMessages(messages);
+    return { compacted: !!trident?.changed, before, after, trident };
+  }
 
   const older = messages.slice(head, tailStart);
   // WIRED: buildStructuredSummary — deterministic markdown recap with sections
@@ -65,7 +97,7 @@ export function compactIfNeeded(messages: AgentMessage[], opts: CompactOptions):
   // system→user→assistant structure and is provider-agnostic.
   messages.splice(head, older.length, { role: "user", content: summary });
   const after = estimateMessages(messages);
-  return { compacted: true, before, after };
+  return { compacted: true, before, after, trident };
 }
 
 export function isSummary(m: AgentMessage): boolean {

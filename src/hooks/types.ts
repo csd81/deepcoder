@@ -14,7 +14,9 @@ export type HookEvent =
   | "UserPromptSubmit"
   | "PostCheck"
   | "SolveAttemptEnd"
-  | "SessionEnd";
+  | "SessionEnd"
+  | "PreCompact"
+  | "PostCompact";
 
 /** Events whose hooks may return injected `context` for the model. */
 export const CONTEXT_EVENTS: readonly HookEvent[] = [
@@ -22,6 +24,8 @@ export const CONTEXT_EVENTS: readonly HookEvent[] = [
   "UserPromptSubmit",
   "PostCheck",
   "SolveAttemptEnd",
+  // PostCompact may inject a bounded advisory guidance note after compaction.
+  "PostCompact",
 ];
 
 export interface HookConfig {
@@ -50,6 +54,25 @@ export type HookDecision = "deny" | "none";
 export interface HookOutcome {
   decision: HookDecision;
   reason?: string;
+}
+
+// --- Compaction lifecycle (advisory) ------------------------------------------
+
+/** Fired before the context pipeline reduces history. Advisory; cannot block. */
+export interface PreCompactInput {
+  beforeTokens: number;
+  triggerTokens: number;
+  force: boolean;
+  stage: "auto" | "manual" | "overflow-recovery";
+}
+
+/** Fired after a reduction occurred. PostCompact may inject a bounded note. */
+export interface PostCompactInput {
+  beforeTokens: number;
+  afterTokens: number;
+  /** Per-stage token accounting from the pipeline. */
+  stages: { stage: string; before: number; after: number; changed: boolean }[];
+  summaryPreview?: string;
 }
 
 // --- Advisory events ----------------------------------------------------------

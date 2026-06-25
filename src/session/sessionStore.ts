@@ -10,6 +10,7 @@ import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { PlanRunRecord } from "../context/planBrief.js";
 import type { ContextSnapshot } from "../context/registry.js";
 import type { SessionGoal } from "./goal.js";
+import { SessionEventLog, diffSnapshotToEvents } from "./sessionEvents.js";
 
 export interface PersistedSession {
   id: string;
@@ -88,6 +89,12 @@ export function newSessionId(): string {
 /** Bound to one session id; debounced-free, simple atomic-ish JSON writes. */
 export class SessionStore {
   readonly createdAt: string;
+  // Append-oriented shadow log (see sessionEvents.ts). Best-effort: a log
+  // failure never breaks the authoritative snapshot write. `lastProjection`
+  // tracks the state the log already reflects so each save appends only a diff.
+  private eventLog?: SessionEventLog;
+  private lastProjection: PersistedSession | null = null;
+  private eventsInited = false;
   constructor(
     private workspaceRoot: string,
     readonly id: string,
@@ -101,6 +108,7 @@ export class SessionStore {
   }
 
   async save(snapshot: SessionSnapshot): Promise<void> {
+    const now = new Date().toISOString();
     const data: PersistedSession = {
       id: this.id,
       provider: snapshot.provider,
@@ -123,7 +131,7 @@ export class SessionStore {
       title: snapshot.title,
       contextSnapshot: snapshot.contextSnapshot,
       createdAt: this.createdAt,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
     await fs.mkdir(sessionsDir(this.workspaceRoot), { recursive: true });
     // Atomic write: a crash mid-write leaves the temp file, never a half-written
@@ -131,6 +139,33 @@ export class SessionStore {
     const tmp = `${this.file()}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
     await fs.rename(tmp, this.file());
+
+    // Shadow append-log (dual-write). The legacy snapshot above stays the source
+    // of truth during rollout; this records the same state transition as an
+    // event stream for audit/replay/fork. Never let it break a save.
+    if (process.env.DEEPCODER_SESSION_EVENT_LOG !== "off") {
+      try {
+        await this.appendEvents(data, now);
+      } catch {
+        // Best-effort: a shadow-log failure must not surface to the caller.
+      }
+    }
+  }
+
+  private async appendEvents(data: PersistedSession, now: string): Promise<void> {
+    if (!this.eventLog) this.eventLog = new SessionEventLog(this.workspaceRoot, this.id);
+    if (!this.eventsInited) {
+      // Continue an existing log across process restarts: project what's there.
+      this.lastProjection = (await this.eventLog.read()).session;
+      this.eventsInited = true;
+    }
+    // Normalize through JSON so the diff baseline matches what a reader projects
+    // (undefined-valued keys drop, exactly as on-disk).
+    const normalized = JSON.parse(JSON.stringify(data)) as PersistedSession;
+    const bodies = diffSnapshotToEvents(this.lastProjection, normalized);
+    if (!bodies.length) return;
+    await this.eventLog.append(bodies, now);
+    this.lastProjection = normalized;
   }
 }
 
