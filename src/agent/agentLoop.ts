@@ -46,6 +46,15 @@ export interface AgentDeps {
   onAssistantMessageEnd?(text: string): void;
   /** Token usage for each model call (when the provider reports it). */
   onUsage?(usage: ChatResponse["usage"]): void;
+  /**
+   * Flight-recorder seam. Called with the EXACT compiled `ChatRequest` just
+   * before it is sent to the provider (post-`sanitizeForProvider`, covering both
+   * the streaming and non-streaming paths). Fires once per model call —
+   * including each retry attempt, so every attempt is captured. Advisory only: a
+   * failure here is swallowed and surfaced via `onNotice` and NEVER aborts the
+   * turn. Undefined = recording disabled (the loop is byte-identical to today).
+   */
+  onModelCall?(request: ChatRequest): void | Promise<void>;
   onToolCall?(name: string, describe: string): void;
   onToolResult?(name: string, result: ToolResult): void;
   onNotice?(message: string): void;
@@ -83,6 +92,13 @@ export interface AgentDeps {
    * this callback (prevents recursion). Undefined = no nudge.
    */
   delegationHint?(): string[];
+  /**
+   * ACE-style playbook injection (opt-in). Consulted once per turn (like
+   * jitContext) and injected as an ephemeral, ADVISORY system block of
+   * accumulated helpful strategies. Never authoritative — it cannot change
+   * permissions or policy. Undefined = playbook disabled.
+   */
+  playbookContext?(): string[];
   /**
    * Cache-Optimized Context: reconcile dynamic context sources (approval mode,
    * instructions, memory) against the session's epoch snapshot. Called at the
@@ -533,6 +549,9 @@ function withEphemeralContext(messages: AgentMessage[], ctx: ToolContext, deps: 
   for (const block of deps.delegationHint?.() ?? []) {
     extra.push({ role: "system", content: block });
   }
+  for (const block of deps.playbookContext?.() ?? []) {
+    extra.push({ role: "system", content: block });
+  }
   return extra.length ? [...messages, ...extra] : messages;
 }
 
@@ -647,6 +666,15 @@ export async function getResponse(deps: AgentDeps, sent: AgentMessage[]): Promis
     model: deps.model,
     signal: deps.ctx.signal,
   };
+  // Flight recorder: snapshot the exact compiled payload before it leaves the
+  // machine. Advisory — a recorder failure must never abort the turn.
+  if (deps.onModelCall) {
+    try {
+      await deps.onModelCall(req);
+    } catch (err) {
+      deps.onNotice?.(`flight recorder error: ${(err as Error)?.message ?? String(err)}`);
+    }
+  }
   if (deps.provider.streamChat) {
     try {
       return await consumeStream(deps.provider.streamChat(req), deps.onAssistantTextDelta);
