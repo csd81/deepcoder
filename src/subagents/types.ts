@@ -61,8 +61,8 @@ export interface SubagentTrace {
     changedFiles: string[];
     patchBytes: number;
     withinLimits: boolean;
-    /** Phase 1 is diff-only: changes are NEVER applied to the parent. */
-    applied: false;
+    /** True only when applyPolicy permitted it AND the patch applied cleanly. */
+    applied: boolean;
   };
 }
 
@@ -109,5 +109,6 @@ export interface RunSubagentOptions {
     maxPatchBytes: number;
     keepWorktreeOnFailure: boolean;
     allowedProfiles: string[];
+    applyPolicy?: "never" | "auto-if-clean";
   };
 }
