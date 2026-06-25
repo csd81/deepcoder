@@ -18,6 +18,7 @@ import { createAgentRunner } from "../server/agentRunner.js";
 import { registerDelegateCommand } from "./delegateCli.js";
 import { registerAuditSweepCommand } from "./auditSweepCli.js";
 import { registerRefactorCommand } from "./refactorCli.js";
+import { registerFlightCommand } from "./flightCli.js";
 
 const program = new Command();
 
@@ -240,6 +241,10 @@ registerAuditSweepCommand(program);
 // PR (gated on the 9-gate validator; never auto-merges). See
 // plans/new/feat-auto-refactor-workflow-plan.md.
 registerRefactorCommand(program);
+
+// `deepcoder flight list|replay` — inspect/replay per-turn flight-recorder
+// snapshots (.deepcoder/flight/). See plans/new/feat-flight-recorder-plan.md.
+registerFlightCommand(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(chalk.red((err as Error).message ?? String(err)));

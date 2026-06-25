@@ -36,6 +36,8 @@ import {
 } from "../session/sessionStore.js";
 import { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
+import { FlightRecorder } from "../session/flightRecorder.js";
+import { loadPlaybook } from "../context/playbookStore.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../config/config.js";
 import type { AgentMessage } from "../providers/types.js";
@@ -469,6 +471,12 @@ export async function buildSession(
   }
   const mcp = await initMcp(config, registry);
   const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
+  // Per-turn flight recorder (off by default). One instance per session so the
+  // call index advances across turns; created with the session's store id.
+  const makeFlightRecorder = (sid: string): FlightRecorder | undefined =>
+    config.flightRecorder === "on"
+      ? new FlightRecorder(config.workspaceRoot, sid, { log: (m) => console.log(chalk.dim(m)) })
+      : undefined;
 
   // Phase 7C2: a compact, bounded skills catalog injected into the startup system
   // prompt (advisory — skills must be explicitly activated). Empty when disabled.
@@ -545,6 +553,8 @@ export async function buildSession(
       mcp,
       lsp,
       recorder,
+      flightRecorder: makeFlightRecorder(id),
+      playbook: config.context.playbook.enabled ? await loadPlaybook(config.workspaceRoot, id) : undefined,
       instructionGraph: instr.graph,
       contextSnapshot,
       tokenUsage: { ...EMPTY_USAGE },
@@ -563,11 +573,12 @@ export async function buildSession(
   if (config.prContext) {
     messages.push(injectPrContext(config.prContext));
   }
+  const freshId = newSessionId();
   const freshSession: Session = {
     config,
     provider,
     registry,
-    store: new SessionStore(config.workspaceRoot, newSessionId()),
+    store: new SessionStore(config.workspaceRoot, freshId),
     messages,
     mode: config.approvalMode,
     executionRoot: config.workspaceRoot,
@@ -583,6 +594,8 @@ export async function buildSession(
     mcp,
     lsp,
     recorder,
+    flightRecorder: makeFlightRecorder(freshId),
+    playbook: config.context.playbook.enabled ? await loadPlaybook(config.workspaceRoot, freshId) : undefined,
     instructionGraph: instr.graph,
     contextSnapshot: buildContextSnapshot(config, config.approvalMode, instr.text, skillsCatalog),
     tokenUsage: { ...EMPTY_USAGE },

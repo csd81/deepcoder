@@ -17,6 +17,7 @@ import type { HookEvent } from "../hooks/types.js";
 import { buildSystemPrompt } from "../agent/systemPrompt.js";
 import { contextRegistry, isContextUpdateMessage, type ContextSnapshot } from "../context/registry.js";
 import { loadInstructions } from "../context/projectInstructions.js";
+import { renderPlaybook } from "../context/playbook.js";
 import {
   buildInstructionGraph,
   pathLocalSources,
@@ -145,6 +146,10 @@ export interface Session {
   undoState?: UndoRedoState;
   /** Pre-image recorder for checkpoints; undefined when checkpoints are off. */
   recorder?: CheckpointRecorder;
+  /** Per-turn flight recorder (config.flightRecorder === "on"); else undefined. */
+  flightRecorder?: import("../session/flightRecorder.js").FlightRecorder;
+  /** ACE-style session playbook (context.playbook.enabled); else undefined. */
+  playbook?: import("../context/playbook.js").PlaybookEntry[];
   /** Subagent run records — persisted for audit, NEVER sent to the model. */
   reviews: SubagentRunRecord[];
   /** Discovered and merged subagent profiles (built-in + custom disk defs). */
@@ -287,6 +292,22 @@ function jitContext(session: Session): AgentDeps["jitContext"] {
       }
     }
     return blocks;
+  };
+}
+
+/**
+ * ACE-style playbook injector. When enabled, returns a callback that renders the
+ * session's accumulated playbook as one bounded, advisory system block each turn
+ * (re-injected ephemerally, so it survives compaction without busting the prefix
+ * cache). Undefined (no-op) when the playbook is disabled. Advisory only — the
+ * block can never change permissions or policy.
+ */
+function playbookContext(session: Session): AgentDeps["playbookContext"] {
+  const cfg = session.config.context.playbook;
+  if (!cfg.enabled) return undefined;
+  return () => {
+    const block = renderPlaybook(session.playbook ?? [], cfg.maxBytes);
+    return block ? [block] : [];
   };
 }
 
@@ -650,10 +671,18 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     onPreToolUse: preToolUseHook(session),
     onPostTool: postToolHook(session),
     jitContext: jitContext(session),
+    playbookContext: playbookContext(session),
     reconcileContext: () => reconcileSessionContext(session),
     onContextEpochReset: () => resetSessionContextEpoch(session),
     onPersist: () => session.store.save(snapshot(session)),
     onUsage: (u) => addUsage(session.tokenUsage, u),
+    // Flight recorder: snapshot the exact compiled payload per model call when
+    // config.flightRecorder === "on". Failures are swallowed inside the loop.
+    onModelCall: session.flightRecorder
+      ? async (req) => {
+          await session.flightRecorder!.recordCall(req);
+        }
+      : undefined,
     onAssistantTextDelta: (chunk) => renderer.emit({ type: "assistant_delta", text: chunk }),
     onAssistantText: (text) => renderer.emit({ type: "assistant_delta", text }),
     // Finalize each assistant message so the TUI re-renders it as markdown and

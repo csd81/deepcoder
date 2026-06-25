@@ -23,6 +23,7 @@ import { runExplorer } from "../subagents/contextExplorer.js";
 import { renderExplorerBrief } from "../context/explorerBrief.js";
 import { runPlanFlow } from "../subagents/planFlow.js";
 import { renderPlanBrief } from "../context/planBrief.js";
+import { recordPlaybookOutcome } from "../context/playbookSession.js";
 import { analyzeSession } from "./sessionInsights.js";
 
 /** Build an advisory solve hook for `event`; null if no such hooks are enabled. */
@@ -248,7 +249,17 @@ export async function runSolveCommand(
         stdout.write(chalk.dim(chunk));
       },
       onPostCheck: (info) => solveHook(session, "PostCheck", label)({ check: info }),
-      onSolveAttemptEnd: (info) => solveHook(session, "SolveAttemptEnd", label)({ solve: info }),
+      onSolveAttemptEnd: async (info) => {
+        // ACE playbook: record only the TERMINAL outcome of the solve run — a
+        // helpful lesson when it ends green, a harmful one only when it exhausts
+        // attempts. Mid-attempt failures that later succeed are not counted as
+        // harmful (else a fail→pass run nets to zero and surfaces nothing). No-op
+        // unless context.playbook.enabled; runs before hooks; never throws.
+        if (info.checkPassed || info.attempt >= info.maxAttempts) {
+          await recordPlaybookOutcome(session, label, info.checkPassed);
+        }
+        return solveHook(session, "SolveAttemptEnd", label)({ solve: info });
+      },
     });
 
     // Attach preflight telemetry to the result (Phase 8D).

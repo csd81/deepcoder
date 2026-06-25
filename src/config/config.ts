@@ -24,6 +24,9 @@ const WS_ISOLATION_MODES: WorkspaceIsolationMode[] = ["off", "patch", "keep", "b
 export type ApprovalMode = "ask" | "auto" | "readonly" | "yolo";
 export const VALID_APPROVAL_MODES: readonly ApprovalMode[] = ["ask", "auto", "readonly", "yolo"];
 export type CheckpointMode = "off" | "manual" | "auto";
+/** Per-turn flight recorder: `off` (default) or `on`. Secrets are always redacted. */
+export type FlightRecorderMode = "off" | "on";
+export const VALID_FLIGHT_RECORDER_MODES: readonly FlightRecorderMode[] = ["off", "on"];
 
 /** Phase 8E semantic-search settings (opt-in; default disabled). */
 export interface SemanticSearchConfig {
@@ -106,6 +109,12 @@ export interface Config {
   compactAt: number;
   /** Local checkpoint/undo mode (not git): off | manual | auto. */
   checkpoints: CheckpointMode;
+  /**
+   * Per-turn flight recorder. When `on`, the exact compiled `ChatRequest` for
+   * each model call is snapshotted (content-addressed, secrets redacted) under
+   * `.deepcoder/flight/<sessionId>/` for offline debugging/replay. Default `off`.
+   */
+  flightRecorder: FlightRecorderMode;
   /** Absolute path the agent is allowed to operate within. */
   workspaceRoot: string;
   /** MCP servers from .deepcoder/config.json (empty if none configured). */
@@ -364,6 +373,13 @@ export interface ContextConfig {
   preflightMaxBytes: number;
   /** Maximum turns for the explorer subagent during preflight (default 8). */
   explorerMaxTurns: number;
+  /**
+   * ACE-style session playbook (opt-in; default off). When enabled, check
+   * outcomes accumulate bounded helpful/harmful "strategy" entries that are
+   * injected as an ADVISORY system block each turn (never policy). Gated by
+   * DEEPCODER_PLAYBOOK (1/true/yes on, 0/false/no off).
+   */
+  playbook: { enabled: boolean; maxBytes: number; maxEntries: number };
 }
 
 const DEFAULT_CONTEXT: ContextConfig = {
@@ -374,6 +390,7 @@ const DEFAULT_CONTEXT: ContextConfig = {
   preflight: false,
   preflightMaxBytes: 6000,
   explorerMaxTurns: 8,
+  playbook: { enabled: false, maxBytes: 4_000, maxEntries: 100 },
 };
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -545,14 +562,19 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   // Context/instruction-graph: default < config file < env gate.
   const igEnv = (process.env.DEEPCODER_INSTRUCTION_GRAPH ?? "").toLowerCase();
   const pfEnv = (process.env.DEEPCODER_CONTEXT_PREFLIGHT ?? "").toLowerCase();
+  const pbEnv = (process.env.DEEPCODER_PLAYBOOK ?? "").toLowerCase();
   const context: ContextConfig = {
     ...DEFAULT_CONTEXT,
     ...(file.context ?? {}),
+    // Deep-merge the playbook sub-object so a file partial doesn't drop defaults.
+    playbook: { ...DEFAULT_CONTEXT.playbook, ...(file.context?.playbook ?? {}) },
     ...(["1", "true", "yes"].includes(igEnv) ? { instructionGraph: true } : {}),
     ...(["0", "false", "no"].includes(igEnv) ? { instructionGraph: false } : {}),
     ...(["1", "true", "yes"].includes(pfEnv) ? { preflight: true } : {}),
     ...(["0", "false", "no"].includes(pfEnv) ? { preflight: false } : {}),
   };
+  if (["1", "true", "yes"].includes(pbEnv)) context.playbook.enabled = true;
+  if (["0", "false", "no"].includes(pbEnv)) context.playbook.enabled = false;
 
   // Skills: default < config file < env gate.
   const skillsEnv = process.env.DEEPCODER_SKILLS;
@@ -838,6 +860,11 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     compactAt: numEnv(process.env.DEEPCODER_COMPACT_AT, 0.8),
     checkpoints: (["off", "manual", "auto"].includes(process.env.DEEPCODER_CHECKPOINTS ?? "")
       ? (process.env.DEEPCODER_CHECKPOINTS as CheckpointMode)
+      : "off"),
+    flightRecorder: (VALID_FLIGHT_RECORDER_MODES.includes(
+      (process.env.DEEPCODER_FLIGHT_RECORDER ?? "") as FlightRecorderMode,
+    )
+      ? (process.env.DEEPCODER_FLIGHT_RECORDER as FlightRecorderMode)
       : "off"),
     workspaceRoot,
     mcpServers: file.mcpServers ?? {},
