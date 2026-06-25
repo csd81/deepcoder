@@ -94,4 +94,27 @@ Do not inject memory inbox candidates. Only accepted memory files are eligible.
 
 ## Status
 
-Proposed.
+**Phase 1 IMPLEMENTED** (standalone deterministic prefetcher + tests; unwired).
+Phases 2–4 (messagesForQuery injection, `/memory prefetch` debug command,
+model/semantic selector) remain proposed.
+
+Implementation notes:
+- New `src/memory/prefetch.ts` — `prefetchRelevantMemory(input)` matching the plan
+  signature. Deterministic lexical scoring (filename=6 / heading=3 / body=1; prompt
+  terms 1.0, recent-message terms 0.5; literal filename-in-prompt boost; stopword
+  filter; zero-overlap files excluded; stable filename tie-break). No
+  `Date.now()`/`Math.random()`.
+- Matched the real layout from `src/memory/store.ts`: reads `.deepcoder/memory/`,
+  accepts only topic `*.md`, **excludes `MEMORY.md`** (always-loaded index) and
+  **never returns `inbox.json`** / inbox candidates.
+- Safety: `redactSecrets` applied to every returned `text` (redacted length counts
+  against `maxBytes`); `isSensitivePath` on the basename to skip secret-shaped names;
+  confinement to the memory dir via `realpath` + `path.relative` (a symlink/`..`
+  escaping the dir is skipped); all read errors swallowed (never throws); missing
+  dir → `[]`; cumulative bytes never exceed `maxBytes`.
+- **Not yet wired** into `buildMessagesForQuery` — it's a tested unit awaiting Phase 2
+  (which has a clean injection point now that the `messagesForQuery` seam exists).
+- Tests: `test/memoryPrefetch.test.ts` (7 unit) +
+  `test/adversarial/memory-prefetch.test.ts` (6 `[SECURITY]` — inbox never recalled,
+  secret redaction, path-traversal containment, imperative text gives no ranking
+  boost, malformed file tolerance).

@@ -258,8 +258,44 @@ loss.
 
 ## Status
 
-Proposed.
+**Phases 1–2 IMPLEMENTED** (pure projector + event types + dual-write shadow).
+Phases 3–6 (read JSONL primary, explicit compaction-boundary metadata from
+`compactIfNeeded`, event-native call sites, migration tooling) remain proposed.
 
-Recommended before larger long-horizon agent work. It creates the durable event
-substrate needed for better audit, replay, fork, and future evaluation tooling,
-while leaving the model loop and permission surface unchanged.
+Implementation notes:
+
+- New `src/session/sessionEvents.ts`:
+  - `SessionEvent` vocabulary (envelope `{v,seq,sessionId,createdAt}` +
+    discriminated body): `session_started`, `message_appended`,
+    `messages_replaced` (compaction/epoch/non-append catch-all), `todos_set`,
+    `read_tracker_added`, `write_tracker_added`, `mode_changed`, `title_changed`,
+    `meta_set` (whole-value replacement of low-frequency fields), `session_archived`.
+  - `projectSession()` / `projectSessionDetailed()` — pure fold; **quarantines**
+    (skips) any event whose `seq` does not strictly increase, so a forged/replayed
+    or torn log cannot corrupt the projection.
+  - `diffSnapshotToEvents(prev, next)` — minimal append events; message growth →
+    `message_appended`, any non-append message change → one `messages_replaced`.
+    A cleared field is carried as an explicit `null` sentinel in `meta_set`
+    (JSON drops `undefined`, so a clear must be explicit; the projector deletes on
+    `null`).
+  - `SessionEventLog` — append-only `<id>.jsonl`, `assertSafeId`-confined,
+    `O_APPEND`; reads tolerate a torn final line and skip corrupt/foreign rows.
+- `SessionStore.save()` now dual-writes: the legacy `<id>.json` snapshot stays the
+  source of truth, and a **best-effort, non-fatal** diff is appended to the log
+  (single shared `now` timestamp so the projection's `updatedAt` matches the
+  snapshot). Kill switch: `DEEPCODER_SESSION_EVENT_LOG=off`.
+- **Parity invariant proven:** `loadSessionFromEvents()` projects to the same JSON
+  as the legacy snapshot across multi-save sessions including a compaction-style
+  message replacement (which preserves the earlier `message_appended` events in the
+  log). Reads remain JSON-primary in this phase — `loadSession`/`listSessions`/
+  `forkSession`/`archiveSession` are unchanged.
+- Tests: `test/sessionEvents.test.ts` (7 unit — projector, quarantine, dual-write
+  parity, legacy-load unaffected, kill switch, torn line) +
+  `test/adversarial/session-events.test.ts` (5 — path escape, `.deepcoder/sessions`
+  re-ingestion block, forged/stale-seq rejection, foreign-sessionId drop, corrupt
+  interior line).
+
+Known phase-1 gaps (deferred): `archiveSession()` writes legacy JSON directly and
+does not yet append a `session_archived` event; compaction is detected
+structurally (catch-all `messages_replaced`) rather than via explicit metadata
+from `compactIfNeeded` (Phase 4).

@@ -183,15 +183,19 @@ Gate:
 
 ## Phasing
 
-1. Add `buildMessagesForQuery()` as a thin wrapper around current
-   `withEphemeralContext()`; no behavior change.
-2. Move `reconcileContext()` and compaction orchestration into the projection
-   builder while preserving durable behavior.
+1. ✅ **DONE** — Add `buildMessagesForQuery()` as the single pre-model chokepoint;
+   no behavior change.
+2. ✅ **DONE** — Move `reconcileContext()` and compaction orchestration into the
+   projection builder while preserving durable behavior + persistence ordering.
 3. Wire the five-stage pipeline into the projection builder.
+   *(depends on `feat-trident-compaction` + `feat-five-stage-context-pipeline`)*
 4. Make snip projection-only.
 5. After append-oriented session storage lands, make context collapse
    projection-only over event ranges.
 6. Update flight recorder to record projected/sanitized input.
+   *(already satisfied: the recorder fires in `getResponse()` downstream of the
+   projection + `sanitizeForProvider`, so it already captures the projected
+   payload. No change was needed.)*
 
 ## Effort / risk
 
@@ -201,4 +205,29 @@ move shapers one at a time.
 
 ## Status
 
-Proposed.
+**Phase 1+2 IMPLEMENTED** (the `messagesForQuery` seam). Phases 3–6 remain
+proposed and depend on their own plans (`feat-trident-compaction`,
+`feat-five-stage-context-pipeline`, `feat-append-oriented-session-storage`).
+
+Implementation notes:
+
+- **Decision: single path, no feature flag.** The legacy inline
+  compaction/reconcile/ephemeral block in `runAgentLoop()` was replaced outright
+  rather than kept behind a toggle — the refactor is behavior-identical and a
+  dead second path adds no value. Byte-identity is guaranteed by unit tests.
+- New `src/context/queryProjection.ts` exports `buildMessagesForQuery(input):
+  QueryProjection` plus the moved `withEphemeralContext()` and a new
+  `ContextStageStats` type (additive per-stage token observability — `compact`
+  and `reconcile` stages today; future shapers append more).
+- `buildMessagesForQuery()` is **sync** (every stage it calls is sync). The async
+  durable side-effects (`onContextEpochReset`, `onPersist`) stay in
+  `runAgentLoop()`, driven by the returned `compaction` / `contextUpdatesAppended`
+  flags — so persistence ordering is byte-for-byte unchanged.
+- `runAgentLoop()` (`src/agent/agentLoop.ts`) now calls
+  `buildMessagesForQuery({ messages, ctx, deps })` once per turn and sends
+  `projection.messagesForQuery` to the provider.
+- Tests: `test/queryProjection.test.ts` (6 unit — byte-identity, ephemeral
+  isolation, reconcile append, threshold no-op, compaction durable, stageStats) +
+  `test/adversarial/query-projection.test.ts` (4 — injection cannot mutate
+  canonical history, system-prompt byte-identity, no pairing regression, ephemeral
+  never leaks into the persisted array). `npm run test:phase` green (2076).

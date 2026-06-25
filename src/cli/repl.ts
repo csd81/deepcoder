@@ -655,6 +655,8 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     }),
     contextBudgetTokens,
     compactAt: session.config.compactAt,
+    tridentCompaction: session.config.context.tridentCompaction,
+    contextPipeline: session.config.context.contextPipeline,
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
     approve: (inv: ToolInvocation, preview?: ToolPreview) => {
       // Headless verify loop: with no TTY the prompt auto-DENIES, which blocks
@@ -674,6 +676,24 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     playbookContext: playbookContext(session),
     reconcileContext: () => reconcileSessionContext(session),
     onContextEpochReset: () => resetSessionContextEpoch(session),
+    onPreCompact: hooksFor(session, "PreCompact")
+      ? async (input) => runAdvisoryHooks("PreCompact", hooksFor(session, "PreCompact")!, [], { ...input }, hookCtx(session))
+      : undefined,
+    onPostCompact: hooksFor(session, "PostCompact")
+      ? async (input) =>
+          runAdvisoryHooks(
+            "PostCompact",
+            hooksFor(session, "PostCompact")!,
+            [],
+            {
+              beforeTokens: input.beforeTokens,
+              afterTokens: input.afterTokens,
+              stages: input.stages,
+              summaryPreview: input.summaryPreview ? redactSecrets(input.summaryPreview) : undefined,
+            },
+            hookCtx(session),
+          )
+      : undefined,
     onPersist: () => session.store.save(snapshot(session)),
     onUsage: (u) => addUsage(session.tokenUsage, u),
     // Flight recorder: snapshot the exact compiled payload per model call when

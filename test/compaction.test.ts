@@ -33,8 +33,10 @@ test("compaction shrinks history and preserves task, files, todos, errors", () =
   const todos: Todo[] = [{ id: "1", content: "finish refactor", status: "in_progress" }];
   const readTracker = new Set(["src/auth.ts"]);
   const writeTracker = new Set(["src/auth.ts"]);
-  // Small budget forces compaction.
-  const res = compactIfNeeded(msgs, { budgetTokens: 3000, compactAt: 0.8, todos, readTracker, writeTracker });
+  // Small budget forces compaction. Pin Trident off so this exercises the
+  // summarizer path specifically (Trident's "reduce under budget → skip summary"
+  // behavior is covered in test/trident-compaction.test.ts).
+  const res = compactIfNeeded(msgs, { budgetTokens: 3000, compactAt: 0.8, todos, readTracker, writeTracker, trident: false });
   assert.equal(res.compacted, true);
   assert.ok(res.after < before);
 

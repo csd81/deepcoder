@@ -228,3 +228,40 @@ All tests use plain in-memory `AgentMessage[]` fixtures — no provider, no LLM
 3. `src/context/trident.ts` orchestrator wired into `compactIfNeeded`, behind
    `DEEPCODER_TRIDENT` (default on), + the "skip summarization when under budget" path.
 4. `src/context/cluster.ts` + tests (ships last, independently flaggable).
+
+---
+
+## Status
+
+**IMPLEMENTED** (all three stages + orchestrator, wired, default-on, gated green).
+
+Implementation notes:
+- New `src/context/tridentUtil.ts` (shared pure structural helpers — `indexToolCalls`,
+  tool-class predicates, `pathArg`/`commandArg`/`argKey`, `FAILURE_RE`,
+  `lastErrorIndex`, `StageStats`/`Region`), `supersede.ts`, `collapse.ts`,
+  `cluster.ts`, and `trident.ts` (`reduceWithTrident` orchestrator + `TridentStats`).
+- `compactIfNeeded` (`src/context/compaction.ts`) runs Trident over `[head, tailStart)`
+  after `chooseTailMessages`; if the result is under trigger (non-force) it returns
+  `{compacted, trident}` **without** summarizing. `CompactOptions.trident?` overrides
+  the env default; `CompactResult.trident?` carries stats.
+- Config: `context.tridentCompaction` (default **true**) in `config.ts` with
+  precedence default < file < `DEEPCODER_TRIDENT` env (kill switch); Cluster has its
+  own `DEEPCODER_TRIDENT_CLUSTER`. Threaded `AgentDeps.tridentCompaction` →
+  `buildMessagesForQuery` → `compactIfNeeded`; set from config in `repl.ts`.
+- **Design choices vs. the plan prose:**
+  - Supersede's last-error guard applies to read/search stubbing only; a
+    *failed-then-succeeded* bash run is cropped even if it is the lexically-last
+    failure (it's resolved — the unresolved last error has no later success and is
+    never cropped).
+  - Cluster is **content-only** (stub earlier identical failures, keep the last) —
+    pairing-trivially-safe and monotonic — rather than removing message groups.
+- Tests: `test/trident-compaction.test.ts` (9 unit — each stage, skip-summary vs.
+  fall-through, determinism/idempotence/monotonicity) +
+  `test/adversarial/trident-compaction.test.ts` (5 — zero-orphan after sanitize,
+  system/`[context-update]` byte-identity, injection cannot trigger supersession,
+  protected content survives, kill-switch no-op). One pre-existing
+  `test/compaction.test.ts` case was pinned to `trident:false` so it keeps exercising
+  the summarizer path specifically (the skip-summary behavior has its own test).
+
+Deferred: explicit compaction-boundary metadata for the append-log
+(`feat-append-oriented-session-storage` Phase 4) can later consume `TridentStats`.

@@ -336,9 +336,33 @@ append-oriented session storage plan is complete.
 
 ## Status
 
-Proposed.
+**IMPLEMENTED** (orchestrator + Stages 1/2/3/5, gated green). Stage 4 (context
+collapse) remains proposed — it needs the append-oriented session log for clean
+read-time projection.
 
-Recommended sequence: pipeline shell → budget reducer → Trident → summary upgrade
-first. Snip and context collapse should wait until the append-oriented session log
-exists, because read-time projection is much cleaner and safer when the durable
-history is append-only.
+Implementation notes:
+- New `src/context/pipeline.ts` — `shapeContextBeforeModel(messages, opts):
+  ContextPipelineResult` runs Stage 1 `budgetReduce` (cap an oversized individual
+  tool result, idempotent) → Stage 2 Trident + Stage 5 auto-compact (delegated to
+  `compactIfNeeded`) → Stage 3 `snipTail` (cheap temporal trim of old read-only
+  exploration when still over budget). Each stage is pure, monotonic, pairing-safe,
+  and leaves `messages[0]`/system messages untouched.
+- **With the optional stages off (default) it is byte-identical to calling
+  `compactIfNeeded` directly** — proven by a parity test. So the rollout default is a
+  no-op shell; `budgetReduce`/`snip` are opt-in.
+- `buildMessagesForQuery` (`queryProjection.ts`) now calls the pipeline instead of
+  `compactIfNeeded`; per-stage `ContextStageStats` flow into the projection's
+  `stageStats` (stage names: `budget-reduce`, `trident`, `auto-compact`, `snip`).
+- Config: `context.contextPipeline { budgetReduce, snip, autoCompact }` (defaults
+  `false/false/true`); env kill switches `DEEPCODER_CONTEXT_PIPELINE` (forces optional
+  stages off → legacy) and `DEEPCODER_CONTEXT_SNIP`. Threaded
+  `AgentDeps.contextPipeline → buildMessagesForQuery → shapeContextBeforeModel`; set
+  from config in `repl.ts`.
+- Tests: `test/context-pipeline.test.ts` (5 unit — parity, stage order, budget-reduce
+  idempotence, snip preserves last error, monotonic+idempotent) +
+  `test/adversarial/context-pipeline.test.ts` (5 — injection ignored, non-summarizing
+  stages don't touch system messages, zero-orphan after sanitize, monotonic on hostile
+  input, kill-switch). Updated two `queryProjection` stage-name assertions.
+
+Deferred (Stage 4 context collapse): read-time collapse projection over append-log
+event ranges — depends on `feat-append-oriented-session-storage` Phases 3–4.

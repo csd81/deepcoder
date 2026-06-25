@@ -380,6 +380,24 @@ export interface ContextConfig {
    * DEEPCODER_PLAYBOOK (1/true/yes on, 0/false/no off).
    */
   playbook: { enabled: boolean; maxBytes: number; maxEntries: number };
+  /**
+   * Trident compaction — a deterministic redundancy pass (supersede obsolete
+   * reads/searches, collapse pure-exploration runs, cluster repeated failures)
+   * that runs before summarization so more recent context survives verbatim.
+   * Default ON. Kill switch: DEEPCODER_TRIDENT (0/off/false disables); the
+   * Cluster stage can be disabled independently via DEEPCODER_TRIDENT_CLUSTER.
+   */
+  tridentCompaction: boolean;
+  /**
+   * Five-stage pre-model context pipeline. With the optional stages off this is
+   * byte-identical to the legacy single compaction path. `budgetReduce` caps an
+   * oversized individual tool result; `snip` does a cheap temporal trim of old
+   * read-only exploration when still over budget; `autoCompact` is the
+   * deterministic summary fallback (the legacy behavior). Trident is configured
+   * separately via `tridentCompaction`. Env kill switches: DEEPCODER_CONTEXT_PIPELINE
+   * (forces optional stages off), DEEPCODER_CONTEXT_SNIP.
+   */
+  contextPipeline: { budgetReduce: boolean; snip: boolean; autoCompact: boolean };
 }
 
 const DEFAULT_CONTEXT: ContextConfig = {
@@ -391,6 +409,8 @@ const DEFAULT_CONTEXT: ContextConfig = {
   preflightMaxBytes: 6000,
   explorerMaxTurns: 8,
   playbook: { enabled: false, maxBytes: 4_000, maxEntries: 100 },
+  tridentCompaction: true,
+  contextPipeline: { budgetReduce: false, snip: false, autoCompact: true },
 };
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -563,18 +583,32 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const igEnv = (process.env.DEEPCODER_INSTRUCTION_GRAPH ?? "").toLowerCase();
   const pfEnv = (process.env.DEEPCODER_CONTEXT_PREFLIGHT ?? "").toLowerCase();
   const pbEnv = (process.env.DEEPCODER_PLAYBOOK ?? "").toLowerCase();
+  const trEnv = (process.env.DEEPCODER_TRIDENT ?? "").toLowerCase();
+  const cpEnv = (process.env.DEEPCODER_CONTEXT_PIPELINE ?? "").toLowerCase();
+  const snipEnv = (process.env.DEEPCODER_CONTEXT_SNIP ?? "").toLowerCase();
   const context: ContextConfig = {
     ...DEFAULT_CONTEXT,
     ...(file.context ?? {}),
-    // Deep-merge the playbook sub-object so a file partial doesn't drop defaults.
+    // Deep-merge sub-objects so a file partial doesn't drop defaults.
     playbook: { ...DEFAULT_CONTEXT.playbook, ...(file.context?.playbook ?? {}) },
+    contextPipeline: { ...DEFAULT_CONTEXT.contextPipeline, ...(file.context?.contextPipeline ?? {}) },
     ...(["1", "true", "yes"].includes(igEnv) ? { instructionGraph: true } : {}),
     ...(["0", "false", "no"].includes(igEnv) ? { instructionGraph: false } : {}),
     ...(["1", "true", "yes"].includes(pfEnv) ? { preflight: true } : {}),
     ...(["0", "false", "no"].includes(pfEnv) ? { preflight: false } : {}),
+    // Trident: default on; config file may disable; env is the final kill switch.
+    ...(["1", "true", "yes", "on"].includes(trEnv) ? { tridentCompaction: true } : {}),
+    ...(["0", "false", "no", "off"].includes(trEnv) ? { tridentCompaction: false } : {}),
   };
   if (["1", "true", "yes"].includes(pbEnv)) context.playbook.enabled = true;
   if (["0", "false", "no"].includes(pbEnv)) context.playbook.enabled = false;
+  // Context pipeline: DEEPCODER_CONTEXT_PIPELINE=0 forces the optional stages off
+  // (legacy compaction); DEEPCODER_CONTEXT_SNIP toggles the snip stage.
+  if (["0", "false", "no", "off"].includes(cpEnv)) {
+    context.contextPipeline = { budgetReduce: false, snip: false, autoCompact: true };
+  }
+  if (["1", "true", "yes", "on"].includes(snipEnv)) context.contextPipeline.snip = true;
+  if (["0", "false", "no", "off"].includes(snipEnv)) context.contextPipeline.snip = false;
 
   // Skills: default < config file < env gate.
   const skillsEnv = process.env.DEEPCODER_SKILLS;
