@@ -2,6 +2,8 @@ import type { AgentMessage } from "../providers/types.js";
 import type { ToolContext } from "../tools/types.js";
 import { runAgentLoop } from "../agent/agentLoop.js";
 import { restrictedRegistry } from "../tools/registry.js";
+import { SubagentSidechain, sidechainStats, type SidechainRole } from "./sidechain.js";
+import { newSessionId } from "../session/sessionStore.js";
 import { resolveWebTools } from "../web/access.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { buildSubagentPrompt } from "./prompts.js";
@@ -15,6 +17,12 @@ import type { RunSubagentOptions, SubagentProfile, SubagentResult, SubagentTrace
  * subagent gets a fresh, minimal context — NOT the parent's full history — and
  * its output is parsed into a non-authoritative result. Never throws.
  */
+function sidechainEnabled(opts: RunSubagentOptions): boolean {
+  if (opts.sidechain !== undefined) return opts.sidechain;
+  const env = (process.env.DEEPCODER_SUBAGENT_SIDECHAIN ?? "").toLowerCase();
+  return ["1", "true", "yes", "on"].includes(env);
+}
+
 export async function runSubagent(
   profile: SubagentProfile,
   task: string,
@@ -83,5 +91,26 @@ export async function runSubagent(
   result.errors.push(...errors);
 
   const turns = messages.filter((m) => m.role === "assistant").length;
-  return { result, trace: { toolsCalled, turns, model }, finalText };
+
+  // Sidechain transcript (opt-in): persist the FULL subagent transcript to a
+  // local JSONL audit trail OUTSIDE the parent's model-visible context. The
+  // parent keeps only the aggregate stats. Best-effort — never breaks the run.
+  let sidechainRunId: string | undefined;
+  let stats: { entries: number; byRole: Record<string, number> } | undefined;
+  if (sidechainEnabled(opts)) {
+    try {
+      const runId = `${profile.name.replace(/[^A-Za-z0-9_-]/g, "_")}-${newSessionId()}`;
+      const chain = new SubagentSidechain(opts.workspaceRoot, runId);
+      const written = [];
+      for (const m of messages) {
+        written.push(await chain.appendEntry({ role: m.role as SidechainRole, content: m.content, toolName: m.name }));
+      }
+      sidechainRunId = runId;
+      stats = sidechainStats(written);
+    } catch {
+      // A sidechain write failure must never surface to the caller.
+    }
+  }
+
+  return { result, trace: { toolsCalled, turns, model, sidechainRunId, sidechainStats: stats }, finalText };
 }

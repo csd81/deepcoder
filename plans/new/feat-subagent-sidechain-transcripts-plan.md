@@ -255,8 +255,15 @@ monotonic seq across restarts), `readSidechain` (torn-line tolerant, foreign-run
 corrupt-row quarantine), `sidechainStats`. Tests: `test/subagentSidechain.test.ts` (5) +
 `test/adversarial/subagent-sidechain.test.ts` (5 — runId path-escape rejected, content
 redacted on disk, `.deepcoder/subagents/**` model-unreadable, foreign-runId skipped,
-corrupt line isolated). Unwired → zero behavior change; threading a runId through the
-subagent runner + recording the transcript/stats lands separately.
+corrupt line isolated). **WIRED (env-gated, default off).** `runSubagent` now persists the full subagent
+transcript to a `SubagentSidechain` after the run when enabled, recording the
+`sidechainRunId` + aggregate `sidechainStats` in `SubagentTrace` (which flows into the
+quarantined `SubagentRunRecord` — audit metadata, never model-visible). Best-effort: a
+sidechain write failure never breaks the run. Gate: `opts.sidechain` override else
+`DEEPCODER_SUBAGENT_SIDECHAIN` env (default off → zero behavior change). Tests:
+`test/subagent-sidechain-wiring.test.ts` (4 — transcript persisted + audit stats,
+default-off no-write, `[SECURITY]` on-disk redaction, id/stats in trace not in the
+model-visible result).
 
 Recommended before write-capable/worktree subagents, because richer subagent
 power needs better auditability first.

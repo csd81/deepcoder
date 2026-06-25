@@ -45,6 +45,10 @@ export interface SubagentTrace {
   toolsCalled: string[];
   turns: number;
   model: string;
+  /** Sidechain run id, when the full transcript was persisted (audit metadata). */
+  sidechainRunId?: string;
+  /** Model-safe aggregate of the persisted sidechain transcript. */
+  sidechainStats?: { entries: number; byRole: Record<string, number> };
 }
 
 /**
@@ -73,4 +77,10 @@ export interface RunSubagentOptions {
   signal: AbortSignal;
   /** Phase 10E — web tool instances to offer opt-in profiles when web is enabled. */
   webTools?: import("../tools/types.js").Tool[];
+  /**
+   * Persist the full subagent transcript to a sidechain JSONL (audit trail,
+   * outside the parent's model-visible context). Explicit override; defaults to
+   * the DEEPCODER_SUBAGENT_SIDECHAIN env (off unless 1/true/yes/on).
+   */
+  sidechain?: boolean;
 }
