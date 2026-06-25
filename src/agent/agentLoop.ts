@@ -8,20 +8,23 @@ import type {
 } from "../providers/types.js";
 import type { ToolRegistry } from "../tools/registry.js";
 import type { ToolContext, ToolInvocation, ToolPreview, ToolResult } from "../tools/types.js";
-import { InvalidArgumentsError } from "../tools/types.js";
 import type { ApprovalMode } from "../config/config.js";
 import type { DiagnosticsConfig } from "../diagnostics/types.js";
-import { checkPermission } from "../permissions/policy.js";
 import { buildMessagesForQuery } from "../context/queryProjection.js";
 import { estimateMessages } from "../context/tokenBudget.js";
 import { isSummary } from "../context/compaction.js";
-import { runPostWriteDiagnostics } from "../diagnostics/runner.js";
-import { formatFile, shouldFormat } from "../tools/formatOnEdit.js";
 import type { FormatConfig } from "../config/fileConfig.js";
 import { isRateLimit, isAuthError, isModelError, isContextOverflowError, backoffMs, abortableSleep } from "./retry.js";
 import { recoverContextOverflow } from "../context/overflowRecovery.js";
 import { formatTokenUsageReminder, shouldEmitTokenUsageReminder } from "./tokenUsageReminder.js";
-import { saveManagedOutput } from "../session/managedOutputs.js";
+import {
+  ToolCallProcessor,
+  type ToolLoopState,
+  envFlagOn,
+  readConcurrencyFromEnv,
+} from "./toolExecution.js";
+import { StreamingToolExecutor } from "./streamingToolExecutor.js";
+import { consumeStreamWithToolExecution } from "./streamingConsume.js";
 
 export interface AgentDeps {
   provider: ModelProvider;
@@ -225,20 +228,23 @@ export function cumulativeToolBytes(messages: AgentMessage[]): number {
  */
 export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): Promise<string> {
   const { ctx, mode, maxTurns } = deps;
-  let lastInvalidSignature: string | null = null;
-  // The read-budget focus nudge is a one-shot: it fires at most once per run.
-  let nudged = false;
   // One-shot token-usage system reminder (mirrors the read-budget nudge).
   let tokenReminded = false;
-  // Cumulative UNCAPPED tool-output bytes the agent has read this run. Tracked
-  // separately from stored bytes because results are capped before storage
-  // (capToolResult) — the nudge is about read *volume*, not what we kept.
-  let readBytes = 0;
-  // Model-escalation: the model id used this turn (starts at deps.model; may be
-  // bumped to a stronger model on a repeated tool error, then stays — sticky).
-  let curModel = deps.model;
-  // Signature of the previous tool error, to detect the SAME error twice in a row.
-  let lastToolErrorSig: string | null = null;
+  // Run-scoped tool-execution bookkeeping, shared by the serial and streaming
+  // paths via ToolCallProcessor. Mutated in place across turns:
+  //  - lastInvalidSignature: stop on a repeated identical invalid-args call.
+  //  - lastToolErrorSig: detect the SAME tool error twice in a row.
+  //  - curModel: model id this run (may be bumped by escalation; sticky).
+  //  - nudged: one-shot read-budget focus nudge.
+  //  - readBytes: cumulative UNCAPPED tool-output bytes read this run (the nudge
+  //    keys on read *volume*, not on what we stored after capToolResult).
+  const state: ToolLoopState = {
+    lastInvalidSignature: null,
+    lastToolErrorSig: null,
+    curModel: deps.model,
+    nudged: false,
+    readBytes: 0,
+  };
 
   for (let turn = 0; turn < maxTurns; turn++) {
     if (ctx.signal.aborted) {
@@ -317,7 +323,7 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
     // to using deps directly.
     const turnDeps: AgentDeps = {
       ...deps,
-      model: curModel,
+      model: state.curModel,
       ...(deps.onAssistantTextDelta
         ? {
             onAssistantTextDelta: (chunk: string) => {
@@ -343,6 +349,34 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       } catch (err) {
         deps.onNotice?.(`memory prefetch error: ${(err as Error)?.message ?? String(err)}`);
       }
+    }
+
+    // ── Streaming tool execution (env-gated; default OFF) ────────────────────
+    // When DEEPCODER_STREAMING_TOOLS is on AND the provider can stream, execute
+    // complete streamed tool calls as they arrive: read-lane (read-only/session)
+    // tools run concurrently up to a small cap, mutate/execute tools serialize,
+    // and every real execution still routes through the SAME ToolCallProcessor
+    // helpers (permission gate, hooks, copy-on-write, persistence). Results are
+    // appended to history strictly in call-index order. The serial path below is
+    // unchanged when the flag is off.
+    if (envFlagOn(process.env.DEEPCODER_STREAMING_TOOLS) && deps.provider.streamChat) {
+      const outcome = await runStreamingToolTurn({
+        deps,
+        turnDeps,
+        ctx,
+        mode,
+        messages,
+        state,
+        sent: projection.messagesForQuery,
+        streamedDelta: () => streamedDelta,
+        tokenReminded,
+        setTokenReminded: () => {
+          tokenReminded = true;
+        },
+      });
+      if (outcome.kind === "return") return outcome.text;
+      // outcome.kind === "next" → proceed to the next turn.
+      continue;
     }
 
     // Reactive context-overflow recovery: if the provider rejects the request as
@@ -419,6 +453,11 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
     // No tool calls => the model is done.
     if (response.toolCalls.length === 0) return response.text;
 
+    // Serial tool execution (the default). Each call passes through the SAME
+    // ToolCallProcessor helpers the streaming path uses, in the original order:
+    // authorize (build + gate) → execute (copy-on-write + run) → record. With the
+    // streaming flag off this is byte-equivalent to the original inline body.
+    const proc = new ToolCallProcessor({ deps, ctx, mode, messages, state });
     for (const call of response.toolCalls) {
       // Abort between tool calls in the same assistant turn — otherwise a Ctrl-C
       // during one tool would still let the remaining calls run.
@@ -426,244 +465,23 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         deps.onNotice?.("Aborted.");
         return "";
       }
-      const tool = deps.registry.get(call.name);
-      if (!tool) {
-        pushSyntheticToolResult(messages, deps, call.id, call.name, `Unknown tool "${call.name}".`);
-        await deps.onPersist?.();
+      const auth = await proc.authorize(call);
+      if (auth.kind === "stop") return ""; // repeated invalid args (notice already emitted)
+      if (auth.kind === "blocked") {
+        await proc.recordBlocked(call, auth.render, auth.result);
         continue;
       }
-      // Deferred tool schemas: a deferred tool whose schema was never exposed
-      // must not execute (provider quirk / stale state / injection). Synthetic
-      // error, no tool.build(), not counted as a real dispatch.
-      if (deps.registry.isDeferredUnexposed(call.name)) {
-        pushSyntheticToolResult(
-          messages,
-          deps,
-          call.id,
-          call.name,
-          `Tool "${call.name}" is available but its schema has not been loaded. Call tool_search first.`,
-        );
-        await deps.onPersist?.();
+      const exec = await proc.execute(call, auth.invocation);
+      if (exec.kind === "abort") {
+        deps.onNotice?.("Aborted.");
+        return "";
+      }
+      if (exec.kind === "blocked") {
+        // Copy-on-write provisioning failed → recoverable synthetic result.
+        await proc.recordBlocked(call, "synthetic", exec.result);
         continue;
       }
-
-      let invocation: ToolInvocation;
-      try {
-        invocation = tool.build(call.arguments);
-        lastInvalidSignature = null;
-      } catch (err) {
-        if (err instanceof InvalidArgumentsError) {
-          const signature = `${call.name}:${JSON.stringify(call.arguments)}`;
-          if (signature === lastInvalidSignature) {
-            deps.onNotice?.(`Stopping: ${call.name} called with invalid arguments repeatedly.`);
-            return "";
-          }
-          lastInvalidSignature = signature;
-          pushSyntheticToolResult(messages, deps, call.id, call.name, err.message);
-          await deps.onPersist?.();
-          continue;
-        }
-        throw err;
-      }
-
-      const decision = checkPermission(invocation, mode, { mcpExecuteEnabled: deps.mcpExecuteEnabled });
-      if (decision === "deny") {
-        deps.onToolCall?.(call.name, invocation.describe());
-        pushToolResult(
-          messages,
-          call.id,
-          call.name,
-          `Denied by permission policy (mode: ${mode}). This action was not run. ` +
-            `Do not attempt to bypass this gate. If the capability is essential to the task, stop and explain to the user why you are blocked.`,
-        );
-        await deps.onPersist?.();
-        continue;
-      }
-
-      if (decision === "ask") {
-        let preview: ToolPreview | undefined;
-        try {
-          preview = invocation.preview ? await invocation.preview(ctx) : undefined;
-        } catch {
-          preview = undefined; // a preview failure must not abort the run
-        }
-        const approved = await deps.approve(invocation, preview);
-        if (!approved) {
-          pushSyntheticToolResult(
-            messages,
-            deps,
-            call.id,
-            call.name,
-            "User rejected this action. It was not run. Do not retry it — propose a safe alternative or ask the user how to proceed.",
-          );
-          await deps.onPersist?.();
-          continue;
-        }
-      }
-
-      // PreToolUse hooks fire only after the policy allowed/approved the tool, so
-      // a hook deny is additive (it can never resurrect a policy-denied tool).
-      if (deps.onPreToolUse) {
-        let outcome: import("../hooks/types.js").HookOutcome | undefined;
-        try {
-          outcome = await deps.onPreToolUse(call.name, invocation, ctx);
-        } catch (err) {
-          // A throwing PreToolUse hook must never abort the run. Treat it as
-          // non-blocking (proceed) and surface the failure as a notice, matching
-          // how the advisory post-hook/diagnostics/format hooks swallow errors.
-          deps.onNotice?.(`hook PreToolUse error: ${(err as Error)?.message ?? String(err)}`);
-          outcome = undefined;
-        }
-        if (outcome?.decision === "deny") {
-          deps.onToolCall?.(call.name, invocation.describe());
-          pushToolResult(
-            messages,
-            call.id,
-            call.name,
-            `Blocked by hook: ${outcome.reason ?? "denied"}. This action was not run.`,
-          );
-          await deps.onPersist?.();
-          continue;
-        }
-      }
-
-      // Copy-on-write: on the FIRST write-effect tool, provision a disposable
-      // worktree and redirect ctx.workspaceRoot into it. Runs after the gate so a
-      // policy-denied / hook-blocked / user-rejected write never creates one; a
-      // failure (e.g. dirty real tree) becomes a recoverable tool-result.
-      if (deps.ensureWritableRoot) {
-        try {
-          await deps.ensureWritableRoot(invocation);
-        } catch (err) {
-          pushSyntheticToolResult(
-            messages,
-            deps,
-            call.id,
-            call.name,
-            `Cannot start writing: ${(err as Error).message ?? String(err)}`,
-          );
-          await deps.onPersist?.();
-          continue;
-        }
-      }
-
-      deps.onToolCall?.(call.name, invocation.describe());
-      // A tool that throws (e.g. read_file on a missing path) must not abort the
-      // whole run — turn it into a recoverable tool-result the model can react to.
-      let result: ToolResult;
-      try {
-        result = await invocation.execute(ctx);
-      } catch (err) {
-        // An abort must stop the whole run, not be swallowed as a recoverable error.
-        if (ctx.signal.aborted || (err as Error).name === "AbortError") {
-          deps.onNotice?.("Aborted.");
-          return "";
-        }
-        result = { output: `Tool ${call.name} failed: ${(err as Error).message ?? String(err)}`, isError: true };
-      }
-      deps.onToolResult?.(call.name, result);
-      // Model escalation: the SAME tool failing the SAME way twice in a row is a
-      // signal Flash is stuck — switch to a stronger model for the rest of the
-      // run. A success or a different error resets the streak.
-      if (result.isError) {
-        const sig = `${call.name}:${result.output.slice(0, 80)}`;
-        if (sig === lastToolErrorSig) {
-          const escalated = deps.onRepeatedToolError?.();
-          if (escalated) curModel = escalated;
-          lastToolErrorSig = null; // fire once per streak
-        } else {
-          lastToolErrorSig = sig;
-        }
-      } else {
-        lastToolErrorSig = null;
-      }
-      readBytes += result.output.length;
-      if (result.output.length > MAX_TOOL_RESULT_BYTES) {
-        const id = await saveManagedOutput(ctx.workspaceRoot, result.output);
-        const preview = result.output.slice(0, MAX_TOOL_RESULT_BYTES);
-        const dropped = result.output.length - MAX_TOOL_RESULT_BYTES;
-        const content =
-          preview +
-          `\n\n[... tool result truncated: ${dropped} of ${result.output.length} bytes omitted to fit context budget ...]\n` +
-          `Complete output offloaded to disk.\n` +
-          `Output ID: ${id}\n` +
-          `Use read_managed_output(outputId: "${id}", startLine: X, endLine: Y) to read specific ranges.`;
-        messages.push({ role: "tool", toolCallId: call.id, name: call.name, content });
-      } else {
-        pushToolResult(messages, call.id, call.name, result.output);
-      }
-      await deps.onPersist?.();
-
-      // One-shot read-budget focus nudge. A soft nudge only — nothing is
-      // blocked, truncated, or removed. Fires at most once per run, when the
-      // cumulative (uncapped) tool-output bytes first cross the threshold (a
-      // model hoarding whole-file reads instead of converging on a hypothesis).
-      if (!nudged) {
-        const bytes = readBytes;
-        if (bytes >= READ_BUDGET_NUDGE_BYTES) {
-          nudged = true;
-          const approxTokens = Math.round(bytes / 4 / 1000);
-          messages.push({
-            role: "system",
-            content:
-              `You have read a large amount of file content (~${approxTokens}k tokens) without converging. ` +
-              `Narrow your hypothesis: use grep/repo_map and read only the specific lines you need ` +
-              `(read_file offset/limit) instead of whole files. Do not re-read files already in context.`,
-          });
-          deps.onNotice?.(`Read-budget nudge: ~${approxTokens}k tokens of file content read — asked the model to narrow its focus.`);
-          await deps.onPersist?.();
-        }
-      }
-
-      // Post-tool hooks are advisory: they observe the result but can't undo it.
-      if (deps.onPostTool) {
-        try {
-          const warnings = await deps.onPostTool(!!result.isError, call.name, invocation, result);
-          for (const w of warnings ?? []) deps.onNotice?.(`hook: ${w}`);
-        } catch {
-          // an advisory post-hook must never break the loop
-        }
-      }
-
-      // Phase 7I — post-write diagnostics. Only on SUCCESSFUL mutate tools.
-      // When diagnostics are disabled (the default), this is a no-op.
-      if (!result.isError && invocation.kind === "mutate" && invocation.affectedPaths && deps.diagnostics) {
-        try {
-          const diagRuns = await runPostWriteDiagnostics({
-            workspaceRoot: ctx.workspaceRoot,
-            affectedPaths: invocation.affectedPaths,
-            config: deps.diagnostics,
-            sandbox: ctx.sandbox,
-            signal: ctx.signal,
-          });
-          for (const dr of diagRuns) {
-            deps.onNotice?.(renderDiagnosticNotice(dr));
-          }
-        } catch {
-          // A diagnostic failure must never break the agent loop.
-        }
-      }
-
-      // Format-on-edit. Only on SUCCESSFUL mutate tools, only when configured.
-      if (!result.isError && invocation.kind === "mutate" && invocation.affectedPaths?.length && deps.format) {
-        try {
-          for (const file of invocation.affectedPaths) {
-            if (!shouldFormat(file, deps.format)) continue;
-            const outcome = await formatFile(file, deps.format, {
-              workspaceRoot: ctx.workspaceRoot,
-              sandbox: ctx.sandbox,
-              signal: ctx.signal,
-            });
-            if (outcome.formatted) {
-              deps.onNotice?.(`formatted ${file}`);
-            } else if (outcome.error) {
-              deps.onNotice?.(`format ${file}: ${outcome.error}`);
-            }
-          }
-        } catch {
-          // A format failure must never break the agent loop.
-        }
-      }
+      await proc.recordRanResult(call, auth.invocation, exec.result);
     }
   }
 
@@ -845,50 +663,152 @@ export async function consumeStream(
   return { text, toolCalls, usage };
 }
 
-function pushToolResult(
-  messages: AgentMessage[],
-  toolCallId: string,
-  name: string,
-  content: string,
-): void {
-  messages.push({ role: "tool", toolCallId, name, content: capToolResult(content) });
+interface StreamingTurnParams {
+  deps: AgentDeps;
+  /** Per-turn deps carrying the (possibly escalated) model + delta wrapper. */
+  turnDeps: AgentDeps;
+  ctx: ToolContext;
+  mode: ApprovalMode;
+  messages: AgentMessage[];
+  state: ToolLoopState;
+  /** The final per-call provider projection to send. */
+  sent: AgentMessage[];
+  /** Whether a streaming delta actually fired this turn (read fresh). */
+  streamedDelta: () => boolean;
+  /** Current value of the one-shot token-usage reminder flag. */
+  tokenReminded: boolean;
+  /** Flip the outer one-shot token-usage reminder flag. */
+  setTokenReminded: () => void;
 }
 
 /**
- * Like {@link pushToolResult}, but also fires the `onToolCall`/`onToolResult`
- * renderer callbacks so synthetic outcomes (unknown tool, invalid args, ask
- * rejected) render a tool block — consistent with the execute and deny paths.
- * These branches never run a real tool, so the result is synthesized as an
- * error result for the renderer; history still stores it via pushToolResult.
+ * Run ONE assistant turn on the streaming tool-execution path: stream the model
+ * response, executing complete tool calls as they arrive via a
+ * `StreamingToolExecutor`, then append results to history in call-index order.
+ *
+ * Mirrors the serial turn's model-call scaffolding (flight recorder, usage,
+ * token-usage reminder, assistant-message append, no-tool-calls finish) but
+ * interleaves tool execution with the stream. Returns `{kind:"return"}` to end
+ * the run (done / abort / repeated-invalid-args) or `{kind:"next"}` to continue.
+ *
+ * NOTE: this experimental path does NOT wrap the model call in the serial path's
+ * retry/backoff + reactive-overflow recovery (those wrap a fully-buffered
+ * response, which is incompatible with executing tools mid-stream). It keeps the
+ * same no-content fallback to `chat()` and the same post-content propagate-and-
+ * abort policy as `getResponse`.
  */
-function pushSyntheticToolResult(
-  messages: AgentMessage[],
-  deps: AgentDeps,
-  toolCallId: string,
-  name: string,
-  content: string,
-): void {
-  // Fire ONLY onToolResult — NOT onToolCall. onToolCall feeds the subagent
-  // runner's `trace.toolsCalled` (a security record of tools actually
-  // dispatched), and an unknown/invalid/rejected call must never appear there
-  // (a restricted-registry run_bash is unknown → it must stay out of toolsCalled).
-  // The result event alone is enough for a renderer to show the error block.
-  deps.onToolResult?.(name, { output: content, isError: true });
-  pushToolResult(messages, toolCallId, name, content);
-}
+async function runStreamingToolTurn(
+  p: StreamingTurnParams,
+): Promise<{ kind: "return"; text: string } | { kind: "next" }> {
+  const { deps, turnDeps, ctx, mode, messages, state, sent } = p;
+  if (ctx.signal.aborted) {
+    deps.onNotice?.("Aborted.");
+    return { kind: "return", text: "" };
+  }
 
-/**
- * Render a DiagnosticRun into a human-readable notice for the model.
- * Bounded to ~4 KB (the summary is already capped by the runner).
- */
-function renderDiagnosticNotice(dr: import("../diagnostics/types.js").DiagnosticRun): string {
-  const lines: string[] = [];
-  lines.push(`Post-write diagnostic "${dr.name}" — ${dr.exitCode === 0 ? "passed" : "failed"}`);
-  if (dr.affectedPaths.length > 0) {
-    lines.push(`Affected: ${dr.affectedPaths.join(", ")}`);
+  const req: ChatRequest = {
+    messages: sanitizeForProvider(sent),
+    tools: deps.registry.schemas(),
+    model: turnDeps.model,
+    signal: ctx.signal,
+  };
+  // Flight recorder — advisory; a recorder failure must never abort the turn.
+  if (deps.onModelCall) {
+    try {
+      await deps.onModelCall(req);
+    } catch (err) {
+      deps.onNotice?.(`flight recorder error: ${(err as Error)?.message ?? String(err)}`);
+    }
   }
-  if (dr.summary) {
-    lines.push(dr.summary);
+
+  const proc = new ToolCallProcessor({ deps, ctx, mode, messages, state });
+  // Child abort so a post-content stream failure can stop in-flight tool work
+  // (the executor links its own child to this signal too). Also aborts on user abort.
+  const streamAbort = new AbortController();
+  if (ctx.signal.aborted) streamAbort.abort();
+  else ctx.signal.addEventListener("abort", () => streamAbort.abort(), { once: true });
+
+  const makeExecutor = (): StreamingToolExecutor =>
+    new StreamingToolExecutor({
+      classify: (call) => proc.classifyForExecutor(call),
+      authorize: (call) => proc.authorizeForExecutor(call),
+      execute: (call, signal) => proc.executeForExecutor(call, signal),
+      readConcurrency: readConcurrencyFromEnv(),
+      signal: streamAbort.signal,
+    });
+
+  let executor = makeExecutor();
+  let assembled: { text: string; toolCalls: ToolCall[]; usage?: ChatResponse["usage"] };
+  try {
+    assembled = await consumeStreamWithToolExecution(
+      deps.provider.streamChat!(req),
+      executor,
+      turnDeps.onAssistantTextDelta,
+    );
+  } catch (err) {
+    if (ctx.signal.aborted || (err as Error)?.name === "AbortError") {
+      deps.onNotice?.("Aborted.");
+      return { kind: "return", text: "" };
+    }
+    const hadContent = (err as { hadContent?: boolean })?.hadContent === true;
+    if (hadContent) {
+      // Content already streamed → stop in-flight tools and propagate (no
+      // duplicate re-run, no masking), mirroring getResponse's StreamError path.
+      streamAbort.abort();
+      throw new StreamError((err as Error)?.message ?? String(err), true);
+    }
+    // Early, no-content stream failure → fall back to a non-streaming chat() and
+    // run its tool calls through a FRESH executor (the failed one already
+    // finished and would ignore further accept() calls).
+    deps.onNotice?.("Stream interrupted — falling back to non-streaming…");
+    const resp = await deps.provider.chat(req);
+    executor = makeExecutor();
+    for (const c of resp.toolCalls) executor.accept(c);
+    executor.finishAssistant();
+    assembled = { text: resp.text, toolCalls: resp.toolCalls, usage: resp.usage };
   }
-  return lines.join("\n");
+
+  deps.onUsage?.(assembled.usage);
+
+  // One-shot token-usage system reminder (same trigger as the serial path).
+  if (!p.tokenReminded && assembled.usage?.promptTokens !== undefined) {
+    if (shouldEmitTokenUsageReminder(assembled.usage.promptTokens, deps.contextBudgetTokens, deps.compactAt)) {
+      p.setTokenReminded();
+      messages.push({
+        role: "system",
+        content: formatTokenUsageReminder(assembled.usage.promptTokens, deps.contextBudgetTokens),
+      });
+      deps.onNotice?.(
+        `Token-usage reminder: ${assembled.usage.promptTokens} of ${deps.contextBudgetTokens} tokens used.`,
+      );
+      await deps.onPersist?.();
+    }
+  }
+
+  messages.push({
+    role: "assistant",
+    content: assembled.text,
+    toolCalls: assembled.toolCalls.length ? assembled.toolCalls : undefined,
+  });
+  if (assembled.text && !p.streamedDelta()) deps.onAssistantText?.(assembled.text);
+  deps.onAssistantMessageEnd?.(assembled.text);
+  await deps.onPersist?.();
+
+  // No tool calls => the model is done.
+  if (assembled.toolCalls.length === 0) return { kind: "return", text: assembled.text };
+
+  // Drain executor results in call-index order and record each into history, so
+  // history append order matches the assistant's tool-call order (keeps
+  // sanitizeForProvider valid even when reads finished out of order).
+  for await (const update of executor.updates()) {
+    if (ctx.signal.aborted) break;
+    await proc.recordUpdate(update.call, update.result!);
+  }
+
+  if (ctx.signal.aborted) {
+    deps.onNotice?.("Aborted.");
+    return { kind: "return", text: "" };
+  }
+  if (proc.stopRequested) return { kind: "return", text: "" };
+  return { kind: "next" };
 }
