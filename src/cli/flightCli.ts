@@ -73,7 +73,11 @@ export async function runFlightReplay(
 }
 
 export function registerFlightCommand(program: Command, deps: { root?: string } = {}): Command {
-  const root = deps.root ?? loadConfig().workspaceRoot;
+  // Use cwd, NOT loadConfig(), at registration time — mirroring the other CLI
+  // registrars. Calling loadConfig() here would force an API key at startup for
+  // every `deepcoder` command. The only place that needs config is the `--live`
+  // replay path, which loads it lazily in runFlightReplay.
+  const root = deps.root ?? process.cwd();
 
   const flight = program
     .command("flight")

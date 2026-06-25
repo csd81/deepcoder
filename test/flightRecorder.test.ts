@@ -13,6 +13,8 @@ import type { AgentDeps } from "../src/agent/agentLoop.js";
 import type { AgentMessage, ChatRequest } from "../src/providers/types.js";
 import { ScriptedProvider, makeCtx } from "./helpers/providers.js";
 import { defaultRegistry } from "../src/tools/registry.js";
+import { Command } from "commander";
+import { registerFlightCommand } from "../src/cli/flightCli.js";
 
 async function ws(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "flight-"));
@@ -70,6 +72,18 @@ test("eviction keeps the last N calls and GCs orphan blobs", async () => {
   // Only blobs referenced by calls 3 & 4 (their contents + the shared tools blob) survive.
   const blobs = await readdir(path.join(root, ".deepcoder", "flight", SID, "blobs"));
   assert.equal(blobs.length, 3); // content_3 + content_4 + tools
+});
+
+test("registerFlightCommand does not require an API key at registration", () => {
+  // Regression: registration must use cwd, not loadConfig() (which throws
+  // without a key) — else every `deepcoder` command demands an API key.
+  const saved = process.env.DEEPCODER_API_KEY;
+  delete process.env.DEEPCODER_API_KEY;
+  try {
+    assert.doesNotThrow(() => registerFlightCommand(new Command()));
+  } finally {
+    if (saved !== undefined) process.env.DEEPCODER_API_KEY = saved;
+  }
 });
 
 test("getResponse fires onModelCall once with the sanitized payload", async () => {
