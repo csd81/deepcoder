@@ -62,6 +62,9 @@ export function withEphemeralContext(
   for (const block of deps.playbookContext?.() ?? []) {
     extra.push({ role: "system", content: block });
   }
+  for (const block of deps.deferredToolsCatalog?.() ?? []) {
+    extra.push({ role: "system", content: block });
+  }
   return extra.length ? [...messages, ...extra] : messages;
 }
 

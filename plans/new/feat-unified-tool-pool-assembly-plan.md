@@ -333,7 +333,39 @@ snapshot visible tool names before and after each migration phase.
 
 ## Status
 
-Proposed.
+**Phases 1–4 IMPLEMENTED** (native enumeration + optional built-ins + MCP through one
+chokepoint, dedup/precedence safety, diagnostics). Phases 5–8 (subagent assembly,
+deferred-schema integration, deny prefilter, plugin tool contributions) remain proposed.
 
-Recommended before default-on deferred schemas and richer plugin contributions,
-because both need one reliable tool assembly chokepoint.
+Implementation notes:
+- New `src/tools/assembly.ts` — `assembleToolPool(input): ToolAssemblyResult`
+  (`{registry, catalog, hidden, warnings}`). Deterministic **earlier-wins** dedup
+  (native is first) + a `RESERVED_NATIVE_NAMES` set so a non-native source can NEVER
+  take a safety-critical native name (`read_file`/`write_file`/`edit_file`/`run_bash`/
+  `apply_patch`/`delegate`/`delete_file`/`rename_file`) regardless of order. Optional
+  `subagent.allowedTools` and `hideKinds` filters; every dropped tool yields a `hidden`
+  record (reason) — no silent disappearance. `nativeToolDefinitions()` exported from
+  `registry.ts`.
+- `buildSession` now gathers contributions in precedence order (native → semantic → web
+  → pty → lsp → mcp) and builds the registry through `assembleToolPool`. The optional
+  factories return `[]` when their flag is off exactly as before, so **the visible tool
+  list/order is byte-identical for every real config** (proven by a `defaultRegistry`
+  parity test + the session-factory/MCP suites). `initMcp` is now connect-only; MCP
+  tools join as contributions via `mcp.tools()` (dedup-protected) — the `/mcp` reload
+  path still uses `registerInto` directly (prefix-safe).
+- **Deviation from the plan (intentional, lower-risk):** `assembleToolPool` is a pure
+  function over *pre-gathered* contributions rather than fetching MCP/LSP itself —
+  `buildSession` keeps owning the config/LSP/MCP lifecycle. Same chokepoint, smaller
+  blast radius.
+- Tests: `test/tool-assembly.test.ts` (7 unit — defaultRegistry parity, catalog/source,
+  earlier-wins collision, reserved-name refusal, subagent restriction, hideKinds, order)
+  + `test/adversarial/tool-assembly.test.ts` (6 — MCP/plugin can't shadow any
+  safety-critical native, hidden tool absent from `names()`/`schemas()`, reserved name
+  refused with no native present, subagent excludes mutate/execute, determinism,
+  diagnostics shape).
+
+Deferred: subagent `restrictedRegistry` still in use (assembly already supports
+`subagent` input — Phase 5 will route it through); deferred-schema exposure
+(`registry.schemas({exposed})` + catalog) lands with `feat-deferred-tool-schemas`; deny
+prefilter waits on declarative permission rules; a `/tools` diagnostics command (the
+catalog/hidden/warnings data already exists) and plugin tool providers remain.

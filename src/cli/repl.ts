@@ -45,7 +45,8 @@ import type { BriefRunRecord } from "../context/explorerBrief.js";
 import type { PlanRunRecord } from "../context/planBrief.js";
 import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
-import { buildDelegateRuntime, buildDelegateAutoRuntime, buildWorktreeRuntime, buildEnsureWritableRoot, branchNameForSession, attachFileWatcher } from "../runtime/sessionFactory.js";
+import { buildDelegateRuntime, buildDelegateAutoRuntime, buildWorktreeRuntime, buildToolSearchRuntime, buildEnsureWritableRoot, branchNameForSession, attachFileWatcher } from "../runtime/sessionFactory.js";
+import { renderDeferredCatalog } from "../tools/toolSearch.js";
 import { makeDelegationHint } from "../delegate/assess.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
@@ -556,6 +557,7 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     delegate: buildDelegateRuntime(session),
     delegateAuto: buildDelegateAutoRuntime(session),
     worktree: buildWorktreeRuntime(session),
+    toolSearch: buildToolSearchRuntime(session),
   };
 
   // Plain-CLI renderer: render finished assistant messages as markdown (with
@@ -677,6 +679,10 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     onPostTool: postToolHook(session),
     jitContext: jitContext(session),
     playbookContext: playbookContext(session),
+    deferredToolsCatalog: () => {
+      const block = renderDeferredCatalog(session.registry.catalog(), session.config.tools.deferredCatalogMaxChars);
+      return block ? [block] : [];
+    },
     reconcileContext: () => reconcileSessionContext(session),
     onContextEpochReset: () => resetSessionContextEpoch(session),
     onPreCompact: hooksFor(session, "PreCompact")

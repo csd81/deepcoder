@@ -111,6 +111,8 @@ export interface AgentDeps {
    * permissions or policy. Undefined = playbook disabled.
    */
   playbookContext?(): string[];
+  /** Bounded `[deferred-tools]` catalog block(s) for deferred tool schemas. */
+  deferredToolsCatalog?(): string[];
   /**
    * Cache-Optimized Context: reconcile dynamic context sources (approval mode,
    * instructions, memory) against the session's epoch snapshot. Called at the
@@ -403,6 +405,20 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
       const tool = deps.registry.get(call.name);
       if (!tool) {
         pushSyntheticToolResult(messages, deps, call.id, call.name, `Unknown tool "${call.name}".`);
+        await deps.onPersist?.();
+        continue;
+      }
+      // Deferred tool schemas: a deferred tool whose schema was never exposed
+      // must not execute (provider quirk / stale state / injection). Synthetic
+      // error, no tool.build(), not counted as a real dispatch.
+      if (deps.registry.isDeferredUnexposed(call.name)) {
+        pushSyntheticToolResult(
+          messages,
+          deps,
+          call.id,
+          call.name,
+          `Tool "${call.name}" is available but its schema has not been loaded. Call tool_search first.`,
+        );
         await deps.onPersist?.();
         continue;
       }

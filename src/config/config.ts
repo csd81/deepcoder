@@ -177,6 +177,7 @@ export interface Config {
    * legacy first-match loader. Off by default (gate: DEEPCODER_INSTRUCTION_GRAPH=1).
    */
   context: ContextConfig;
+  tools: ToolsConfig;
   skills: SkillsConfig;
   dependencyHealing: DependencyHealingConfig;
   delegate: DelegateConfig;
@@ -425,6 +426,32 @@ const DEFAULT_CONTEXT: ContextConfig = {
   overflowAggressiveTailRatio: 0.15,
 };
 
+/**
+ * Deferred tool schemas. When `deferredSchemas` is on, tools from the enabled
+ * source families start as a compact catalog and the model loads their full
+ * schemas on demand via `tool_search`. Off by default; env:
+ * DEEPCODER_DEFERRED_TOOLS (1/0), DEEPCODER_DEFER_MCP (1/0).
+ */
+export interface ToolsConfig {
+  deferredSchemas: boolean;
+  deferMcp: boolean;
+  deferLsp: boolean;
+  deferWeb: boolean;
+  deferSemantic: boolean;
+  deferPty: boolean;
+  deferredCatalogMaxChars: number;
+}
+
+const DEFAULT_TOOLS: ToolsConfig = {
+  deferredSchemas: false,
+  deferMcp: true,
+  deferLsp: true,
+  deferWeb: true,
+  deferSemantic: true,
+  deferPty: true,
+  deferredCatalogMaxChars: 4000,
+};
+
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
 function numEnv(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw === "") return fallback;
@@ -481,6 +508,7 @@ export type ConfigOverrides = Partial<Omit<Config, "sandbox" | "workspaceIsolati
   hooks?: Partial<HooksConfig>;
   diagnostics?: Partial<DiagnosticsConfig>;
   context?: Partial<ContextConfig>;
+  tools?: Partial<ToolsConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
   delegate?: { qualityGate?: Partial<QualityGateOptions>; acceptanceFirst?: Partial<AcceptanceFirstOptions>; autopilot?: Partial<DelegateAutopilotConfig>; assess?: Partial<DelegateAssessConfig>; verify?: Partial<DelegateVerifyConfig> };
@@ -629,6 +657,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   if (roAttempts !== undefined && roAttempts !== "") {
     context.overflowRecoveryMaxAttempts = Math.min(2, Math.max(0, numEnv(roAttempts, 1)));
   }
+
+  // Deferred tool schemas: default < config file < env gate.
+  const tools: ToolsConfig = { ...DEFAULT_TOOLS, ...(file.tools ?? {}) };
+  const dtEnv = (process.env.DEEPCODER_DEFERRED_TOOLS ?? "").toLowerCase();
+  if (["1", "true", "yes", "on"].includes(dtEnv)) tools.deferredSchemas = true;
+  if (["0", "false", "no", "off"].includes(dtEnv)) tools.deferredSchemas = false;
+  const dmEnv = (process.env.DEEPCODER_DEFER_MCP ?? "").toLowerCase();
+  if (["1", "true", "yes", "on"].includes(dmEnv)) tools.deferMcp = true;
+  if (["0", "false", "no", "off"].includes(dmEnv)) tools.deferMcp = false;
 
   // Skills: default < config file < env gate.
   const skillsEnv = process.env.DEEPCODER_SKILLS;
@@ -947,6 +984,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     hooks: { ...hooks, ...(overrides.hooks ?? {}) },
     diagnostics: { ...diagnostics, ...(overrides.diagnostics ?? {}) },
     context: { ...context, ...(overrides.context ?? {}) },
+    tools: { ...tools, ...(overrides.tools ?? {}) },
     skills: { ...skills, ...(overrides.skills ?? {}) },
     dependencyHealing: { ...dependencyHealing, ...(overrides.dependencyHealing ?? {}) },
     delegate,

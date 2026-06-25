@@ -21,7 +21,8 @@ import { createPtyTools } from "../tools/ptyTools.js";
 import { createLspTools } from "../tools/lspTools.js";
 import { createLspManager } from "../lsp/manager.js";
 import type { LspRuntime } from "../lsp/types.js";
-import { defaultRegistry } from "../tools/registry.js";
+import { nativeToolDefinitions } from "../tools/registry.js";
+import { assembleToolPool, type ToolContribution, type ToolSource } from "../tools/assembly.js";
 import { verifyFindings } from "../delegate/verifyFindings.js";
 import { discoverSkills } from "../skills/discovery.js";
 import { buildSkillCatalog } from "../skills/catalogPrompt.js";
@@ -38,7 +39,6 @@ import { McpManager } from "../mcp/registry.js";
 import { CheckpointRecorder } from "../session/checkpoints.js";
 import { FlightRecorder } from "../session/flightRecorder.js";
 import { loadPlaybook } from "../context/playbookStore.js";
-import type { ToolRegistry } from "../tools/registry.js";
 import type { Config } from "../config/config.js";
 import type { AgentMessage } from "../providers/types.js";
 import { ModelRouter } from "../models/router.js";
@@ -46,16 +46,17 @@ import { ProviderPool } from "../models/providerPool.js";
 import { runSubagent } from "../subagents/runner.js";
 import { PROFILES } from "../subagents/profiles.js";
 import { discoverCustomProfiles, mergeProfiles } from "../subagents/customProfiles.js";
-import type { DelegateRuntime, DelegateAutoRuntime, WorktreeRuntime, ToolContext, ToolInvocation } from "../tools/types.js";
+import type { DelegateRuntime, DelegateAutoRuntime, WorktreeRuntime, ToolSearchRuntime, ToolContext, ToolInvocation } from "../tools/types.js";
 import { runDelegateAuto } from "../cli/delegateCli.js";
 
 /** Connect configured MCP servers and register their tools. Returns undefined
  *  when none are configured; never throws (bad servers warn and are skipped). */
-export async function initMcp(config: Config, registry: ToolRegistry): Promise<McpManager | undefined> {
+export async function initMcp(config: Config): Promise<McpManager | undefined> {
   if (!config.mcpServers || Object.keys(config.mcpServers).length === 0) return undefined;
   const manager = new McpManager(config.mcpServers);
   await manager.connectAll();
-  await manager.registerInto(registry);
+  // Tools are folded into the registry by assembleToolPool (the single assembly
+  // chokepoint); the live /mcp reload path still uses registerInto directly.
   const bad = manager.status().filter((s) => s.error && s.error !== "disabled");
   for (const s of bad) console.error(chalk.yellow(`MCP server "${s.name}" unavailable: ${s.error}`));
   return manager;
@@ -294,6 +295,15 @@ export function buildDelegateRuntime(session: Session): DelegateRuntime {
  * into the session's automatic setup/finalize lifecycle — the model controls
  * enter and exit explicitly.
  */
+/** Runtime for the `tool_search` tool, bound to the session's registry. */
+export function buildToolSearchRuntime(session: Session): ToolSearchRuntime {
+  return {
+    catalog: () => session.registry.catalog(),
+    expose: (names) => session.registry.expose(names),
+    schemaFor: (name) => session.registry.schemaForName(name),
+  };
+}
+
 export function buildWorktreeRuntime(session: Session): WorktreeRuntime {
   return {
     isActive() {
@@ -442,34 +452,48 @@ export async function buildSession(
   const provider = createProvider(config);
   const modelRouter = new ModelRouter(config, config.models);
   const providerPool = new ProviderPool(config);
-  const registry = defaultRegistry();
-  // Phase 8E: register the semantic tools only when opt-in is enabled (default off).
-  if (config.semanticSearch.enabled) {
-    for (const t of createSemanticTools({ config: config.semanticSearch })) registry.register(t);
-  }
-  // Phase 10E: register the web tools only when web is enabled (default off).
-  for (const t of createWebTools({
-    enabled: config.web.enabled,
-    allowedDomains: config.web.allowedDomains,
-    blockedDomains: config.web.blockedDomains,
-    searchProvider: config.web.searchProvider,
-    quarantine: config.web.quarantine,
-    maxReturnedChars: config.web.maxReturnedChars,
-    // Phase 10E6: resolve a concrete search backend (e.g. Brave) from config +
-    // env; falls back to the refusing noneProvider when disabled/unset.
-    provider: createWebSearchProviderFromConfig({ config: config.web, env: process.env }),
-  })) registry.register(t);
-  // Phase 10G: register the persistent interactive-shell tool only when opted in
-  // (default off / fail-closed); it still flows through the permission policy.
-  for (const t of createPtyTools({ enabled: config.interactiveShell })) registry.register(t);
-  // LSP code-intelligence tools: only when opt-in is enabled (default off). The
-  // manager lazily launches a server per language; closeAll() runs on session end.
+  // LSP code-intelligence manager (lazily launches a server per language;
+  // closeAll() runs on session end). Tools are gathered below.
   let lsp: LspRuntime | undefined;
-  if (config.lsp.enabled) {
-    lsp = createLspManager(config.lsp, config.workspaceRoot);
-    for (const t of createLspTools(lsp)) registry.register(t);
-  }
-  const mcp = await initMcp(config, registry);
+  if (config.lsp.enabled) lsp = createLspManager(config.lsp, config.workspaceRoot);
+  const mcp = await initMcp(config);
+
+  // Unified tool-pool assembly: gather contributions from every source in
+  // precedence order (native → optional built-ins → MCP), then build the
+  // registry through the single chokepoint. Optional families return [] when
+  // their config flag is off, exactly as before — so the visible tool list is
+  // unchanged for every real config; assembly only adds dedup/precedence safety
+  // and diagnostics.
+  const contributions: ToolContribution[] = [
+    ...nativeToolDefinitions().map((tool) => ({ tool, source: "native" as const })),
+    ...(config.semanticSearch.enabled ? createSemanticTools({ config: config.semanticSearch }) : []).map(
+      (tool) => ({ tool, source: "semantic" as const }),
+    ),
+    ...createWebTools({
+      enabled: config.web.enabled,
+      allowedDomains: config.web.allowedDomains,
+      blockedDomains: config.web.blockedDomains,
+      searchProvider: config.web.searchProvider,
+      quarantine: config.web.quarantine,
+      maxReturnedChars: config.web.maxReturnedChars,
+      provider: createWebSearchProviderFromConfig({ config: config.web, env: process.env }),
+    }).map((tool) => ({ tool, source: "web" as const })),
+    ...createPtyTools({ enabled: config.interactiveShell }).map((tool) => ({ tool, source: "pty" as const })),
+    ...(lsp ? createLspTools(lsp) : []).map((tool) => ({ tool, source: "lsp" as const })),
+    ...(mcp ? await mcp.tools() : []).map((tool) => ({ tool, source: "mcp" as const })),
+  ];
+  const deferSources: ToolSource[] = [];
+  if (config.tools.deferMcp) deferSources.push("mcp");
+  if (config.tools.deferLsp) deferSources.push("lsp");
+  if (config.tools.deferWeb) deferSources.push("web");
+  if (config.tools.deferSemantic) deferSources.push("semantic");
+  if (config.tools.deferPty) deferSources.push("pty");
+  const assembled = assembleToolPool({
+    contributions,
+    deferred: config.tools.deferredSchemas ? { enabled: true, deferSources } : undefined,
+  });
+  const registry = assembled.registry;
+  for (const w of assembled.warnings) console.error(chalk.yellow(`tool assembly: ${w}`));
   const recorder = config.checkpoints === "off" ? undefined : new CheckpointRecorder(config.workspaceRoot);
   // Per-turn flight recorder (off by default). One instance per session so the
   // call index advances across turns; created with the session's store id.

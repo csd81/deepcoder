@@ -1,5 +1,5 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { Tool } from "./types.js";
+import type { Tool, ToolExposure } from "./types.js";
 import type { ToolSchema } from "../providers/types.js";
 import { readFileTool } from "./readFile.js";
 import { listDirTool } from "./listDir.js";
@@ -22,6 +22,16 @@ import { readManagedOutputTool } from "./readManagedOutput.js";
 
 export class ToolRegistry {
   tools: Record<string, Tool> = {};
+  /**
+   * Deferred tool schemas (set by assembleToolPool when enabled). Deferred tools
+   * are registered (executable) but their schema is withheld from `schemas()`
+   * until exposed via `tool_search`. Empty → no deferral (legacy behavior).
+   */
+  deferred = new Set<string>();
+  /** Deferred tools whose schema has been loaded this session (tool_search). */
+  exposed = new Set<string>();
+  /** Compact catalog metadata for the deferred tools. */
+  catalogEntries: ToolExposure[] = [];
 
   register(tool: Tool): void {
     this.tools[tool.name] = tool;
@@ -42,16 +52,47 @@ export class ToolRegistry {
     }
   }
 
-  /** JSON-Schema tool definitions, as sent to the model each turn. */
-  schemas(): ToolSchema[] {
-    return Object.values(this.tools).map((t) => ({
+  private schemaOf(t: Tool): ToolSchema {
+    return {
       name: t.name,
       description: t.description,
       // Raw-schema tools (MCP) supply their own JSON Schema; native tools convert
       // from zod. Default target is draft-07, which the DeepSeek/OpenAI tools API
       // expects (e.g. numeric `exclusiveMinimum`, not the OpenAPI boolean).
       parameters: t.rawSchema ?? (zodToJsonSchema(t.schema!, { $refStrategy: "none" }) as Record<string, unknown>),
-    }));
+    };
+  }
+
+  /**
+   * JSON-Schema tool definitions sent to the model each turn. When deferred
+   * schemas are active, a deferred tool is omitted until it has been exposed.
+   * With no deferred tools this returns every schema (legacy behavior).
+   */
+  schemas(): ToolSchema[] {
+    return Object.values(this.tools)
+      .filter((t) => this.deferred.size === 0 || !this.deferred.has(t.name) || this.exposed.has(t.name))
+      .map((t) => this.schemaOf(t));
+  }
+
+  /** True if `name` is a deferred tool whose schema has not been loaded yet. */
+  isDeferredUnexposed(name: string): boolean {
+    return this.deferred.has(name) && !this.exposed.has(name);
+  }
+
+  /** Mark deferred tools exposed (no-op for non-deferred / unknown names). */
+  expose(names: string[]): void {
+    for (const n of names) if (this.deferred.has(n)) this.exposed.add(n);
+  }
+
+  /** Deferred tools not yet exposed — the live `tool_search` catalog. */
+  catalog(): ToolExposure[] {
+    return this.catalogEntries.filter((e) => !this.exposed.has(e.name));
+  }
+
+  /** Full provider schema for one tool name (used by `tool_search`). */
+  schemaForName(name: string): ToolSchema | undefined {
+    const t = this.tools[name];
+    return t ? this.schemaOf(t) : undefined;
   }
 }
 
@@ -82,6 +123,11 @@ const NATIVE_TOOLS: Tool[] = [
   exitWorktreeTool,
   readManagedOutputTool,
 ];
+
+/** The built-in native tool definitions, in canonical order (excludes MCP). */
+export function nativeToolDefinitions(): Tool[] {
+  return [...NATIVE_TOOLS];
+}
 
 /** The full native tool set. */
 export function defaultRegistry(): ToolRegistry {

@@ -297,7 +297,36 @@ parallel with it. It is independent of append-oriented session storage.
 
 ## Status
 
-Proposed.
+**Phases 1–5 IMPLEMENTED** (registry filtering + `tool_search` + MCP/optional deferral
++ context catalog + execution guard), default OFF. Phases 6–7 (cross-resume exposure
+persistence, default-on rollout) remain proposed.
 
-Recommended first target: MCP tools. They are the most schema-heavy, least
-predictable, and already have a strong permission boundary in DeepCoder.
+Implementation notes:
+- `ToolRegistry` gained `deferred`/`exposed`/`catalogEntries` + `schemas()` filtering
+  (a deferred tool is withheld until exposed; empty `deferred` → legacy all-schemas),
+  plus `expose()`, `catalog()`, `isDeferredUnexposed()`, `schemaForName()`.
+- New `src/tools/toolSearch.ts` — the always-on `tool_search` tool (exact `names`,
+  `query`, or no-arg catalog list; exposes matches and returns their full schemas) +
+  `renderDeferredCatalog()` (bounded `[deferred-tools]` block, truncates with an
+  omitted-count) + `summarize()`. A `ToolSearchRuntime` seam on `ToolContext` binds it
+  to the session registry.
+- `assembleToolPool` (the #8 chokepoint) marks `deferSources` deferred and adds
+  `tool_search` when enabled; native tools are never deferred. `buildSession` passes the
+  deferred config; `repl` wires `ctx.toolSearch` + a `deferredToolsCatalog` dep that
+  injects the catalog as **ephemeral** context (via `withEphemeralContext`, so it's never
+  persisted and updates as tools are exposed).
+- **Execution guard** in `runAgentLoop`: a deferred-but-unexposed tool call yields a
+  synthetic "call tool_search first" result — `tool.build()` never runs (defends against
+  provider quirks / stale state / injection). Schema-gate ≠ permission-gate: an exposed
+  tool still flows through `checkPermission()` (execute-kind MCP stays denied unless
+  `mcpExecuteEnabled`).
+- Config `tools.{deferredSchemas, deferMcp, deferLsp, deferWeb, deferSemantic, deferPty,
+  deferredCatalogMaxChars}` (default `deferredSchemas:false`) + env
+  `DEEPCODER_DEFERRED_TOOLS`, `DEEPCODER_DEFER_MCP`. Kill switch off → byte-equivalent to
+  the legacy schema list (no `tool_search`, all schemas sent).
+- Exposure is per-session, reset on resume (the registry is rebuilt) — the plan's
+  recommended default; cross-resume persistence is Phase 6.
+- Tests: `test/deferred-tools.test.ts` (8 unit) +
+  `test/adversarial/deferred-tools.test.ts` (5 — unexposed call can't execute, exposed
+  dispatches normally, kill-switch parity, injection-text bounded in catalog, overflow
+  truncation).
