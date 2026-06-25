@@ -272,6 +272,12 @@ export interface WriteSubagentsConfig {
   keepWorktreeOnFailure: boolean;
   /** Built-in profile names permitted to write (defence in depth on top of `enabled`). */
   allowedProfiles: string[];
+  /**
+   * Whether a within-limits worktree diff may be applied to the parent execution
+   * root. `"never"` (default) = diff-only; `"auto-if-clean"` = apply automatically
+   * only when the patch is within the changed-file/byte caps and applies cleanly.
+   */
+  applyPolicy: "never" | "auto-if-clean";
 }
 
 const DEFAULT_WRITE_SUBAGENTS: WriteSubagentsConfig = {
@@ -281,6 +287,7 @@ const DEFAULT_WRITE_SUBAGENTS: WriteSubagentsConfig = {
   maxPatchBytes: 200_000,
   keepWorktreeOnFailure: false,
   allowedProfiles: [],
+  applyPolicy: "never",
 };
 
 export type TestTargetingMode = "off" | "suggest" | "targeted-first" | "targeted-only";
@@ -865,6 +872,8 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
         ? true
         : (fileWS.keepWorktreeOnFailure ?? DEFAULT_WRITE_SUBAGENTS.keepWorktreeOnFailure),
     allowedProfiles: fileWS.allowedProfiles ?? DEFAULT_WRITE_SUBAGENTS.allowedProfiles,
+    applyPolicy:
+      fileWS.applyPolicy === "auto-if-clean" ? "auto-if-clean" : DEFAULT_WRITE_SUBAGENTS.applyPolicy,
   };
 
   const delegate: DelegateConfig = {

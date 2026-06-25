@@ -166,6 +166,7 @@ async function runWorktreeWriteSubagent(
   let finalText = "";
   let diff = "";
   let changedFiles: string[] = [];
+  let applied = false;
 
   let isolated;
   try {
@@ -214,6 +215,20 @@ async function runWorktreeWriteSubagent(
     });
     diff = await isolated.diff();
     changedFiles = await isolated.changedFiles();
+
+    // #14 apply (Phase 7, gated): apply the worktree diff to the parent execution
+    // root ONLY under `auto-if-clean` AND within the caps AND when something
+    // changed. `applyPatchToRealRoot` runs `git apply --check` first and throws on
+    // conflict (→ not applied). Default policy "never" never reaches here.
+    const inLimits = changedFiles.length <= ws.maxChangedFiles && Buffer.byteLength(diff) <= ws.maxPatchBytes;
+    if (ws.applyPolicy === "auto-if-clean" && inLimits && changedFiles.length > 0) {
+      try {
+        await isolated.applyPatchToRealRoot({ force: false });
+        applied = true;
+      } catch (err) {
+        errors.push(`apply refused: ${(err as Error)?.message ?? String(err)}`);
+      }
+    }
   } catch (err) {
     failed = true;
     errors.push((err as Error)?.message ?? String(err));
@@ -244,7 +259,7 @@ async function runWorktreeWriteSubagent(
     written.push(
       await chain.appendEntry({
         role: "system",
-        content: `[write-event] changedFiles=${changedFiles.length} patchBytes=${patchBytes} withinLimits=${withinLimits} applied=false`,
+        content: `[write-event] changedFiles=${changedFiles.length} patchBytes=${patchBytes} withinLimits=${withinLimits} applied=${applied}`,
       }),
     );
     sidechainRunId = runId;
@@ -266,7 +281,7 @@ async function runWorktreeWriteSubagent(
       model,
       sidechainRunId,
       sidechainStats: stats,
-      write: { changedFiles, patchBytes, withinLimits, applied: false },
+      write: { changedFiles, patchBytes, withinLimits, applied },
     },
     finalText,
     diff,
