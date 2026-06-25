@@ -18,7 +18,8 @@ import { isSummary } from "../context/compaction.js";
 import { runPostWriteDiagnostics } from "../diagnostics/runner.js";
 import { formatFile, shouldFormat } from "../tools/formatOnEdit.js";
 import type { FormatConfig } from "../config/fileConfig.js";
-import { isRateLimit, isAuthError, isModelError, backoffMs, abortableSleep } from "./retry.js";
+import { isRateLimit, isAuthError, isModelError, isContextOverflowError, backoffMs, abortableSleep } from "./retry.js";
+import { recoverContextOverflow } from "../context/overflowRecovery.js";
 import { formatTokenUsageReminder, shouldEmitTokenUsageReminder } from "./tokenUsageReminder.js";
 import { saveManagedOutput } from "../session/managedOutputs.js";
 
@@ -36,6 +37,12 @@ export interface AgentDeps {
   tridentCompaction?: boolean;
   /** Five-stage context pipeline feature toggles (optional stages default off). */
   contextPipeline?: { budgetReduce: boolean; snip: boolean; autoCompact: boolean };
+  /** Reactive context-overflow recovery (default on). Bounded one-shot retry. */
+  reactiveOverflowRecovery?: boolean;
+  /** Max reactive overflow recoveries per turn (default 1, capped at 2). */
+  overflowRecoveryMaxAttempts?: number;
+  /** Aggressive tail ratio for overflow recovery (default 0.15). */
+  overflowAggressiveTailRatio?: number;
   /** Whether execute-kind MCP tools may run (off in Phase 4A). */
   mcpExecuteEnabled?: boolean;
   /** Streaming text hook (fired per chunk when the provider supports streaming). */
@@ -312,7 +319,50 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
         : {}),
     };
 
-    const response = await getResponseWithRetry(turnDeps, projection.messagesForQuery);
+    // Reactive context-overflow recovery: if the provider rejects the request as
+    // too long, force an aggressive compaction and retry the SAME call once
+    // (bounded). No tools run during recovery; an unrecovered overflow stops the
+    // turn with a clear notice rather than a fake success.
+    const maxOverflow = Math.min(2, Math.max(0, deps.overflowRecoveryMaxAttempts ?? 1));
+    const overflowOn = deps.reactiveOverflowRecovery !== false;
+    let sentForQuery = projection.messagesForQuery;
+    let overflowAttempts = 0;
+    let response: ChatResponse;
+    for (;;) {
+      try {
+        response = await getResponseWithRetry(turnDeps, sentForQuery);
+        break;
+      } catch (err) {
+        if (!isContextOverflowError(err) || !overflowOn || overflowAttempts >= maxOverflow) {
+          if (isContextOverflowError(err) && overflowAttempts > 0) {
+            deps.onNotice?.(
+              "Context overflow after recovery. I compacted the conversation but the provider still rejected the prompt as too large. Start a new session or narrow the task.",
+            );
+          }
+          throw err;
+        }
+        overflowAttempts++;
+        deps.onNotice?.("Provider rejected context as too large; compacting aggressively and retrying once.");
+        const rec = recoverContextOverflow(messages, {
+          budgetTokens: deps.contextBudgetTokens,
+          compactAt: deps.compactAt,
+          todos: ctx.todos,
+          readTracker: ctx.readTracker,
+          writeTracker: ctx.writeTracker ?? new Set(),
+          aggressiveTailRatio: deps.overflowAggressiveTailRatio,
+        });
+        if (!rec.recovered) {
+          deps.onNotice?.("Context overflow persisted after recovery.");
+          throw err;
+        }
+        // Durable recovery mutated history: reset the epoch, persist, rebuild the
+        // projection (avoids duplicate [context-update]s), then retry.
+        await deps.onContextEpochReset?.();
+        await deps.onPersist?.();
+        sentForQuery = buildMessagesForQuery({ messages, ctx, deps }).messagesForQuery;
+        deps.onNotice?.(`Recovered from context overflow (~${rec.before} → ~${rec.after} tokens).`);
+      }
+    }
     deps.onUsage?.(response.usage);
 
     // One-shot token-usage system reminder: fire when the provider-reported
@@ -657,6 +707,10 @@ export async function getResponseWithRetry(
       // retry it, or a real mid-turn failure would be masked as success.
       if (err instanceof StreamError) throw err;
       if (deps.ctx.signal.aborted) throw err;
+      // Context overflow is NOT a transient failure — throw it immediately so the
+      // loop can run a one-shot reactive recovery (it must beat isModelError's
+      // 400 match, which would otherwise treat it as a fatal model error).
+      if (isContextOverflowError(err)) throw err;
       if (isAuthError(err)) {
         deps.onNotice?.("API key rejected — check your credentials.");
         throw err;

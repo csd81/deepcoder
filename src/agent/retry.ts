@@ -30,6 +30,27 @@ export function isModelError(err: unknown): boolean {
 }
 
 /**
+ * True if the provider rejected the request for length (context overflow /
+ * prompt-too-long). Conservative on purpose: a false positive forces an
+ * unnecessary compaction, but a false negative only preserves today's behavior.
+ * These phrases come from OpenAI-compatible / DeepSeek length-limit errors.
+ */
+export function isContextOverflowError(err: unknown): boolean {
+  const text = messageText(err);
+  return (
+    text.includes("prompt_too_long") ||
+    text.includes("prompt is too long") ||
+    text.includes("context_length_exceeded") ||
+    text.includes("maximum context length") ||
+    text.includes("context length exceeded") ||
+    text.includes("exceeds the maximum") ||
+    text.includes("too many tokens") ||
+    text.includes("tokens exceed") ||
+    text.includes("reduce the length of the messages")
+  );
+}
+
+/**
  * Exponential backoff in milliseconds: 1000 * 2 ** attempt, capped at 10000.
  * attempt 0 -> 1000, 1 -> 2000, 2 -> 4000, ... capped at 10_000.
  */

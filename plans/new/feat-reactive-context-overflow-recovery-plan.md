@@ -272,4 +272,32 @@ misclassifying provider errors; keep the classifier conservative and well tested
 
 ## Status
 
-Proposed.
+**IMPLEMENTED** (Phases 1–6: classifier, throw-immediately, recovery, one-shot loop
+wiring, notices, projection-aware rebuild). Phases 7–8 (aggressive *staged* recovery
+via the pipeline, projection-only recovery + recovery-boundary events) remain
+proposed.
+
+Implementation notes:
+- `isContextOverflowError(err)` (`src/agent/retry.ts`) — conservative phrase matcher
+  (`prompt_too_long`, `maximum context length`, `context_length_exceeded`, `tokens
+  exceed`, …). `getResponseWithRetry` throws it **immediately** (before the
+  `isModelError` 400 match) so it isn't treated as transient.
+- `recoverContextOverflow(messages, opts)` (`src/context/overflowRecovery.ts`) —
+  forces an *aggressive* `compactIfNeeded` against a fraction of the budget
+  (`overflowAggressiveTailRatio`, default 0.15); returns `recovered:false` when the
+  array can't shrink (loop then stops cleanly).
+- `runAgentLoop` wraps the model call in a **bounded** recovery loop: on overflow it
+  recovers, resets the epoch, persists, rebuilds the `messagesForQuery` projection
+  (no duplicate `[context-update]`s), and retries — at most
+  `overflowRecoveryMaxAttempts` (default 1, capped 2). No tools run during recovery;
+  an unrecovered overflow stops the turn with a clear notice (no fake success).
+- Config `context.{reactiveOverflowRecovery, overflowRecoveryMaxAttempts,
+  overflowAggressiveTailRatio}` (defaults on/1/0.15) + env
+  `DEEPCODER_REACTIVE_COMPACT`, `DEEPCODER_OVERFLOW_RECOVERY_ATTEMPTS`. Threaded
+  through `AgentDeps` and set in `repl.ts`.
+- Tests: `test/overflow-recovery.test.ts` (6 — classifier, no-transient-retry,
+  aggressive shrink preserves task/todos/last-error, no-shrink→false, one-shot
+  recover-then-continue with epoch reset, persists-after-recovery stop) +
+  `test/adversarial/overflow-recovery.test.ts` (4 — overflow-shaped *content* doesn't
+  trigger recovery, bounded/no-infinite-loop, flag-off surfaces original error,
+  pairing valid after recovery).
