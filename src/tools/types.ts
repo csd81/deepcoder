@@ -85,6 +85,36 @@ export interface ToolContext {
    * sessions (CLI) but omitted in contexts that don't support worktree isolation.
    */
   worktree?: WorktreeRuntime;
+  /**
+   * Runtime for the model-callable `tool_search` tool (deferred tool schemas).
+   * Lets the model load schemas for on-demand tools and makes them callable.
+   * Absent when deferred schemas are disabled (then `tool_search` reports so).
+   */
+  toolSearch?: ToolSearchRuntime;
+}
+
+/** Compact catalog entry for a deferred (on-demand) tool. */
+export interface ToolExposure {
+  name: string;
+  source: string;
+  kind: ToolKind;
+  /** Bounded one-line description shown in the [deferred-tools] catalog. */
+  summary: string;
+}
+
+/**
+ * Runtime for `tool_search`. Closes over the session registry so the tool can
+ * list the currently-deferred tools, load (expose) their schemas, and return the
+ * full JSON schema for a selected tool. Exposure only makes a tool *callable* —
+ * `checkPermission()` still decides whether it runs.
+ */
+export interface ToolSearchRuntime {
+  /** Deferred tools not yet exposed this session. */
+  catalog(): ToolExposure[];
+  /** Mark these tool names exposed so their schemas are sent next turn. */
+  expose(names: string[]): void;
+  /** Full provider schema for one tool name (for the tool_search result). */
+  schemaFor(name: string): import("../providers/types.js").ToolSchema | undefined;
 }
 
 /**

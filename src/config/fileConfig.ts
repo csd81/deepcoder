@@ -27,7 +27,7 @@ import type { SandboxConfig } from "../sandbox/types.js";
 import type { LspConfig } from "../lsp/types.js";
 import type { WorkspaceIsolationConfig } from "../workspaceIsolation/types.js";
 import type { HooksConfig } from "../hooks/types.js";
-import type { ContextConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig, SemanticSearchConfig } from "./config.js";
+import type { ContextConfig, ToolsConfig, SkillsConfig, DependencyHealingConfig, DelegateConfig, TestTargetingConfig, SemanticSearchConfig } from "./config.js";
 import { SLASH_CATALOG } from "../cli/slashCatalog.js";
 import type { DiagnosticsConfig } from "../diagnostics/types.js";
 import type { ModelsFileConfig } from "../models/types.js";
@@ -62,6 +62,7 @@ export interface FileConfig {
   workspaceIsolation?: Partial<WorkspaceIsolationConfig>;
   hooks?: Partial<HooksConfig>;
   context?: Partial<ContextConfig>;
+  tools?: Partial<ToolsConfig>;
   skills?: Partial<SkillsConfig>;
   dependencyHealing?: Partial<DependencyHealingConfig>;
   delegate?: Partial<DelegateConfig>;
@@ -133,6 +134,16 @@ const contextSchema = z.object({
   preflight: z.boolean().optional(),
   preflightMaxBytes: z.number().int().min(0).optional(),
   explorerMaxTurns: z.number().int().min(1).max(50).optional(),
+});
+
+const toolsSchema = z.object({
+  deferredSchemas: z.boolean().optional(),
+  deferMcp: z.boolean().optional(),
+  deferLsp: z.boolean().optional(),
+  deferWeb: z.boolean().optional(),
+  deferSemantic: z.boolean().optional(),
+  deferPty: z.boolean().optional(),
+  deferredCatalogMaxChars: z.number().int().min(0).optional(),
 });
 
 const skillsSchema = z.object({
@@ -346,6 +357,14 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     else warn(`ignoring "context": ${result.error.issues.map((i) => i.message).join("; ")}`);
   }
 
+  const rawTools = (parsed as { tools?: unknown }).tools;
+  let tools: Partial<ToolsConfig> | undefined;
+  if (rawTools && typeof rawTools === "object") {
+    const result = toolsSchema.safeParse(rawTools);
+    if (result.success) tools = result.data;
+    else warn(`ignoring "tools": ${result.error.issues.map((i) => i.message).join("; ")}`);
+  }
+
   const rawSkills = (parsed as { skills?: unknown }).skills;
   let skills: Partial<SkillsConfig> | undefined;
   if (rawSkills && typeof rawSkills === "object") {
@@ -520,7 +539,7 @@ export function loadFileConfig(workspaceRoot: string): FileConfig {
     lsp = rawLsp as Partial<LspConfig>;
   }
 
-  return { mcpServers, checks, commands, sandbox, containment, workspaceIsolation, hooks, context, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline, format, lsp };
+  return { mcpServers, checks, commands, sandbox, containment, workspaceIsolation, hooks, context, tools, skills, dependencyHealing, delegate, models, testTargeting, diagnostics, telemetry, semanticSearch, keybinds, statusline, format, lsp };
 }
 
 function warn(msg: string): void {
