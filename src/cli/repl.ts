@@ -657,6 +657,9 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
     compactAt: session.config.compactAt,
     tridentCompaction: session.config.context.tridentCompaction,
     contextPipeline: session.config.context.contextPipeline,
+    reactiveOverflowRecovery: session.config.context.reactiveOverflowRecovery,
+    overflowRecoveryMaxAttempts: session.config.context.overflowRecoveryMaxAttempts,
+    overflowAggressiveTailRatio: session.config.context.overflowAggressiveTailRatio,
     mcpExecuteEnabled: session.config.mcpExecuteEnabled,
     approve: (inv: ToolInvocation, preview?: ToolPreview) => {
       // Headless verify loop: with no TTY the prompt auto-DENIES, which blocks

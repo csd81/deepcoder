@@ -398,6 +398,15 @@ export interface ContextConfig {
    * (forces optional stages off), DEEPCODER_CONTEXT_SNIP.
    */
   contextPipeline: { budgetReduce: boolean; snip: boolean; autoCompact: boolean };
+  /**
+   * Reactive context-overflow recovery. When the provider rejects a request as
+   * too long, force an aggressive compaction and retry once (bounded). Only
+   * activates after an otherwise-failing provider length error. Env:
+   * DEEPCODER_REACTIVE_COMPACT (1/0), DEEPCODER_OVERFLOW_RECOVERY_ATTEMPTS.
+   */
+  reactiveOverflowRecovery: boolean;
+  overflowRecoveryMaxAttempts: number;
+  overflowAggressiveTailRatio: number;
 }
 
 const DEFAULT_CONTEXT: ContextConfig = {
@@ -411,6 +420,9 @@ const DEFAULT_CONTEXT: ContextConfig = {
   playbook: { enabled: false, maxBytes: 4_000, maxEntries: 100 },
   tridentCompaction: true,
   contextPipeline: { budgetReduce: false, snip: false, autoCompact: true },
+  reactiveOverflowRecovery: true,
+  overflowRecoveryMaxAttempts: 1,
+  overflowAggressiveTailRatio: 0.15,
 };
 
 /** Parse a numeric env var, falling back to `fallback` for unset/invalid values. */
@@ -609,6 +621,14 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   }
   if (["1", "true", "yes", "on"].includes(snipEnv)) context.contextPipeline.snip = true;
   if (["0", "false", "no", "off"].includes(snipEnv)) context.contextPipeline.snip = false;
+  // Reactive overflow recovery: default on; env kill switch + attempt override.
+  const roEnv = (process.env.DEEPCODER_REACTIVE_COMPACT ?? "").toLowerCase();
+  if (["1", "true", "yes", "on"].includes(roEnv)) context.reactiveOverflowRecovery = true;
+  if (["0", "false", "no", "off"].includes(roEnv)) context.reactiveOverflowRecovery = false;
+  const roAttempts = process.env.DEEPCODER_OVERFLOW_RECOVERY_ATTEMPTS;
+  if (roAttempts !== undefined && roAttempts !== "") {
+    context.overflowRecoveryMaxAttempts = Math.min(2, Math.max(0, numEnv(roAttempts, 1)));
+  }
 
   // Skills: default < config file < env gate.
   const skillsEnv = process.env.DEEPCODER_SKILLS;

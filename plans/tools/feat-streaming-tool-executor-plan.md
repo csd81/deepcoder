@@ -280,9 +280,33 @@ streaming paths, then add concurrency around it.
 
 ## Status
 
-**Phase 2 IMPLEMENTED** (standalone executor + tests; unwired). Phases 1, 3–7
-(serial-body helper extraction, streaming consume path, loop integration behind
-`DEEPCODER_STREAMING_TOOLS`, sibling abort wiring, renderer events) remain proposed.
+**Phases 2–3 IMPLEMENTED as standalone tested units** (executor + streaming consume
+path; both unwired). The live loop integration (Phase 1 serial-body helper extraction
++ Phases 4–7: gating behind `DEEPCODER_STREAMING_TOOLS`, parallel reads, sibling abort,
+renderer events) remains **deliberately deferred** — see the integration risk note.
+
+Phase 3 — streaming consume path (`src/agent/streamingConsume.ts`):
+- `consumeStreamWithToolExecution(stream, sink, onDelta)` mirrors `consumeStream`'s
+  event handling (text/tool-call/usage accumulation, `hadContent` semantics) and feeds
+  each complete `tool_call_complete` to a `ToolCallSink` (`{accept, finishAssistant}`)
+  **as it arrives**, so execution can begin before the assistant stream finishes.
+  Returns the assembled `{text, toolCalls, usage}`; tool *results* are retrieved
+  separately from the executor. `finishAssistant()` fires exactly once on every
+  terminal path (done/error/throw); on failure it throws an `Error` carrying a
+  duck-typed `.hadContent` (no `StreamError` import → no agentLoop cycle).
+- Tests: `test/streamingConsume.test.ts` (6 unit) +
+  `test/adversarial/streaming-consume.test.ts` (5) — accept-before-done, ordered
+  collection, usage capture, finish-once on error-after-content, hadContent flags,
+  unknown-event tolerance.
+
+**Integration risk (why the live wiring is deferred):** the serial tool-execution body
+in `runAgentLoop` (~130 lines) is deeply stateful — permission/ask-approval/PreToolUse
+hooks/copy-on-write/model-escalation/`lastInvalidSignature`, with `continue` and
+`return ""`-abort control flow. Making that concurrency-safe and routing both the serial
+and streaming paths through one shared `executeOneToolCall` helper is the plan's
+"Large, medium-high risk" change and touches the safety core. It should land as its own
+isolated, adversarially-reviewed PR (flag default-off, drain-before-exclusive), not
+bundled into a large batch.
 
 Implementation notes:
 
