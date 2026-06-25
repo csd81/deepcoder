@@ -248,7 +248,15 @@ sidechain content never enters parent model-visible history.
 
 ## Status
 
-Proposed.
+**Core IMPLEMENTED (pure, unwired); runner wiring is a focused follow-up PR.** New
+`src/subagents/sidechain.ts`: `SubagentSidechain` (append-only `.deepcoder/subagents/
+<runId>.jsonl`, `assertSafeId`-confined, `redactSecrets` on every row, `O_APPEND`,
+monotonic seq across restarts), `readSidechain` (torn-line tolerant, foreign-runId +
+corrupt-row quarantine), `sidechainStats`. Tests: `test/subagentSidechain.test.ts` (5) +
+`test/adversarial/subagent-sidechain.test.ts` (5 — runId path-escape rejected, content
+redacted on disk, `.deepcoder/subagents/**` model-unreadable, foreign-runId skipped,
+corrupt line isolated). Unwired → zero behavior change; threading a runId through the
+subagent runner + recording the transcript/stats lands separately.
 
 Recommended before write-capable/worktree subagents, because richer subagent
 power needs better auditability first.

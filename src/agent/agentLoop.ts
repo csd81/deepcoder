@@ -114,6 +114,11 @@ export interface AgentDeps {
   /** Bounded `[deferred-tools]` catalog block(s) for deferred tool schemas. */
   deferredToolsCatalog?(): string[];
   /**
+   * Advisory `[relevant-memory]` block(s) prefetched per turn from accepted
+   * memory files (async — reads disk). Injected ephemerally into this call only.
+   */
+  relevantMemory?(prompt: string, recent: AgentMessage[]): Promise<string[]>;
+  /**
    * Cache-Optimized Context: reconcile dynamic context sources (approval mode,
    * instructions, memory) against the session's epoch snapshot. Called at the
    * top of every turn; returns zero or one persisted `[context-update]` system
@@ -320,6 +325,23 @@ export async function runAgentLoop(messages: AgentMessage[], deps: AgentDeps): P
           }
         : {}),
     };
+
+    // Relevant-memory prefetch: inject advisory `[relevant-memory]` blocks for
+    // this call only (ephemeral — reassign, never mutate canonical history).
+    if (deps.relevantMemory) {
+      try {
+        const prompt = [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+        const blocks = await deps.relevantMemory(prompt, messages);
+        if (blocks.length) {
+          projection.messagesForQuery = [
+            ...projection.messagesForQuery,
+            ...blocks.map((content) => ({ role: "system" as const, content })),
+          ];
+        }
+      } catch (err) {
+        deps.onNotice?.(`memory prefetch error: ${(err as Error)?.message ?? String(err)}`);
+      }
+    }
 
     // Reactive context-overflow recovery: if the provider rejects the request as
     // too long, force an aggressive compaction and retry the SAME call once

@@ -400,6 +400,12 @@ export interface ContextConfig {
    */
   contextPipeline: { budgetReduce: boolean; snip: boolean; autoCompact: boolean };
   /**
+   * Relevant-memory prefetch — deterministic lexical selection of accepted
+   * `.deepcoder/memory` topic files, injected as an advisory `[relevant-memory]`
+   * block per turn. Off by default; env: DEEPCODER_MEMORY_PREFETCH (1/0).
+   */
+  memoryPrefetch: { enabled: boolean; maxFiles: number; maxBytes: number };
+  /**
    * Reactive context-overflow recovery. When the provider rejects a request as
    * too long, force an aggressive compaction and retry once (bounded). Only
    * activates after an otherwise-failing provider length error. Env:
@@ -421,6 +427,7 @@ const DEFAULT_CONTEXT: ContextConfig = {
   playbook: { enabled: false, maxBytes: 4_000, maxEntries: 100 },
   tridentCompaction: true,
   contextPipeline: { budgetReduce: false, snip: false, autoCompact: true },
+  memoryPrefetch: { enabled: false, maxFiles: 3, maxBytes: 4000 },
   reactiveOverflowRecovery: true,
   overflowRecoveryMaxAttempts: 1,
   overflowAggressiveTailRatio: 0.15,
@@ -632,6 +639,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     // Deep-merge sub-objects so a file partial doesn't drop defaults.
     playbook: { ...DEFAULT_CONTEXT.playbook, ...(file.context?.playbook ?? {}) },
     contextPipeline: { ...DEFAULT_CONTEXT.contextPipeline, ...(file.context?.contextPipeline ?? {}) },
+    memoryPrefetch: { ...DEFAULT_CONTEXT.memoryPrefetch, ...(file.context?.memoryPrefetch ?? {}) },
     ...(["1", "true", "yes"].includes(igEnv) ? { instructionGraph: true } : {}),
     ...(["0", "false", "no"].includes(igEnv) ? { instructionGraph: false } : {}),
     ...(["1", "true", "yes"].includes(pfEnv) ? { preflight: true } : {}),
@@ -666,6 +674,10 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const dmEnv = (process.env.DEEPCODER_DEFER_MCP ?? "").toLowerCase();
   if (["1", "true", "yes", "on"].includes(dmEnv)) tools.deferMcp = true;
   if (["0", "false", "no", "off"].includes(dmEnv)) tools.deferMcp = false;
+  // Relevant-memory prefetch: default off; env gate.
+  const mpEnv = (process.env.DEEPCODER_MEMORY_PREFETCH ?? "").toLowerCase();
+  if (["1", "true", "yes", "on"].includes(mpEnv)) context.memoryPrefetch.enabled = true;
+  if (["0", "false", "no", "off"].includes(mpEnv)) context.memoryPrefetch.enabled = false;
 
   // Skills: default < config file < env gate.
   const skillsEnv = process.env.DEEPCODER_SKILLS;

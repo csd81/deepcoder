@@ -112,8 +112,15 @@ Implementation notes:
   confinement to the memory dir via `realpath` + `path.relative` (a symlink/`..`
   escaping the dir is skipped); all read errors swallowed (never throws); missing
   dir → `[]`; cumulative bytes never exceed `maxBytes`.
-- **Not yet wired** into `buildMessagesForQuery` — it's a tested unit awaiting Phase 2
-  (which has a clean injection point now that the `messagesForQuery` seam exists).
+- **Phase 2 (injection) NOW IMPLEMENTED.** `renderRelevantMemory()` builds an advisory
+  `[relevant-memory]` block; `AgentDeps.relevantMemory(prompt, recent)` (async) is
+  awaited each turn in `runAgentLoop` and injected **ephemerally** into the model call
+  only (reassigned, never mutates canonical history — a throwing prefetcher emits a
+  notice and never breaks the loop). Config `context.memoryPrefetch {enabled, maxFiles,
+  maxBytes}` (default off) + `DEEPCODER_MEMORY_PREFETCH`; wired in `repl`. Tests:
+  `test/memory-prefetch-injection.test.ts` (4 — renderer, reaches-model-not-persisted,
+  default-off no-injection, throwing-prefetcher-is-safe). Phases 3–4 (debug command,
+  model/semantic selector) remain proposed.
 - Tests: `test/memoryPrefetch.test.ts` (7 unit) +
   `test/adversarial/memory-prefetch.test.ts` (6 `[SECURITY]` — inbox never recalled,
   secret redaction, path-traversal containment, imperative text gives no ranking

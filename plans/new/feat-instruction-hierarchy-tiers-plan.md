@@ -81,4 +81,12 @@ managed policy remains clearly labeled as higher authority.
 
 ## Status
 
-Proposed.
+**Core IMPLEMENTED (pure, unwired); loader/system-prompt wiring is a focused
+follow-up PR.** New `src/context/instructionTiers.ts`: a 5-tier model
+(`managed > user > workspace > local > path`) with `tierRank`/`orderSources` (stable
+precedence), `renderTiers` (attributed, byte-bounded), and `resolveIncludes`
+(allowlist-gated, depth-capped, **cycle-detected** `@include` over an injected reader —
+never loops/throws). Tests: `test/instructionTiers.test.ts` (7) +
+`test/adversarial/instruction-tiers.test.ts` (5). Unwired → zero behavior change;
+wiring it into the project-instruction loader + system prompt (touching the
+cache-optimized epoch baseline) is behavior-changing and lands separately.
