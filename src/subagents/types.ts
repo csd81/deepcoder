@@ -11,6 +11,13 @@ export interface SubagentProfile {
   role?: import("../models/types.js").ModelRole;
   /** Phase 10E — this profile may use the web tools when web is enabled in config. */
   webOptIn?: boolean;
+  /**
+   * #14 — write capability. `"worktree"` runs the subagent in a DISPOSABLE git
+   * worktree with a write-capable registry; its output is a diff, never a parent
+   * mutation. Default/absent = read-only. Only honored when write subagents are
+   * enabled AND the profile is allow-listed.
+   */
+  writeMode?: "readonly" | "worktree";
 }
 
 export type Severity = "critical" | "high" | "medium" | "low";
@@ -49,6 +56,14 @@ export interface SubagentTrace {
   sidechainRunId?: string;
   /** Model-safe aggregate of the persisted sidechain transcript. */
   sidechainStats?: { entries: number; byRole: Record<string, number> };
+  /** #14 — worktree write result metadata (the diff itself is returned separately). */
+  write?: {
+    changedFiles: string[];
+    patchBytes: number;
+    withinLimits: boolean;
+    /** Phase 1 is diff-only: changes are NEVER applied to the parent. */
+    applied: false;
+  };
 }
 
 /**
@@ -83,4 +98,16 @@ export interface RunSubagentOptions {
    * the DEEPCODER_SUBAGENT_SIDECHAIN env (off unless 1/true/yes/on).
    */
   sidechain?: boolean;
+  /**
+   * #14 — write-capable-subagent policy. When absent or `enabled:false`, a
+   * `writeMode:"worktree"` profile safely degrades to the read-only path.
+   */
+  writeSubagents?: {
+    enabled: boolean;
+    requireSidechain: boolean;
+    maxChangedFiles: number;
+    maxPatchBytes: number;
+    keepWorktreeOnFailure: boolean;
+    allowedProfiles: string[];
+  };
 }

@@ -255,7 +255,33 @@ export interface DelegateConfig {
   autopilot: DelegateAutopilotConfig;
   assess: DelegateAssessConfig;
   verify?: DelegateVerifyConfig;
+  /** Worktree-isolated write-capable subagents (#14). Default OFF. */
+  writeSubagents: WriteSubagentsConfig;
 }
+
+/**
+ * Write-capable subagents (#14). When enabled, an allow-listed built-in profile
+ * with `writeMode: "worktree"` runs in a DISPOSABLE git worktree and returns a
+ * diff — it never writes the parent checkout. Phase 1 is diff-only (no apply).
+ */
+export interface WriteSubagentsConfig {
+  enabled: boolean;
+  requireSidechain: boolean;
+  maxChangedFiles: number;
+  maxPatchBytes: number;
+  keepWorktreeOnFailure: boolean;
+  /** Built-in profile names permitted to write (defence in depth on top of `enabled`). */
+  allowedProfiles: string[];
+}
+
+const DEFAULT_WRITE_SUBAGENTS: WriteSubagentsConfig = {
+  enabled: false,
+  requireSidechain: true,
+  maxChangedFiles: 20,
+  maxPatchBytes: 200_000,
+  keepWorktreeOnFailure: false,
+  allowedProfiles: [],
+};
 
 export type TestTargetingMode = "off" | "suggest" | "targeted-first" | "targeted-only";
 
@@ -823,12 +849,31 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
         : (fileVerify.enabled ?? DEFAULT_DELEGATE_VERIFY.enabled)),
   };
 
+  // #14 write-capable subagents: default OFF; file < env gate. Caps are clamped.
+  const fileWS = (fileDelegate.writeSubagents ?? {}) as Partial<WriteSubagentsConfig>;
+  const wsEnv = (process.env.DEEPCODER_WRITE_SUBAGENTS ?? "").toLowerCase();
+  const writeSubagents: WriteSubagentsConfig = {
+    enabled:
+      ["1", "true", "yes", "on"].includes(wsEnv) ? true
+      : ["0", "false", "no", "off"].includes(wsEnv) ? false
+      : (fileWS.enabled ?? DEFAULT_WRITE_SUBAGENTS.enabled),
+    requireSidechain: fileWS.requireSidechain ?? DEFAULT_WRITE_SUBAGENTS.requireSidechain,
+    maxChangedFiles: Math.max(1, fileWS.maxChangedFiles ?? DEFAULT_WRITE_SUBAGENTS.maxChangedFiles),
+    maxPatchBytes: Math.max(1, fileWS.maxPatchBytes ?? DEFAULT_WRITE_SUBAGENTS.maxPatchBytes),
+    keepWorktreeOnFailure:
+      ["1", "true", "yes", "on"].includes((process.env.DEEPCODER_WRITE_SUBAGENT_KEEP ?? "").toLowerCase())
+        ? true
+        : (fileWS.keepWorktreeOnFailure ?? DEFAULT_WRITE_SUBAGENTS.keepWorktreeOnFailure),
+    allowedProfiles: fileWS.allowedProfiles ?? DEFAULT_WRITE_SUBAGENTS.allowedProfiles,
+  };
+
   const delegate: DelegateConfig = {
     qualityGate,
     acceptanceFirst,
     autopilot,
     assess,
     verify,
+    writeSubagents,
   };
 
   // Phase 10H — test targeting config: default < file < env.

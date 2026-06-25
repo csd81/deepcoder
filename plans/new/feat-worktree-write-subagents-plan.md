@@ -249,4 +249,36 @@ mutation of the user's checkout.
 
 ## Status
 
-Proposed.
+**Phases 2–5 IMPLEMENTED (diff-only, default OFF). Apply (Phases 6–7) deferred.** The
+core safety position is fully in place: a write-capable subagent runs ONLY in a
+disposable git worktree and returns a **diff** — there is **no apply path to the parent
+checkout at all** in this phase.
+
+Implementation notes:
+- `SubagentProfile.writeMode?: "readonly" | "worktree"`; built-in `testWriter` profile
+  (`test-writer`, `writeMode: "worktree"`, no run_bash/MCP/PTY). Config
+  `delegate.writeSubagents {enabled(false), requireSidechain, maxChangedFiles(20),
+  maxPatchBytes(200k), keepWorktreeOnFailure, allowedProfiles}` + env
+  `DEEPCODER_WRITE_SUBAGENTS` / `DEEPCODER_WRITE_SUBAGENT_KEEP`.
+- `runSubagent` grants write only when **all** hold: `writeMode:"worktree"` AND
+  `writeSubagents.enabled` AND the profile is in `allowedProfiles`. Otherwise it
+  **degrades to the read-only path** (writes denied by `mode:"readonly"`).
+- `runWorktreeWriteSubagent`: `createIsolatedWorkspace` (disposable git worktree),
+  runs the loop with `ToolContext.workspaceRoot = isolatedRoot` (so workspace
+  confinement ties every write to the worktree — it can never touch the parent), a
+  write-capable restricted registry, `mode:"auto"` (file tools auto-run in the throwaway
+  tree), `mcpExecuteEnabled:false`, and **no delegate/worktree/toolSearch runtimes** (no
+  recursive write delegation). Captures `diff()`/`changedFiles()`, enforces the caps
+  (`withinLimits`), records a **mandatory** sidechain (+ a `[write-event]` row), and
+  **cleans up** the worktree. `applyPolicy` is effectively `"never"` (`trace.write.applied
+  === false`).
+- Tests: `test/write-subagents.test.ts` (4) + `test/adversarial/write-subagents.test.ts`
+  (5) — worktree edit returns a diff with the **parent byte-identical**, caps reported,
+  registry excludes run_bash/delegate/MCP/PTY, and `[SECURITY]`: disabled→degrade,
+  not-allow-listed→degrade, successful-write-never-touches-parent, prompt-injected-apply
+  cannot force an apply, non-git→no writes.
+
+Deferred (own PR, with the apply-gate adversarial coverage from this plan): Phase 6
+user-approved apply, Phase 7 `auto-if-clean` + check gate, Phase 8 trusted custom
+profiles. Apply is the only path that can affect the parent and must land behind its
+own review.
