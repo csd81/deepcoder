@@ -406,6 +406,19 @@ export interface ContextConfig {
    */
   memoryPrefetch: { enabled: boolean; maxFiles: number; maxBytes: number };
   /**
+   * Load project instructions through the tiered hierarchy (managed > user >
+   * workspace > local) with attribution + safe `@include` expansion, instead of
+   * the single first-match loader. Off by default; env: DEEPCODER_INSTRUCTION_TIERS.
+   */
+  instructionTiers: boolean;
+  /**
+   * Guidance-vs-enforcement separation: render project instructions + memory as a
+   * lower-authority advisory guidance block (ephemeral) instead of inside the
+   * system prompt. The base system prompt stays the safety/permission authority.
+   * Off by default; env: DEEPCODER_GUIDANCE_CONTEXT.
+   */
+  guidanceContext: boolean;
+  /**
    * Reactive context-overflow recovery. When the provider rejects a request as
    * too long, force an aggressive compaction and retry once (bounded). Only
    * activates after an otherwise-failing provider length error. Env:
@@ -428,6 +441,8 @@ const DEFAULT_CONTEXT: ContextConfig = {
   tridentCompaction: true,
   contextPipeline: { budgetReduce: false, snip: false, autoCompact: true },
   memoryPrefetch: { enabled: false, maxFiles: 3, maxBytes: 4000 },
+  instructionTiers: false,
+  guidanceContext: false,
   reactiveOverflowRecovery: true,
   overflowRecoveryMaxAttempts: 1,
   overflowAggressiveTailRatio: 0.15,
@@ -678,6 +693,12 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const mpEnv = (process.env.DEEPCODER_MEMORY_PREFETCH ?? "").toLowerCase();
   if (["1", "true", "yes", "on"].includes(mpEnv)) context.memoryPrefetch.enabled = true;
   if (["0", "false", "no", "off"].includes(mpEnv)) context.memoryPrefetch.enabled = false;
+  const itEnv = (process.env.DEEPCODER_INSTRUCTION_TIERS ?? "").toLowerCase();
+  if (["1", "true", "yes", "on"].includes(itEnv)) context.instructionTiers = true;
+  if (["0", "false", "no", "off"].includes(itEnv)) context.instructionTiers = false;
+  const gcEnv = (process.env.DEEPCODER_GUIDANCE_CONTEXT ?? "").toLowerCase();
+  if (["1", "true", "yes", "on"].includes(gcEnv)) context.guidanceContext = true;
+  if (["0", "false", "no", "off"].includes(gcEnv)) context.guidanceContext = false;
 
   // Skills: default < config file < env gate.
   const skillsEnv = process.env.DEEPCODER_SKILLS;

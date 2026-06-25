@@ -14,9 +14,10 @@ import { runPreToolUseHooks, runAdvisoryHooks, type HookRunContext } from "../ho
 import { redactSecrets } from "../workspace/redact.js";
 import { evaluateAction } from "../security/monitor.js";
 import type { HookEvent } from "../hooks/types.js";
-import { buildSystemPrompt } from "../agent/systemPrompt.js";
+import { buildSystemPrompt, renderGuidanceBlock } from "../agent/systemPrompt.js";
 import { contextRegistry, isContextUpdateMessage, type ContextSnapshot } from "../context/registry.js";
 import { loadInstructions } from "../context/projectInstructions.js";
+import { loadTieredInstructions } from "../context/instructionTierLoader.js";
 import { renderPlaybook } from "../context/playbook.js";
 import {
   buildInstructionGraph,
@@ -354,6 +355,11 @@ export async function fireSessionEvent(session: Session, event: HookEvent, paylo
  * otherwise it falls back to the legacy first-match loader (zero behavior change).
  */
 export function resolveInstructions(config: Config): { text: string; graph?: InstructionGraph } {
+  // #10: tiered hierarchy (managed > user > workspace > local) with attribution
+  // + safe @include. Takes precedence over the legacy graph/first-match loaders.
+  if (config.context.instructionTiers) {
+    return { text: loadTieredInstructions(config.workspaceRoot).text };
+  }
   if (config.context.instructionGraph) {
     const graph = buildInstructionGraph({
       workspaceRoot: config.workspaceRoot,
@@ -381,10 +387,14 @@ export function systemMessage(
   if (override !== null) {
     return { role: "system", content: override };
   }
-  const text = instructionsText ?? resolveInstructions(config).text;
+  // #11 guidance-vs-enforcement: when on, project instructions + memory move OUT
+  // of the system prompt into a lower-authority advisory block (injected
+  // ephemerally), so messages[0] stays purely the safety/permission authority.
+  const guidance = config.context.guidanceContext;
+  const text = guidance ? "" : (instructionsText ?? resolveInstructions(config).text);
   // Project memory (8B): the control plane is the real workspace root, so memory
   // persists/loads there even under workspace isolation.
-  const memory = loadStartupMemorySync(config.workspaceRoot);
+  const memory = guidance ? "" : loadStartupMemorySync(config.workspaceRoot);
   return {
     role: "system",
     content: buildSystemPrompt({
@@ -437,9 +447,12 @@ export function buildContextSnapshot(
   instructionsText: string,
   skillsCatalog: string,
 ): ContextSnapshot {
+  // #11: under guidance mode, instructions + memory are NOT epoch sources (they
+  // live in the ephemeral guidance block), so the snapshot excludes them.
+  const guidance = config.context.guidanceContext;
   return contextRegistry.snapshot({
-    instructions: instructionsText,
-    memory: loadStartupMemorySync(config.workspaceRoot),
+    instructions: guidance ? "" : instructionsText,
+    memory: guidance ? "" : loadStartupMemorySync(config.workspaceRoot),
     skills: skillsCatalog,
     mode,
   });
@@ -473,8 +486,9 @@ export function reconcileSessionContext(session: Session): AgentMessage[] {
       instructions: prev.sources.instructions ?? "",
       skills: prev.sources.skills ?? "",
       // mode (via /mode) and memory (via the memory tool) can change within a
-      // session; both are cheap to read, so reconcile them every turn.
-      memory: loadStartupMemorySync(session.config.workspaceRoot),
+      // session; both are cheap to read, so reconcile them every turn. Under
+      // guidance mode memory lives in the ephemeral block, not the epoch.
+      memory: session.config.context.guidanceContext ? "" : loadStartupMemorySync(session.config.workspaceRoot),
       mode: session.mode,
     },
     prev.epochId,
@@ -684,6 +698,15 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
       const block = renderDeferredCatalog(session.registry.catalog(), session.config.tools.deferredCatalogMaxChars);
       return block ? [block] : [];
     },
+    guidanceContext: session.config.context.guidanceContext
+      ? () => {
+          const block = renderGuidanceBlock(
+            resolveInstructions(session.config).text,
+            loadStartupMemorySync(session.config.workspaceRoot),
+          );
+          return block ? [block] : [];
+        }
+      : undefined,
     relevantMemory: session.config.context.memoryPrefetch.enabled
       ? async (prompt, recent) => {
           const mp = session.config.context.memoryPrefetch;

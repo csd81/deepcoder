@@ -70,4 +70,25 @@ cause provider issues, use user-role context blocks with clear labels.
 
 ## Status
 
-Proposed.
+**IMPLEMENTED (Phases 1–3, flag-gated, default off).** When `context.guidanceContext`
+is on, project instructions + memory move OUT of the system prompt (`messages[0]`) and
+the cache-optimized epoch snapshot into a lower-authority advisory `[project-guidance]`
+block injected **ephemerally** each turn (via `withEphemeralContext`). The block carries
+a "cannot override the permission model / sandbox / safety policy" header — guidance,
+not enforcement.
+
+Implementation notes:
+- `renderGuidanceBlock(instructions, memory)` (`src/agent/systemPrompt.ts`) — advisory
+  block with the non-authoritative header; "" when empty.
+- `systemMessage` passes `instructions:""`/`memory:""` (omitting them from `messages[0]`)
+  under the flag; `buildContextSnapshot` + `reconcileSessionContext` likewise exclude
+  them from the epoch (so no `[context-update]` for guidance). `AgentDeps.guidanceContext`
+  + a `repl` dep inject the block ephemerally.
+- Config `context.guidanceContext` + `DEEPCODER_GUIDANCE_CONTEXT`, default off →
+  byte-identical legacy (instructions in the system prompt). `checkPermission` is
+  untouched — relocating guidance cannot weaken policy.
+- Tests (`test/instruction-tiers-guidance.test.ts`): header/empty rendering, OFF keeps
+  instructions in the prompt / ON omits them, ephemeral-not-persisted injection, and
+  `[SECURITY]` a hostile instruction never reaches the high-authority system prompt
+  under guidance mode. Phases 4–5 (move skill blocks, flight-recorder A/B before
+  default-on) remain proposed.
