@@ -47,6 +47,7 @@ import type { ModelRouter } from "../models/router.js";
 import type { ProviderPool } from "../models/providerPool.js";
 import { buildDelegateRuntime, buildDelegateAutoRuntime, buildWorktreeRuntime, buildToolSearchRuntime, buildEnsureWritableRoot, branchNameForSession, attachFileWatcher } from "../runtime/sessionFactory.js";
 import { renderDeferredCatalog } from "../tools/toolSearch.js";
+import { prefetchRelevantMemory, renderRelevantMemory } from "../memory/prefetch.js";
 import { makeDelegationHint } from "../delegate/assess.js";
 import { createPlainRenderer } from "../ui/plainRenderer.js";
 import { createPrintRenderer } from "../ui/printRenderer.js";
@@ -683,6 +684,20 @@ export async function runTask(session: Session, ui?: TaskUi, externalSignal?: Ab
       const block = renderDeferredCatalog(session.registry.catalog(), session.config.tools.deferredCatalogMaxChars);
       return block ? [block] : [];
     },
+    relevantMemory: session.config.context.memoryPrefetch.enabled
+      ? async (prompt, recent) => {
+          const mp = session.config.context.memoryPrefetch;
+          const items = await prefetchRelevantMemory({
+            workspaceRoot: session.config.workspaceRoot,
+            prompt,
+            recentMessages: recent,
+            maxFiles: mp.maxFiles,
+            maxBytes: mp.maxBytes,
+          });
+          const block = renderRelevantMemory(items);
+          return block ? [block] : [];
+        }
+      : undefined,
     reconcileContext: () => reconcileSessionContext(session),
     onContextEpochReset: () => resetSessionContextEpoch(session),
     onPreCompact: hooksFor(session, "PreCompact")
