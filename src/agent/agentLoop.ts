@@ -113,6 +113,8 @@ export interface AgentDeps {
   playbookContext?(): string[];
   /** Bounded `[deferred-tools]` catalog block(s) for deferred tool schemas. */
   deferredToolsCatalog?(): string[];
+  /** Advisory `[project-guidance]` block(s) when guidance-vs-enforcement is on. */
+  guidanceContext?(): string[];
   /**
    * Advisory `[relevant-memory]` block(s) prefetched per turn from accepted
    * memory files (async — reads disk). Injected ephemerally into this call only.

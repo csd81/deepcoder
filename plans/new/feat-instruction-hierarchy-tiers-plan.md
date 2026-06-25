@@ -87,6 +87,15 @@ follow-up PR.** New `src/context/instructionTiers.ts`: a 5-tier model
 precedence), `renderTiers` (attributed, byte-bounded), and `resolveIncludes`
 (allowlist-gated, depth-capped, **cycle-detected** `@include` over an injected reader —
 never loops/throws). Tests: `test/instructionTiers.test.ts` (7) +
-`test/adversarial/instruction-tiers.test.ts` (5). Unwired → zero behavior change;
-wiring it into the project-instruction loader + system prompt (touching the
-cache-optimized epoch baseline) is behavior-changing and lands separately.
+`test/adversarial/instruction-tiers.test.ts` (5).
+
+**WIRED (flag-gated, default off).** New `src/context/instructionTierLoader.ts`
+(`loadTieredInstructions`) gathers the user (`~/.deepcoder/instructions.md`),
+workspace (first of `.deepcoder/instructions.md` | `AGENTS.md` | `CLAUDE.md`), and
+local (`.deepcoder/instructions.local.md`) tiers, expands workspace-confined
+`@include`s via the core, and renders an attributed block. `resolveInstructions`
+(`repl.ts`) routes to it when `context.instructionTiers` is on (takes precedence over
+the legacy graph/first-match loaders). Config `context.instructionTiers` +
+`DEEPCODER_INSTRUCTION_TIERS`, default off → byte-identical legacy. Tests:
+`test/instruction-tiers-guidance.test.ts` (loader gathers tiers + attribution, include
+expansion, `[SECURITY]` include-cannot-escape-workspace).
