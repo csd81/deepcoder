@@ -141,4 +141,24 @@ export const simplifier: SubagentProfile = {
     "change intended behavior or reach outside the reviewed scope; do not flag style/naming nits.",
 };
 
-export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, architect, verifier, riskAssessor, simplifier };
+/**
+ * #14 — a built-in WRITE-CAPABLE profile. It runs ONLY in a disposable git
+ * worktree (`writeMode: "worktree"`) and ONLY when write subagents are enabled
+ * AND "test-writer" is allow-listed; otherwise it degrades to read-only (its
+ * write tools are denied by readonly mode). It writes a focused test and returns
+ * the diff — it never touches the parent checkout. No run_bash / MCP / PTY.
+ */
+export const testWriter: SubagentProfile = {
+  name: "test-writer",
+  purpose: "Add or update a focused test in an isolated worktree, then return the diff.",
+  allowedTools: ["read_file", "grep", "glob", "list_dir", "write_file", "edit_file", "apply_patch"],
+  maxTurns: 14,
+  contextBudgetTokens: 48000,
+  writeMode: "worktree",
+  outputGuidance:
+    "Write or update exactly the test(s) the task asks for, in the smallest number of files. " +
+    "Read a file before editing it. Do not touch production code unless the task explicitly says to. " +
+    "Keep the change minimal and self-contained.",
+};
+
+export const PROFILES: Record<string, SubagentProfile> = { reviewer, researcher, testTriage, explorer, architect, verifier, riskAssessor, simplifier, testWriter };

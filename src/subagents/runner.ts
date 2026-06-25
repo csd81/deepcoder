@@ -4,6 +4,8 @@ import { runAgentLoop } from "../agent/agentLoop.js";
 import { restrictedRegistry } from "../tools/registry.js";
 import { SubagentSidechain, sidechainStats, type SidechainRole } from "./sidechain.js";
 import { newSessionId } from "../session/sessionStore.js";
+import { createIsolatedWorkspace } from "../workspaceIsolation/index.js";
+import { DEFAULT_WORKSPACE_ISOLATION } from "../workspaceIsolation/types.js";
 import { resolveWebTools } from "../web/access.js";
 import { loadInstructions } from "../context/projectInstructions.js";
 import { buildSubagentPrompt } from "./prompts.js";
@@ -23,11 +25,26 @@ function sidechainEnabled(opts: RunSubagentOptions): boolean {
   return ["1", "true", "yes", "on"].includes(env);
 }
 
+/**
+ * #14 — write capability is granted ONLY when ALL hold: the profile opts in
+ * (`writeMode:"worktree"`), the feature is enabled, and the profile is
+ * allow-listed by name. Otherwise a write profile safely degrades to read-only.
+ */
+function writeAllowed(profile: SubagentProfile, opts: RunSubagentOptions): boolean {
+  const ws = opts.writeSubagents;
+  return (
+    profile.writeMode === "worktree" &&
+    ws?.enabled === true &&
+    Array.isArray(ws.allowedProfiles) &&
+    ws.allowedProfiles.includes(profile.name)
+  );
+}
+
 export async function runSubagent(
   profile: SubagentProfile,
   task: string,
   opts: RunSubagentOptions,
-): Promise<{ result: SubagentResult; trace: SubagentTrace; finalText?: string }> {
+): Promise<{ result: SubagentResult; trace: SubagentTrace; finalText?: string; diff?: string }> {
   // Phase 10F: resolve model via router if available, else fall back to legacy.
   let model: string;
   let provider = opts.provider;
@@ -38,6 +55,12 @@ export async function runSubagent(
   } else {
     model = opts.subagentModel ?? opts.parentModel;
   }
+
+  // #14 write-capable path: gated, isolated, diff-only (never touches the parent).
+  if (writeAllowed(profile, opts)) {
+    return runWorktreeWriteSubagent(profile, task, opts, model, provider);
+  }
+
   const registry = restrictedRegistry(profile.allowedTools);
   // Phase 10E: opt-in web access — when web is enabled (caller passed the web tool
   // instances) AND this profile opts in, add the resolved web tools to the registry.
@@ -113,4 +136,139 @@ export async function runSubagent(
   }
 
   return { result, trace: { toolsCalled, turns, model, sidechainRunId, sidechainStats: stats }, finalText };
+}
+
+/**
+ * #14 — run a write-capable subagent inside a DISPOSABLE git worktree. The
+ * subagent's `ToolContext.workspaceRoot` is the isolated worktree, so workspace
+ * confinement (`resolveInWorkspace`) ties every write to the worktree — it can
+ * NEVER touch the parent checkout. Phase 1 is **diff-only**: the changes are
+ * captured as a patch and returned; they are never applied. The worktree is
+ * always cleaned up (unless `keepWorktreeOnFailure` and the run failed). A full
+ * sidechain transcript is mandatory.
+ */
+async function runWorktreeWriteSubagent(
+  profile: SubagentProfile,
+  task: string,
+  opts: RunSubagentOptions,
+  model: string,
+  provider: import("../providers/types.js").ModelProvider,
+): Promise<{ result: SubagentResult; trace: SubagentTrace; finalText?: string; diff?: string }> {
+  const ws = opts.writeSubagents!;
+  const { text: instructions } = loadInstructions(opts.workspaceRoot);
+  const messages: AgentMessage[] = [
+    { role: "system", content: buildSubagentPrompt(profile, opts.workspaceRoot, instructions) },
+    { role: "user", content: task },
+  ];
+  const toolsCalled: string[] = [];
+  const notices: string[] = [];
+  const errors: string[] = [];
+  let finalText = "";
+  let diff = "";
+  let changedFiles: string[] = [];
+
+  let isolated;
+  try {
+    isolated = await createIsolatedWorkspace(opts.workspaceRoot, {
+      ...DEFAULT_WORKSPACE_ISOLATION,
+      mode: "patch",
+      keepOnSuccess: false,
+      keepOnFailure: ws.keepWorktreeOnFailure,
+    });
+  } catch (err) {
+    // Worktree provisioning failed (non-git / dirty tree). No writes happened.
+    errors.push(`worktree unavailable: ${(err as Error)?.message ?? String(err)}`);
+    const result = parseSubagentResult(profile.name, task, "");
+    result.errors.push(...errors);
+    return { result, trace: { toolsCalled, turns: 0, model }, finalText: "" };
+  }
+
+  let failed = false;
+  try {
+    // Write-capable registry: only the profile's allow-listed native tools (MCP
+    // and PTY are never native, so they cannot appear). Writes are gated by mode
+    // + checkPermission + the sensitive-path guard, and confined to the worktree.
+    const registry = restrictedRegistry(profile.allowedTools);
+    const ctx: ToolContext = {
+      workspaceRoot: isolated.isolatedRoot,
+      signal: opts.signal,
+      readTracker: new Set(),
+      writeTracker: new Set(),
+      todos: [],
+      history: messages,
+      // No delegate/worktree/toolSearch runtimes → no recursive write delegation.
+    };
+    finalText = await runAgentLoop(messages, {
+      provider,
+      registry,
+      ctx,
+      model,
+      mode: "auto", // mutating file tools auto-run INSIDE the disposable worktree
+      maxTurns: profile.maxTurns,
+      contextBudgetTokens: profile.contextBudgetTokens,
+      compactAt: opts.compactAt,
+      mcpExecuteEnabled: false,
+      approve: async () => false, // no execute-tool approvals (none are registered)
+      onToolCall: (name) => toolsCalled.push(name),
+      onNotice: (m) => notices.push(m),
+    });
+    diff = await isolated.diff();
+    changedFiles = await isolated.changedFiles();
+  } catch (err) {
+    failed = true;
+    errors.push((err as Error)?.message ?? String(err));
+  } finally {
+    // Cleanup is confined to the temp isolation root (the primitive guarantees it).
+    if (!(failed && ws.keepWorktreeOnFailure)) {
+      try {
+        await isolated.cleanup();
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+  }
+
+  const patchBytes = Buffer.byteLength(diff);
+  const withinLimits = changedFiles.length <= ws.maxChangedFiles && patchBytes <= ws.maxPatchBytes;
+
+  // Mandatory sidechain for write-capable runs: full transcript + the write event.
+  let sidechainRunId: string | undefined;
+  let stats: { entries: number; byRole: Record<string, number> } | undefined;
+  try {
+    const runId = `${profile.name.replace(/[^A-Za-z0-9_-]/g, "_")}-${newSessionId()}`;
+    const chain = new SubagentSidechain(opts.workspaceRoot, runId);
+    const written = [];
+    for (const m of messages) {
+      written.push(await chain.appendEntry({ role: m.role as SidechainRole, content: m.content, toolName: m.name }));
+    }
+    written.push(
+      await chain.appendEntry({
+        role: "system",
+        content: `[write-event] changedFiles=${changedFiles.length} patchBytes=${patchBytes} withinLimits=${withinLimits} applied=false`,
+      }),
+    );
+    sidechainRunId = runId;
+    stats = sidechainStats(written);
+  } catch {
+    /* best-effort */
+  }
+
+  const result = parseSubagentResult(profile.name, task, finalText);
+  for (const n of notices) if (/max turns|aborted/i.test(n)) result.errors.push(n);
+  result.errors.push(...errors);
+  const turns = messages.filter((m) => m.role === "assistant").length;
+
+  return {
+    result,
+    trace: {
+      toolsCalled,
+      turns,
+      model,
+      sidechainRunId,
+      sidechainStats: stats,
+      write: { changedFiles, patchBytes, withinLimits, applied: false },
+    },
+    finalText,
+    diff,
+  };
 }
